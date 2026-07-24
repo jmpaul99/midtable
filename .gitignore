@@ -42,3 +42,8 @@ htmlcov/
 *.swo
 .DS_Store
 Thumbs.db
+
+# Local test / agent artifacts
+pytest-results.txt
+git-status.txt
+*.log
