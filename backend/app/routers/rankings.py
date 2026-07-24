@@ -138,3 +138,23 @@ def import_ranking_entries(
         created += 1
     db.commit()
     return {"created": created}
+
+
+@router.post("/leagues/{league_id}/ranking-lists/{list_id}/lock")
+def lock_ranking_list(
+    list_id: UUID,
+    membership: tuple[League, LeagueMember] = Depends(require_commissioner),
+    db: Session = Depends(get_db),
+) -> dict:
+    league, _ = membership
+    ranking_list = db.scalars(
+        select(RankingList).where(
+            RankingList.public_id == list_id,
+            RankingList.league_id == league.id,
+        )
+    ).first()
+    if ranking_list is None:
+        raise HTTPException(status_code=404, detail="Ranking list not found")
+    ranking_list.locked = True
+    db.commit()
+    return {"id": str(ranking_list.public_id), "locked": True}

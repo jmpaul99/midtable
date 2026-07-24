@@ -1,14 +1,13 @@
 "use client";
 
-import { use } from "react";
 import { AdminPanel } from "@/components/AdminPanel";
-import { LeagueShell } from "@/components/LeagueShell";
+import { useLeagueContext } from "@/components/LeagueShell";
+import { ErrorState } from "@/components/State";
 
-export default function LeagueAdminPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id } = use(params);
-  return (
-    <LeagueShell leagueId={id} requireCommissioner>
-      {(league) => <AdminPanel league={league} />}
-    </LeagueShell>
-  );
+export default function LeagueAdminPage() {
+  const { league, isCommissioner, reload } = useLeagueContext();
+  if (!isCommissioner) {
+    return <ErrorState error="Commissioner access required." />;
+  }
+  return <AdminPanel league={league} onLeagueChange={reload} />;
 }

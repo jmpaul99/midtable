@@ -2,78 +2,168 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
+import { useState } from "react";
 import { useAuth } from "@/lib/auth";
+import { cn } from "@/lib/cn";
+import { IconButton } from "@/components/ui/IconButton";
+import { LogInIcon, LogOutIcon, MenuIcon, XIcon } from "@/components/ui/icons";
+import { LeagueBottomNav, LeagueDesktopTabs, leagueNavItems } from "@/components/ui/BottomNav";
 
 export function Nav() {
   const { user, loading, isAdmin, signOut } = useAuth();
   const pathname = usePathname();
   const router = useRouter();
+  const [open, setOpen] = useState(false);
 
   async function handleSignOut() {
     await signOut();
-    router.replace("/");
+    setOpen(false);
+    router.replace("/login");
     router.refresh();
   }
 
+  const links = user
+    ? [
+        ...(isAdmin
+          ? [
+              {
+                href: "/leagues/new",
+                label: "Create a league",
+                active: pathname.startsWith("/leagues/new"),
+              },
+            ]
+          : []),
+        { href: "/profile", label: "Profile", active: pathname.startsWith("/profile") },
+      ]
+    : [];
+
   return (
-    <header className="topbar">
-      <div className="shell topbar-inner">
-        <Link className="brand" href="/">
-          <i className="brand-mark" aria-hidden />
-          <span>Draft League</span>
+    <header className="sticky top-0 z-40 border-b border-line bg-bg/90 backdrop-blur-md safe-pt">
+      <div className="mx-auto flex min-h-14 max-w-[1180px] items-center justify-between gap-3 px-4 sm:min-h-16 sm:px-5 [padding-left:max(1rem,env(safe-area-inset-left))] [padding-right:max(1rem,env(safe-area-inset-right))]">
+        <Link href="/" className="flex items-center gap-2.5 font-display text-lg font-extrabold tracking-tight">
+          <span
+            className="size-7 rounded-lg bg-gradient-to-br from-accent to-brand shadow-sm"
+            aria-hidden
+          />
+          <span>Midtable</span>
         </Link>
-        <nav className="nav" aria-label="Primary">
+
+        <nav className="hidden items-center gap-1 md:flex" aria-label="Primary">
           {!loading && user ? (
             <>
-              <Link href="/" className={pathname === "/" ? "active" : undefined}>
-                Leagues
-              </Link>
-              {isAdmin && (
-                <Link href="/templates" className={pathname.startsWith("/templates") ? "active" : undefined}>
-                  Templates
+              {links.map((link) => (
+                <Link
+                  key={link.href}
+                  href={link.href}
+                  className={cn(
+                    "rounded-lg px-3 py-2.5 text-sm font-bold transition",
+                    link.active ? "bg-surface-2 text-ink" : "text-muted hover:bg-surface-2 hover:text-ink",
+                  )}
+                >
+                  {link.label}
                 </Link>
-              )}
-              <button type="button" className="secondary" onClick={handleSignOut}>
-                Sign out
-              </button>
+              ))}
+              <IconButton type="button" variant="secondary" label="Sign out" onClick={handleSignOut}>
+                <LogOutIcon />
+              </IconButton>
             </>
           ) : (
             !loading && (
-              <Link className="button" href="/login">
+              <Link
+                href="/login"
+                className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-brand px-4 py-2.5 text-sm font-bold text-on-brand hover:bg-brand-dark"
+              >
+                <LogInIcon className="size-4" />
                 Sign in
               </Link>
             )
           )}
         </nav>
+
+        <div className="md:hidden">
+          {!loading && (
+            <IconButton
+              type="button"
+              variant="secondary"
+              label={open ? "Close menu" : "Open menu"}
+              aria-expanded={open}
+              aria-controls="mobile-menu"
+              onClick={() => setOpen((v) => !v)}
+            >
+              {open ? <XIcon /> : <MenuIcon />}
+            </IconButton>
+          )}
+        </div>
       </div>
+
+      {open && (
+        <div
+          id="mobile-menu"
+          className="animate-in border-t border-line bg-bg px-4 py-3 md:hidden [padding-left:max(1rem,env(safe-area-inset-left))] [padding-right:max(1rem,env(safe-area-inset-right))]"
+        >
+          <div className="flex flex-col gap-1">
+            {!loading && user ? (
+              <>
+                {links.map((link) => (
+                  <Link
+                    key={link.href}
+                    href={link.href}
+                    onClick={() => setOpen(false)}
+                    className={cn(
+                      "rounded-xl px-3 py-3 text-sm font-bold",
+                      link.active ? "bg-surface-2 text-ink" : "text-muted",
+                    )}
+                  >
+                    {link.label}
+                  </Link>
+                ))}
+                <div className="pt-1">
+                  <IconButton
+                    type="button"
+                    variant="secondary"
+                    label="Sign out"
+                    onClick={handleSignOut}
+                  >
+                    <LogOutIcon />
+                  </IconButton>
+                </div>
+              </>
+            ) : (
+              !loading && (
+                <Link
+                  href="/login"
+                  onClick={() => setOpen(false)}
+                  className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-brand px-4 py-2.5 text-sm font-bold text-on-brand"
+                >
+                  <LogInIcon className="size-4" />
+                  Sign in
+                </Link>
+              )
+            )}
+          </div>
+        </div>
+      )}
     </header>
   );
 }
 
-export function LeagueNav({ leagueId, role }: { leagueId: string; role?: string }) {
-  const pathname = usePathname();
+export function LeagueNav({
+  leagueId,
+  role,
+  status,
+  onTheClock = false,
+}: {
+  leagueId: string;
+  role?: string;
+  status?: string;
+  onTheClock?: boolean;
+}) {
   const commissioner = role === "owner" || role === "commissioner";
-  const items = [
-    { href: `/leagues/${leagueId}`, label: "Standings", exact: true },
-    { href: `/leagues/${leagueId}/draft`, label: "Draft" },
-    { href: `/leagues/${leagueId}/roster`, label: "Roster" },
-    { href: `/leagues/${leagueId}/matches`, label: "Matches" },
-    { href: `/leagues/${leagueId}/stats`, label: "Stats" },
-    ...(commissioner ? [{ href: `/leagues/${leagueId}/admin`, label: "Admin" }] : []),
-  ];
-
+  const items = leagueNavItems(leagueId, commissioner, status, onTheClock);
   return (
-    <nav className="tabs league-subnav" aria-label="League sections">
-      {items.map((item) => {
-        const active = item.exact
-          ? pathname === item.href
-          : pathname === item.href || pathname.startsWith(`${item.href}/`);
-        return (
-          <Link key={item.href} href={item.href} className={active ? "active" : undefined}>
-            {item.label}
-          </Link>
-        );
-      })}
-    </nav>
+    <>
+      <LeagueDesktopTabs items={items} />
+      <LeagueBottomNav items={items} />
+    </>
   );
 }

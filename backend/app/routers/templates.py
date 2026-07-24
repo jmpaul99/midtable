@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.auth.jwt import get_current_profile
 from app.db import get_db
+from app.deps import require_platform_admin
 from app.models import CompetitionTemplate, Profile
 from app.schemas.templates import TemplateCreate, TemplateResponse, TemplateUpdate
 
@@ -24,7 +25,7 @@ def list_templates(
 @router.post("/templates", response_model=TemplateResponse, status_code=201)
 def create_template(
     payload: TemplateCreate,
-    _: Profile = Depends(get_current_profile),
+    _: object = Depends(require_platform_admin),
     db: Session = Depends(get_db),
 ) -> TemplateResponse:
     existing = db.scalars(
@@ -57,7 +58,7 @@ def get_template(
 def update_template(
     template_id: UUID,
     payload: TemplateUpdate,
-    _: Profile = Depends(get_current_profile),
+    _: object = Depends(require_platform_admin),
     db: Session = Depends(get_db),
 ) -> TemplateResponse:
     row = db.scalars(
@@ -75,7 +76,7 @@ def update_template(
 @router.post("/templates/{template_id}/duplicate", response_model=TemplateResponse, status_code=201)
 def duplicate_template(
     template_id: UUID,
-    _: Profile = Depends(get_current_profile),
+    _: object = Depends(require_platform_admin),
     db: Session = Depends(get_db),
 ) -> TemplateResponse:
     source = db.scalars(
@@ -114,7 +115,7 @@ def duplicate_template(
 @router.delete("/templates/{template_id}", status_code=204)
 def delete_template(
     template_id: UUID,
-    _: Profile = Depends(get_current_profile),
+    _: object = Depends(require_platform_admin),
     db: Session = Depends(get_db),
 ) -> None:
     row = db.scalars(

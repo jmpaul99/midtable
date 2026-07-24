@@ -11,7 +11,18 @@ import {
 } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import type { Session, User } from "@supabase/supabase-js";
+import { api } from "./api";
+import type { Me } from "./types";
 import { supabase } from "./supabase";
+import { Loading } from "@/components/ui/State";
+
+function AuthLoading() {
+  return <Loading label="Checking your session" />;
+}
+
+function jwtLooksAdmin(user: User | null | undefined): boolean {
+  return ["admin", "service_role"].includes(String(user?.app_metadata?.role));
+}
 
 interface AuthContextValue {
   user: User | null;
@@ -27,6 +38,7 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
+  const [isAdmin, setIsAdmin] = useState(false);
 
   const refresh = useCallback(async () => {
     const { data } = await supabase().auth.getSession();
@@ -58,22 +70,43 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+    if (!session) {
+      setIsAdmin(false);
+      return;
+    }
+
+    setIsAdmin(jwtLooksAdmin(session.user));
+    api<Me>("/auth/me")
+      .then((me) => {
+        if (!cancelled) setIsAdmin(Boolean(me.is_platform_admin));
+      })
+      .catch(() => {
+        if (!cancelled) setIsAdmin(jwtLooksAdmin(session.user));
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [session]);
+
   const signOut = useCallback(async () => {
     await supabase().auth.signOut();
     setSession(null);
   }, []);
 
-  const value = useMemo<AuthContextValue>(() => {
-    const user = session?.user ?? null;
-    return {
-      user,
+  const value = useMemo<AuthContextValue>(
+    () => ({
+      user: session?.user ?? null,
       session,
       loading,
-      isAdmin: ["admin", "service_role"].includes(String(user?.app_metadata?.role)),
+      isAdmin,
       signOut,
       refresh,
-    };
-  }, [session, loading, signOut, refresh]);
+    }),
+    [session, loading, isAdmin, signOut, refresh],
+  );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
@@ -98,14 +131,7 @@ export function RequireAuth({ children }: { children: ReactNode }) {
   }, [loading, session, router, pathname]);
 
   if (loading || !session) {
-    return (
-      <div className="loading" role="status">
-        <div className="stack" style={{ justifyItems: "center" }}>
-          <i className="spinner" />
-          <span>Checking your session…</span>
-        </div>
-      </div>
-    );
+    return <AuthLoading />;
   }
 
   return children;

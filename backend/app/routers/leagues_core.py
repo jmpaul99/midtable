@@ -1,0 +1,315 @@
+"""League CRUD + settings."""
+from __future__ import annotations
+
+from datetime import UTC, datetime
+from uuid import UUID
+
+from fastapi import APIRouter, Depends, HTTPException, Response, status
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.auth.jwt import AuthenticatedUser, get_current_profile
+from app.db import get_db
+from app.deps import require_commissioner, require_league_member, require_platform_admin
+from app.models import CompetitionTemplate, DraftState, League, LeagueMember, PoolTeam, Profile, TeamPool
+from app.routers.league_mappers import (
+    _league_detail,
+    _league_response,
+    _member_response,
+)
+from app.schemas.leagues import (
+    LeagueCreate,
+    LeagueDetailResponse,
+    LeagueResponse,
+    LeagueSettingsUpdate,
+    MemberAdminUpdate,
+    MemberResponse,
+    MemberSelfUpdate,
+)
+from app.services.bootstrap import attach_template_structure
+from app.services.members import (
+    default_team_name,
+    is_sole_commissioner,
+    renumber_draft_slots,
+)
+from app.services import analytics as analytics_service
+
+router = APIRouter(tags=["leagues"])
+
+
+def _league_list_sort_key(league: League) -> tuple[bool, datetime]:
+    """Active seasons first; within a group, newest created first (caller uses reverse=True)."""
+    created = league.created_at or datetime.min.replace(tzinfo=UTC)
+    return (league.status != "complete", created)
+
+
+def _my_standing(
+    db: Session, league: League, membership: LeagueMember
+) -> tuple[int | None, int, float | None, bool]:
+    """Return (rank, member_count, points, has_scored) for the current membership."""
+    try:
+        entries = analytics_service.leaderboard(db, league, phase_key=None)
+    except ValueError:
+        members = db.scalars(
+            select(LeagueMember).where(LeagueMember.league_id == league.id)
+        ).all()
+        return None, len(members), None, False
+    member_key = str(membership.public_id)
+    mine = next((row for row in entries if row.get("member_id") == member_key), None)
+    rank = int(mine["rank"]) if mine and mine.get("rank") is not None else None
+    points = float(mine["total_points"]) if mine and mine.get("total_points") is not None else None
+    has_scored = any(float(row.get("total_points") or 0) > 0 for row in entries)
+    return rank, len(entries), points, has_scored
+
+
+@router.get("/leagues", response_model=list[LeagueResponse])
+def list_leagues(
+    profile: Profile = Depends(get_current_profile),
+    db: Session = Depends(get_db),
+) -> list[LeagueResponse]:
+    memberships = db.scalars(
+        select(LeagueMember).where(LeagueMember.profile_id == profile.id)
+    ).all()
+    league_ids = [m.league_id for m in memberships]
+    if not league_ids:
+        return []
+    by_league = {m.league_id: m for m in memberships}
+    leagues = sorted(
+        db.scalars(select(League).where(League.id.in_(league_ids))).all(),
+        key=_league_list_sort_key,
+        reverse=True,
+    )
+    rows: list[LeagueResponse] = []
+    for league in leagues:
+        membership = by_league[league.id]
+        my_rank, member_count, my_points, has_scored = _my_standing(db, league, membership)
+        rows.append(
+            _league_response(
+                league,
+                role="commissioner" if membership.is_commissioner else "member",
+                my_rank=my_rank,
+                member_count=member_count,
+                my_points=my_points,
+                my_draft_slot=membership.draft_slot,
+                has_scored=has_scored,
+            )
+        )
+    return rows
+
+
+@router.post("/leagues", response_model=LeagueDetailResponse)
+def create_league(
+    payload: LeagueCreate,
+    _: AuthenticatedUser = Depends(require_platform_admin),
+    profile: Profile = Depends(get_current_profile),
+    db: Session = Depends(get_db),
+) -> LeagueDetailResponse:
+    template = None
+    if payload.template_id:
+        template = db.scalars(
+            select(CompetitionTemplate).where(
+                CompetitionTemplate.public_id == payload.template_id
+            )
+        ).first()
+        if template is None:
+            raise HTTPException(status_code=404, detail="Template not found")
+    league = League(
+        template_id=template.id if template else None,
+        name=payload.name,
+        season_label=payload.season_label,
+        draft_style=payload.draft_style if not template else template.draft_style,
+        preassign_mode=payload.preassign_mode if not template else template.preassign_mode,
+        result_points=(template.result_points if template else {"win": 3, "draw": 1}),
+        upset_rules=(template.upset_rules if template else {}),
+        leaderboard_phases=(template.leaderboard_phases if template else []),
+        leaderboard_tiebreaks=(
+            template.leaderboard_tiebreaks
+            if template
+            else [{"metric": "total_points", "direction": "desc"}]
+        ),
+        buy_in=(template.buy_in if template else 0),
+        payouts=(template.payouts if template else []),
+        config={"max_members": payload.max_members},
+    )
+    db.add(league)
+    db.flush()
+    member = LeagueMember(
+        league_id=league.id,
+        profile_id=profile.id,
+        is_commissioner=True,
+        draft_slot=1,
+        team_name=default_team_name(profile.display_name),
+    )
+    db.add(member)
+    if template:
+        attach_template_structure(db, league=league, template=template)
+    else:
+        db.add(DraftState(league_id=league.id, current_pick_number=1, status="pending"))
+    db.commit()
+    db.refresh(league)
+    db.refresh(member)
+    return _league_detail(db, league, member)
+
+
+@router.get("/leagues/{league_id}", response_model=LeagueDetailResponse)
+def get_league(
+    membership: tuple[League, LeagueMember] = Depends(require_league_member),
+    db: Session = Depends(get_db),
+) -> LeagueDetailResponse:
+    league, member = membership
+    return _league_detail(db, league, member)
+
+
+@router.get("/leagues/{league_id}/members", response_model=list[MemberResponse])
+def list_members(
+    membership: tuple[League, LeagueMember] = Depends(require_league_member),
+    db: Session = Depends(get_db),
+) -> list[MemberResponse]:
+    league, _ = membership
+    members = db.scalars(
+        select(LeagueMember).where(LeagueMember.league_id == league.id)
+    ).all()
+    return [_member_response(m, db.get(Profile, m.profile_id)) for m in members]
+
+
+@router.patch("/leagues/{league_id}/members/me", response_model=MemberResponse)
+def update_my_membership(
+    payload: MemberSelfUpdate,
+    membership: tuple[League, LeagueMember] = Depends(require_league_member),
+    db: Session = Depends(get_db),
+) -> MemberResponse:
+    """Update the current user's fantasy team name in this league."""
+    _, member = membership
+    data = payload.model_dump(exclude_unset=True)
+    if "team_name" in data:
+        member.team_name = data["team_name"]
+    db.commit()
+    db.refresh(member)
+    return _member_response(member, db.get(Profile, member.profile_id))
+
+
+@router.patch("/leagues/{league_id}/members/{member_id}", response_model=MemberResponse)
+def update_member(
+    member_id: UUID,
+    payload: MemberAdminUpdate,
+    membership: tuple[League, LeagueMember] = Depends(require_commissioner),
+    db: Session = Depends(get_db),
+) -> MemberResponse:
+    """Appoint or demote a commissioner on an existing membership."""
+    league, _ = membership
+    members = list(
+        db.scalars(select(LeagueMember).where(LeagueMember.league_id == league.id)).all()
+    )
+    target = next((m for m in members if m.public_id == member_id), None)
+    if target is None:
+        raise HTTPException(status_code=404, detail="Manager not found")
+    if not payload.is_commissioner and is_sole_commissioner(target, members):
+        raise HTTPException(
+            status_code=409,
+            detail="Cannot demote the last commissioner",
+        )
+    target.is_commissioner = payload.is_commissioner
+    db.commit()
+    db.refresh(target)
+    return _member_response(target, db.get(Profile, target.profile_id))
+
+
+@router.delete(
+    "/leagues/{league_id}/members/{member_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def remove_member(
+    member_id: UUID,
+    membership: tuple[League, LeagueMember] = Depends(require_commissioner),
+    db: Session = Depends(get_db),
+) -> Response:
+    """Remove a manager before the draft opens."""
+    league, actor = membership
+    if league.status != "pre_draft":
+        raise HTTPException(
+            status_code=409,
+            detail="Managers can only be removed before the draft opens",
+        )
+    members = list(
+        db.scalars(select(LeagueMember).where(LeagueMember.league_id == league.id)).all()
+    )
+    target = next((m for m in members if m.public_id == member_id), None)
+    if target is None:
+        raise HTTPException(status_code=404, detail="Manager not found")
+    if target.id == actor.id and is_sole_commissioner(target, members):
+        raise HTTPException(
+            status_code=409,
+            detail="Cannot remove the last commissioner",
+        )
+    remaining = [m for m in members if m.id != target.id]
+    db.delete(target)
+    db.flush()
+    renumber_draft_slots(remaining)
+    db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.patch("/leagues/{league_id}/settings", response_model=LeagueDetailResponse)
+def update_settings(
+    payload: LeagueSettingsUpdate,
+    membership: tuple[League, LeagueMember] = Depends(require_commissioner),
+    db: Session = Depends(get_db),
+) -> LeagueDetailResponse:
+    league, member = membership
+    data = payload.model_dump(exclude_unset=True)
+    max_members = data.pop("max_members", None)
+    pools_patch = data.pop("pools", None)
+    for key, value in data.items():
+        setattr(league, key, value)
+    if max_members is not None:
+        config = dict(league.config or {})
+        config["max_members"] = max_members
+        league.config = config
+    if pools_patch is not None:
+        member_count = len(
+            list(db.scalars(select(LeagueMember).where(LeagueMember.league_id == league.id)).all())
+        )
+        cfg_max = (league.config or {}).get("max_members")
+        try:
+            configured_max = int(cfg_max) if cfg_max is not None else None
+        except (TypeError, ValueError):
+            configured_max = None
+        manager_capacity = max(member_count, configured_max or 0, 1)
+
+        for item in pools_patch:
+            pool = db.scalars(
+                select(TeamPool).where(
+                    TeamPool.public_id == item["id"],
+                    TeamPool.league_id == league.id,
+                )
+            ).first()
+            if pool is None:
+                raise HTTPException(status_code=404, detail=f"Competition not found: {item['id']}")
+            if "sort_order" in item and item["sort_order"] is not None:
+                pool.sort_order = int(item["sort_order"])
+            if "label" in item and item["label"] is not None:
+                pool.label = item["label"]
+            if "scores_match_results" in item and item["scores_match_results"] is not None:
+                pool.scores_match_results = bool(item["scores_match_results"])
+            if "slot_count" in item and item["slot_count"] is not None:
+                new_slots = int(item["slot_count"])
+                team_count = len(
+                    list(db.scalars(select(PoolTeam).where(PoolTeam.pool_id == pool.id)).all())
+                )
+                needed = new_slots * manager_capacity
+                if team_count > 0 and needed > team_count:
+                    label = pool.label or pool.key
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            f"{label}: {new_slots} roster slots × {manager_capacity} managers "
+                            f"needs {needed} clubs, but only {team_count} are loaded. "
+                            "Lower slots, reduce max managers, or load more clubs."
+                        ),
+                    )
+                pool.slot_count = new_slots
+    db.commit()
+    db.refresh(league)
+    return _league_detail(db, league, member)
+
+

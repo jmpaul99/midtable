@@ -1,5 +1,6 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextRequest, NextResponse } from "next/server";
+import { supabasePublishableKey } from "@/lib/supabase-env";
 
 export async function GET(request: NextRequest) {
   const url = new URL(request.url);
@@ -15,14 +16,24 @@ export async function GET(request: NextRequest) {
     );
   }
 
+  const publishableKey = supabasePublishableKey();
+  if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !publishableKey) {
+    return NextResponse.redirect(
+      new URL("/login?error=Supabase%20is%20not%20configured", url.origin),
+    );
+  }
+
   const client = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    process.env.NEXT_PUBLIC_SUPABASE_URL,
+    publishableKey,
     {
       cookies: {
         getAll: () => request.cookies.getAll(),
-        setAll: (cookies) =>
-          cookies.forEach(({ name, value, options }) => response.cookies.set(name, value, options)),
+        setAll: (cookiesToSet: { name: string; value: string; options?: Record<string, unknown> }[]) => {
+          cookiesToSet.forEach(({ name, value, options }) => {
+            response.cookies.set(name, value, options);
+          });
+        },
       },
     },
   );

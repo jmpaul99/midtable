@@ -1,6 +1,7 @@
 from app.models.entities import (
     BonusType,
     CompetitionTemplate,
+    DraftIdempotencyKey,
     DraftPick,
     DraftState,
     Invite,
@@ -24,6 +25,7 @@ from app.models.entities import (
 __all__ = [
     "BonusType",
     "CompetitionTemplate",
+    "DraftIdempotencyKey",
     "DraftPick",
     "DraftState",
     "Invite",

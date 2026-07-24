@@ -1,14 +1,16 @@
 "use client";
 
-import { use } from "react";
-import { LeagueShell } from "@/components/LeagueShell";
+import { useLeagueContext } from "@/components/LeagueShell";
 import { RosterGrid } from "@/components/RosterGrid";
 
-export default function LeagueRosterPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id } = use(params);
+export default function LeagueRosterPage() {
+  const { league, reload } = useLeagueContext();
   return (
-    <LeagueShell leagueId={id}>
-      {() => <RosterGrid leagueId={id} />}
-    </LeagueShell>
+    <RosterGrid
+      leagueId={league.id}
+      members={league.members}
+      currentMemberId={league.current_member_id}
+      onTeamNameSaved={reload}
+    />
   );
 }

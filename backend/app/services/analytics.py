@@ -10,7 +10,18 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import League, LeagueMember, ManualBonus, Match, RosterEntry, ScoringEvent, Team
+from app.models import (
+    League,
+    LeagueMember,
+    ManualBonus,
+    Match,
+    Profile,
+    RosterEntry,
+    ScoringEvent,
+    Team,
+)
+from app.services.members import member_label
+from app.services.payouts import apply_payouts
 from app.services.scoring import (
     MemberPoints,
     match_passes_phase_filter,
@@ -115,16 +126,85 @@ def leaderboard(
     ]
     ranked = rank_leaderboard(member_points, league.leaderboard_tiebreaks or [{"metric": "total_points"}])
     public_by_id = {m.id: m for m in members}
-    return [
-        {
-            "rank": entry.rank,
-            "member_id": str(public_by_id[entry.member_id].public_id),
-            "total_points": float(entry.total_points),
-            "rung_values": [float(v) if isinstance(v, Decimal) else v for v in entry.rung_values],
-        }
-        for entry in ranked
-        if entry.member_id in public_by_id
-    ]
+    points_by_id = {m.member_id: m for m in member_points}
+    profiles = {m.id: db.get(Profile, m.profile_id) for m in members}
+    tiebreaks = league.leaderboard_tiebreaks or [{"metric": "total_points", "direction": "desc"}]
+    entries = []
+    for entry in ranked:
+        member = public_by_id.get(entry.member_id)
+        if member is None:
+            continue
+        profile = profiles.get(member.id)
+        mp = points_by_id.get(entry.member_id)
+        upset = 0.0
+        win_count = 0
+        if mp:
+            upset = float(
+                mp.event_points_by_type.get("minor_upset", 0)
+                + mp.event_points_by_type.get("major_upset", 0)
+                + mp.event_points_by_type.get("major_upset_draw", 0)
+            )
+            win_count = int(mp.event_counts_by_type.get("win", 0) or 0)
+        metric_values = []
+        for idx, rung in enumerate(tiebreaks):
+            value = entry.rung_values[idx] if idx < len(entry.rung_values) else 0
+            if isinstance(rung, dict):
+                metric_values.append(
+                    {**rung, "value": float(value) if isinstance(value, Decimal) else value}
+                )
+            else:
+                metric_values.append(
+                    {"metric": str(rung), "value": float(value) if isinstance(value, Decimal) else value}
+                )
+        entries.append(
+            {
+                "rank": entry.rank,
+                "member_id": str(member.public_id),
+                "display_name": member_label(member, profile),
+                "team_name": member.team_name,
+                "owner_name": (profile.display_name if profile else None) or None,
+                "total_points": float(entry.total_points),
+                "upset_points": upset,
+                "win_count": win_count,
+                "payout": 0,
+                "metric_values": metric_values,
+                "rung_values": [
+                    float(v) if isinstance(v, Decimal) else v for v in entry.rung_values
+                ],
+            }
+        )
+    return apply_payouts(entries, league.payouts, phase_key)
+
+
+def phase_match_counts(
+    matches: list[Any],
+    *,
+    match_filter: dict[str, Any] | None,
+    scoring_pool_ids: set[int] | None = None,
+) -> dict[str, Any]:
+    """Count matches in a phase slice for completeness / payout readiness."""
+    finished_statuses = {"FINISHED", "AWARDED"}
+    matching = 0
+    finished = 0
+    for match in matches:
+        if scoring_pool_ids is not None and getattr(match, "pool_id", None) not in scoring_pool_ids:
+            continue
+        if not match_passes_phase_filter(
+            scheduled_matchweek=getattr(match, "scheduled_matchweek", None),
+            stage=getattr(match, "stage", None),
+            match_filter=match_filter,
+        ):
+            continue
+        matching += 1
+        if getattr(match, "status", None) in finished_statuses:
+            finished += 1
+    remaining = matching - finished
+    return {
+        "matching_matches": matching,
+        "finished_matches": finished,
+        "remaining_matches": remaining,
+        "is_final": matching > 0 and remaining == 0,
+    }
 
 
 def points_per_game(
@@ -136,7 +216,10 @@ def points_per_game(
     roster_q = select(RosterEntry).where(RosterEntry.league_id == league.id)
     if member_public_id:
         member = db.scalars(
-            select(LeagueMember).where(LeagueMember.public_id == member_public_id)
+            select(LeagueMember).where(
+                LeagueMember.public_id == member_public_id,
+                LeagueMember.league_id == league.id,
+            )
         ).first()
         if member is None:
             return []
@@ -160,13 +243,14 @@ def points_per_game(
             )
         ).all()
         gp = len(games)
+        member = db.get(LeagueMember, entry.member_id)
+        profile = db.get(Profile, member.profile_id) if member else None
         results.append(
             {
                 "team_id": str(team.public_id) if team else None,
                 "team_name": team.name if team else None,
-                "member_id": str(
-                    db.get(LeagueMember, entry.member_id).public_id  # type: ignore[union-attr]
-                ),
+                "member_id": str(member.public_id) if member else None,
+                "display_name": member_label(member, profile) if member else None,
                 "points": float(points),
                 "games_played": gp,
                 "points_per_game": float(points / gp) if gp else 0.0,
@@ -198,9 +282,11 @@ def matchweek_breakdown(db: Session, league: League) -> list[dict[str, Any]]:
         member = members.get(member_id)
         if not member:
             continue
+        profile = db.get(Profile, member.profile_id)
         rows.append(
             {
                 "member_id": str(member.public_id),
+                "display_name": member_label(member, profile),
                 "scheduled_matchweek": mw,
                 "points": float(pts),
             }
@@ -234,6 +320,12 @@ def upset_stats(db: Session, league: League) -> list[dict[str, Any]]:
     return [
         {
             "member_id": str(members[mid].public_id),
+            "display_name": member_label(
+                members[mid],
+                db.get(Profile, members[mid].profile_id),
+            ),
+            "count": data["count"],
+            "points": float(data["points"]),
             "upset_count": data["count"],
             "upset_points": float(data["points"]),
             "by_type": {k: float(v) for k, v in data["by_type"].items()},

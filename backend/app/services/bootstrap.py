@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
+from app.services.errors import (
+    ConflictError,
+    DomainError,
+    ForbiddenError,
+    NotFoundError,
+)
+
 from copy import deepcopy
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Any
 
-from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -72,13 +78,12 @@ def bootstrap_season(
     pool_provider_params: list[dict[str, Any]],
     scheduled_start_date: date | None = None,
     scheduled_end_date: date | None = None,
+    max_members: int | None = None,
     force: bool = False,
 ) -> League:
     blockers = prior_leagues_blocking(db, template_key=template.key)
     if blockers and not force:
-        raise HTTPException(
-            status_code=409,
-            detail={"message": "prior seasons block bootstrap", "blockers": blockers},
+        raise ConflictError({"message": "prior seasons block bootstrap", "blockers": blockers},
         )
 
     # Validate provider seasons for each scoring / listed pool
@@ -87,9 +92,7 @@ def bootstrap_season(
         year = int(params["season_year"])
         info, _ = provider.resolve_competition_season(code, year)
         if not info.available:
-            raise HTTPException(
-                status_code=409,
-                detail={
+            raise ConflictError({
                     "message": "provider season not available",
                     "competition_code": code,
                     "season_year": year,
@@ -110,6 +113,7 @@ def bootstrap_season(
         leaderboard_tiebreaks=deepcopy(template.leaderboard_tiebreaks),
         buy_in=template.buy_in,
         payouts=deepcopy(template.payouts),
+        config={"max_members": max_members} if max_members is not None else {},
         scheduled_start_date=scheduled_start_date,
         scheduled_end_date=scheduled_end_date,
     )
@@ -117,7 +121,7 @@ def bootstrap_season(
     db.flush()
 
     params_by_key = {p["key"]: p for p in pool_provider_params}
-    for definition in template.pool_definitions or []:
+    for index, definition in enumerate(template.pool_definitions or []):
         key = definition["key"]
         params = params_by_key.get(key, {})
         pool = TeamPool(
@@ -126,6 +130,7 @@ def bootstrap_season(
             label=definition.get("label", key),
             scores_match_results=bool(definition.get("scores_match_results", True)),
             slot_count=int(definition.get("slot_count", definition.get("slots_per_member", 0))),
+            sort_order=int(definition.get("sort_order", index + 1)),
             tie_break_order=definition.get(
                 "tie_break_order", ["points", "gd", "gf", "name"]
             ),
@@ -175,3 +180,147 @@ def bootstrap_season(
     db.add(DraftState(league_id=league.id, current_pick_number=1, status="pending"))
     db.flush()
     return league
+
+
+def attach_template_structure(
+    db: Session,
+    *,
+    league: League,
+    template: CompetitionTemplate,
+) -> None:
+    """Clone pools, bonus types, and draft state from a template without provider calls."""
+    for index, definition in enumerate(template.pool_definitions or []):
+        key = definition["key"]
+        db.add(
+            TeamPool(
+                league_id=league.id,
+                key=key,
+                label=definition.get("label", key),
+                scores_match_results=bool(definition.get("scores_match_results", True)),
+                slot_count=int(definition.get("slot_count", definition.get("slots_per_member", 0))),
+                sort_order=int(definition.get("sort_order", index + 1)),
+                tie_break_order=definition.get(
+                    "tie_break_order", ["points", "gd", "gf", "name"]
+                ),
+                provider=definition.get("provider", "football-data.org"),
+                competition_code=definition.get("competition_code"),
+                season_year=definition.get("season_year"),
+            )
+        )
+    for index, bonus in enumerate(template.bonus_types or []):
+        db.add(
+            BonusType(
+                league_id=league.id,
+                key=bonus["key"],
+                label=bonus["label"],
+                default_points=Decimal(str(bonus.get("default_points", bonus.get("points", 0)))),
+                sort_order=int(bonus.get("sort_order", index)),
+                include_in_phases=bonus.get("include_in_phases", []),
+            )
+        )
+    existing = db.scalars(select(DraftState).where(DraftState.league_id == league.id)).first()
+    if existing is None:
+        db.add(DraftState(league_id=league.id, current_pick_number=1, status="pending"))
+    db.flush()
+
+
+def bootstrap_teams_for_league(
+    db: Session,
+    *,
+    league: League,
+    provider: FootballProvider,
+    pool_provider_params: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Load provider teams into existing league pools (does not create the league)."""
+    params_by_key = {p["key"]: p for p in (pool_provider_params or []) if "key" in p}
+    pools = list(db.scalars(select(TeamPool).where(TeamPool.league_id == league.id)).all())
+    if not pools:
+        raise ConflictError("League has no pools to bootstrap")
+
+    created_teams = 0
+    linked = 0
+    skipped_existing = 0
+    pool_summaries: list[dict[str, Any]] = []
+
+    for pool in pools:
+        override = params_by_key.get(pool.key, {})
+        if "competition_code" in override:
+            pool.competition_code = override["competition_code"]
+        if "season_year" in override:
+            pool.season_year = int(override["season_year"])
+        if "provider" in override:
+            pool.provider = override["provider"]
+
+        if not pool.competition_code or not pool.season_year:
+            pool_summaries.append(
+                {
+                    "pool_key": pool.key,
+                    "error": "missing competition_code or season_year",
+                    "linked": 0,
+                }
+            )
+            continue
+
+        info, _ = provider.resolve_competition_season(
+            pool.competition_code, int(pool.season_year)
+        )
+        if not info.available:
+            raise ConflictError({
+                    "message": "provider season not available",
+                    "pool_key": pool.key,
+                    "competition_code": pool.competition_code,
+                    "season_year": pool.season_year,
+                    "provider_message": info.message,
+                },
+            )
+
+        teams, _ = provider.list_teams(pool.competition_code, int(pool.season_year))
+        pool_linked = 0
+        for pt in teams:
+            team = db.scalars(
+                select(Team).where(
+                    Team.provider == pool.provider,
+                    Team.external_id == pt.external_id,
+                )
+            ).first()
+            if team is None:
+                team = Team(
+                    provider=pool.provider,
+                    external_id=pt.external_id,
+                    name=pt.name,
+                    short_name=pt.short_name,
+                    tla=pt.tla,
+                    crest_url=pt.crest_url,
+                )
+                db.add(team)
+                db.flush()
+                created_teams += 1
+            existing_link = db.scalars(
+                select(PoolTeam).where(
+                    PoolTeam.pool_id == pool.id,
+                    PoolTeam.team_id == team.id,
+                )
+            ).first()
+            if existing_link:
+                skipped_existing += 1
+                continue
+            db.add(PoolTeam(pool_id=pool.id, team_id=team.id))
+            linked += 1
+            pool_linked += 1
+        pool_summaries.append(
+            {
+                "pool_key": pool.key,
+                "competition_code": pool.competition_code,
+                "season_year": pool.season_year,
+                "linked": pool_linked,
+                "provider_team_count": len(teams),
+            }
+        )
+
+    db.flush()
+    return {
+        "created_teams": created_teams,
+        "linked": linked,
+        "skipped_existing": skipped_existing,
+        "pools": pool_summaries,
+    }

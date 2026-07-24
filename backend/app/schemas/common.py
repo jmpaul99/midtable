@@ -12,6 +12,7 @@ class HealthResponse(BaseModel):
     status: str
     version: str
     timestamp: datetime
+    dev_tools_enabled: bool = False
 
 
 class MessageResponse(BaseModel):

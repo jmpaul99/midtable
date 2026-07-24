@@ -4,7 +4,12 @@ import { FormEvent, Suspense, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { errorMessage } from "@/lib/api";
-import { Loading } from "@/components/State";
+import { Loading, StatusBanner } from "@/components/ui/State";
+import { Button } from "@/components/ui/Button";
+import { LogInIcon, SendIcon, UserPlusIcon, SpinnerIcon } from "@/components/ui/icons";
+import { Card, Eyebrow, Muted, Stack } from "@/components/ui/Card";
+import { Input, Label } from "@/components/ui/Field";
+import { cn } from "@/lib/cn";
 
 export default function LoginPage() {
   return (
@@ -19,12 +24,11 @@ function LoginForm() {
   const router = useRouter();
   const requestedNext = search.get("next");
   const next =
-    requestedNext?.startsWith("/") && !requestedNext.startsWith("//")
-      ? requestedNext
-      : "/";
+    requestedNext?.startsWith("/") && !requestedNext.startsWith("//") ? requestedNext : "/";
   const [mode, setMode] = useState<"signin" | "signup" | "magic">("signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [displayName, setDisplayName] = useState("");
   const [message, setMessage] = useState(search.get("error") || "");
   const [busy, setBusy] = useState(false);
 
@@ -45,10 +49,18 @@ function LoginForm() {
         if (error) throw error;
         setMessage("Magic link sent. Check your inbox.");
       } else if (mode === "signup") {
+        const name = displayName.trim();
+        if (!name) {
+          setMessage("Display name is required.");
+          return;
+        }
         const { error } = await supabase().auth.signUp({
           email,
           password,
-          options: { emailRedirectTo: callbackUrl() },
+          options: {
+            emailRedirectTo: callbackUrl(),
+            data: { display_name: name },
+          },
         });
         if (error) throw error;
         setMessage("Account created. Check your email to confirm it.");
@@ -65,103 +77,109 @@ function LoginForm() {
     }
   }
 
-  async function oauth(provider: "google" | "github") {
-    setBusy(true);
-    setMessage("");
-    const { error } = await supabase().auth.signInWithOAuth({
-      provider,
-      options: { redirectTo: callbackUrl() },
-    });
-    if (error) {
-      setMessage(error.message);
-      setBusy(false);
-    }
-  }
-
   return (
-    <section className="auth">
-      <div className="panel auth-card stack">
-        <div>
-          <p className="eyebrow">Welcome</p>
-          <h1 style={{ fontSize: "2.25rem" }}>Sign in</h1>
-          <p className="muted">Magic link, password, or OAuth. Leagues remain invite-only.</p>
-        </div>
-
-        <div className="oauth">
-          <button type="button" className="secondary" disabled={busy} onClick={() => oauth("google")}>
-            Google
-          </button>
-          <button type="button" className="secondary" disabled={busy} onClick={() => oauth("github")}>
-            GitHub
-          </button>
-        </div>
-
-        <div className="divider">or use email</div>
-
-        <div className="tabs" role="tablist" aria-label="Authentication method">
-          {(
-            [
-              ["signin", "Sign in"],
-              ["signup", "Sign up"],
-              ["magic", "Magic link"],
-            ] as const
-          ).map(([key, label]) => (
-            <button
-              type="button"
-              role="tab"
-              key={key}
-              aria-selected={mode === key}
-              onClick={() => setMode(key)}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-
-        <form className="stack" onSubmit={submit}>
-          <label>
-            Email
-            <input
-              type="email"
-              autoComplete="email"
-              required
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-            />
-          </label>
-          {mode !== "magic" && (
-            <label>
-              Password
-              <input
-                type="password"
-                minLength={6}
-                autoComplete={mode === "signup" ? "new-password" : "current-password"}
-                required
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-              />
-            </label>
-          )}
-          <button type="submit" disabled={busy}>
-            {busy
-              ? "Please wait…"
-              : mode === "signin"
-                ? "Sign in"
-                : mode === "signup"
-                  ? "Create account"
-                  : "Send magic link"}
-          </button>
-        </form>
-
-        {message && (
-          <div
-            className={`notice ${/error|invalid|failed|missing/i.test(message) ? "error" : ""}`}
-            role="status"
-          >
-            {message}
+    <section className="mx-auto flex min-h-[70dvh] max-w-md items-center py-6 animate-in">
+      <Card className="w-full">
+        <Stack gap="md">
+          <div>
+            <Eyebrow>Welcome</Eyebrow>
+            <h1 className="text-3xl sm:text-4xl">Sign in</h1>
+            <Muted className="mt-1">Magic link or password. Leagues remain invite-only.</Muted>
           </div>
-        )}
-      </div>
+
+          <div className="flex gap-1 overflow-x-auto rounded-xl bg-surface-2 p-1" role="tablist" aria-label="Authentication method">
+            {(
+              [
+                ["signin", "Sign in"],
+                ["signup", "Sign up"],
+                ["magic", "Magic link"],
+              ] as const
+            ).map(([key, label]) => (
+              <button
+                type="button"
+                role="tab"
+                key={key}
+                aria-selected={mode === key}
+                onClick={() => setMode(key)}
+                className={cn(
+                  "min-h-11 flex-1 whitespace-nowrap rounded-lg px-3 py-2 text-sm font-bold transition",
+                  mode === key ? "bg-surface text-ink shadow-sm" : "text-muted",
+                )}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
+          <form className="flex flex-col gap-3" onSubmit={submit}>
+            {mode === "signup" && (
+              <Label>
+                Display name
+                <Input
+                  type="text"
+                  name="display_name"
+                  autoComplete="nickname"
+                  required
+                  maxLength={80}
+                  minLength={1}
+                  placeholder="How you appear in leagues"
+                  value={displayName}
+                  onChange={(e) => setDisplayName(e.target.value)}
+                />
+              </Label>
+            )}
+            <Label>
+              Email
+              <Input
+                type="email"
+                autoComplete="email"
+                required
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+              />
+            </Label>
+            {mode !== "magic" && (
+              <Label>
+                Password
+                <Input
+                  type="password"
+                  minLength={6}
+                  autoComplete={mode === "signup" ? "new-password" : "current-password"}
+                  required
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                />
+              </Label>
+            )}
+            <Button type="submit" full disabled={busy}>
+              {busy ? (
+                <SpinnerIcon />
+              ) : mode === "signin" ? (
+                <LogInIcon />
+              ) : mode === "signup" ? (
+                <UserPlusIcon />
+              ) : (
+                <SendIcon />
+              )}
+              {busy
+                ? "Please wait…"
+                : mode === "signin"
+                  ? "Sign in"
+                  : mode === "signup"
+                    ? "Create account"
+                    : "Send magic link"}
+            </Button>
+          </form>
+
+          {message && (
+            <StatusBanner
+              tone={/error|invalid|failed|missing|required/i.test(message) ? "error" : "info"}
+            >
+              {message}
+            </StatusBanner>
+          )}
+        </Stack>
+      </Card>
     </section>
   );
 }

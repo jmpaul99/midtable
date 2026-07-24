@@ -77,6 +77,7 @@ CREATE TABLE invites (
   public_id UUID NOT NULL DEFAULT gen_random_uuid(),
   league_id BIGINT NOT NULL REFERENCES leagues(id) ON DELETE CASCADE,
   email TEXT NOT NULL,
+  token TEXT UNIQUE,
   is_commissioner BOOLEAN NOT NULL DEFAULT FALSE,
   draft_slot INT,
   status TEXT NOT NULL DEFAULT 'pending'
@@ -201,7 +202,7 @@ CREATE TABLE matches (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   CONSTRAINT matches_public_id_key UNIQUE (public_id),
-  CONSTRAINT matches_provider_external_key UNIQUE (provider, external_id)
+  CONSTRAINT matches_league_provider_external_key UNIQUE (league_id, provider, external_id)
 );
 
 CREATE INDEX matches_pool_kickoff_idx ON matches (pool_id, kickoff_at);
@@ -357,3 +358,36 @@ FROM scoring_events se
 LEFT JOIN roster_entries re
   ON re.league_id = se.league_id AND re.team_id = se.team_id
 GROUP BY se.league_id, se.team_id, re.member_id;
+
+-- Indexes / uniqueness for hot paths
+CREATE INDEX league_members_profile_id_idx ON league_members (profile_id);
+CREATE INDEX league_members_league_id_idx ON league_members (league_id);
+CREATE UNIQUE INDEX league_members_league_draft_slot_uidx
+  ON league_members (league_id, draft_slot)
+  WHERE draft_slot IS NOT NULL;
+CREATE INDEX roster_entries_member_id_idx ON roster_entries (member_id);
+CREATE INDEX invites_email_idx ON invites (email);
+CREATE INDEX invites_token_idx ON invites (token);
+
+CREATE TRIGGER profiles_set_updated_at
+  BEFORE UPDATE ON profiles FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+CREATE TRIGGER competition_templates_set_updated_at
+  BEFORE UPDATE ON competition_templates FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+CREATE TRIGGER leagues_set_updated_at
+  BEFORE UPDATE ON leagues FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+CREATE TRIGGER invites_set_updated_at
+  BEFORE UPDATE ON invites FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+CREATE TRIGGER league_members_set_updated_at
+  BEFORE UPDATE ON league_members FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+CREATE TRIGGER team_pools_set_updated_at
+  BEFORE UPDATE ON team_pools FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+CREATE TRIGGER teams_set_updated_at
+  BEFORE UPDATE ON teams FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+CREATE TRIGGER draft_state_set_updated_at
+  BEFORE UPDATE ON draft_state FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+CREATE TRIGGER matches_set_updated_at
+  BEFORE UPDATE ON matches FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+CREATE TRIGGER ranking_lists_set_updated_at
+  BEFORE UPDATE ON ranking_lists FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+CREATE TRIGGER sync_status_set_updated_at
+  BEFORE UPDATE ON sync_status FOR EACH ROW EXECUTE FUNCTION set_updated_at();

@@ -8,28 +8,13 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import Match, StandingsSnapshot, StandingsSnapshotRow, Team, TeamPool
+from app.services.match_adapters import match_to_input
 from app.services.scoring import (
-    MatchInput,
     ResultPoints,
     TableRow,
     build_standings_before_kickoff,
     is_finished,
 )
-
-
-def _match_input(match: Match) -> MatchInput:
-    return MatchInput(
-        match_id=match.id,
-        pool_id=match.pool_id,
-        home_team_id=match.home_team_id,
-        away_team_id=match.away_team_id,
-        kickoff_at=match.kickoff_at,
-        home_goals=match.home_goals or 0,
-        away_goals=match.away_goals or 0,
-        status=match.status,
-        scheduled_matchweek=match.scheduled_matchweek,
-        stage=match.stage,
-    )
 
 
 def initial_rows_for_pool(db: Session, pool: TeamPool) -> list[TableRow]:
@@ -52,9 +37,9 @@ def build_snapshot_for_kickoff(
     mark_fresh: bool = True,
 ) -> StandingsSnapshot:
     matches = [
-        _match_input(m)
+        match_to_input(m)
         for m in db.scalars(select(Match).where(Match.pool_id == pool.id)).all()
-        if is_finished(_match_input(m))
+        if is_finished(match_to_input(m))
     ]
     ranked = build_standings_before_kickoff(
         team_rows=initial_rows_for_pool(db, pool),

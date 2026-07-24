@@ -58,16 +58,11 @@ class SupabaseTokenVerifier:
 
     async def verify(self, token: str) -> dict[str, Any]:
         try:
-            if self.settings.supabase_jwt_secret:
-                key: Any = self.settings.supabase_jwt_secret
-                algorithms = ["HS256"]
-            else:
-                key = await self._get_key(token)
-                algorithms = ["RS256", "ES256"]
+            key = await self._get_key(token)
             return jwt.decode(
                 token,
                 key,
-                algorithms=algorithms,
+                algorithms=["RS256", "ES256"],
                 audience=self.settings.supabase_jwt_audience,
                 issuer=self.settings.jwt_issuer,
                 options={"require": ["exp", "iat", "sub"]},
@@ -106,6 +101,28 @@ def require_invited_email(db: Session, email: str) -> Invite:
     return invite
 
 
+DEFAULT_DISPLAY_NAME = "Display Name"
+MAX_DISPLAY_NAME_LEN = 80
+
+
+def normalize_display_name(value: str | None) -> str | None:
+    """Return a trimmed display name, or None if empty/invalid."""
+    if value is None:
+        return None
+    name = value.strip()
+    if not name or len(name) > MAX_DISPLAY_NAME_LEN:
+        return None
+    return name
+
+
+def display_name_from_claims(claims: dict[str, Any]) -> str | None:
+    meta = claims.get("user_metadata")
+    if not isinstance(meta, dict):
+        return None
+    raw = meta.get("display_name")
+    return normalize_display_name(str(raw) if raw is not None else None)
+
+
 def get_or_create_profile(
     db: Session,
     *,
@@ -119,13 +136,17 @@ def get_or_create_profile(
     if profile:
         if auth_user_id and profile.auth_user_id is None:
             profile.auth_user_id = auth_user_id
+        chosen = normalize_display_name(display_name)
+        if chosen and profile.display_name == DEFAULT_DISPLAY_NAME:
+            profile.display_name = chosen
         return profile
     if not skip_invite_gate:
         require_invited_email(db, normalized)
+    chosen = normalize_display_name(display_name) or DEFAULT_DISPLAY_NAME
     profile = Profile(
         email=normalized,
         auth_user_id=auth_user_id,
-        display_name=display_name or normalized.split("@")[0],
+        display_name=chosen,
     )
     db.add(profile)
     db.flush()
@@ -138,11 +159,16 @@ async def get_current_user(
     verifier: SupabaseTokenVerifier = Depends(get_token_verifier),
 ) -> AuthenticatedUser:
     if settings.auth_bypass_email:
+        if settings.is_production:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="AUTH_BYPASS_EMAIL is not allowed in production",
+            )
         return AuthenticatedUser(
             auth_user_id=None,
             email=settings.auth_bypass_email.strip().lower(),
-            role="authenticated",
-            claims={"bypass": True},
+            role="admin",
+            claims={"bypass": True, "app_metadata": {"role": "admin"}},
             bypass=True,
         )
     if credentials is None:
@@ -171,9 +197,13 @@ def get_current_profile(
     user: AuthenticatedUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> Profile:
-    return get_or_create_profile(
+    profile = get_or_create_profile(
         db,
         email=user.email,
         auth_user_id=user.auth_user_id,
+        display_name=display_name_from_claims(user.claims),
         skip_invite_gate=user.bypass,
     )
+    db.commit()
+    db.refresh(profile)
+    return profile

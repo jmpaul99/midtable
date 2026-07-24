@@ -1,37 +1,77 @@
 export type UUID = string;
 export type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
 
+export interface Me {
+  id: UUID;
+  email: string;
+  display_name: string;
+  auth_user_id: UUID | null;
+  is_platform_admin?: boolean;
+}
+
 export interface LeagueSummary {
   id: UUID;
   name: string;
-  slug: string;
+  season_label: string;
   status: string;
-  visibility: string;
-  max_members: number;
-  role: string;
-  season: string;
-  template_id: UUID;
+  draft_style: string;
+  template_id?: UUID | null;
+  /** @deprecated use season_label */
+  season?: string;
+  role?: string;
+  visibility?: string;
+  max_members?: number | null;
+  slug?: string;
+  my_rank?: number | null;
+  member_count?: number | null;
+  my_points?: number | null;
+  my_draft_slot?: number | null;
+  has_scored?: boolean;
 }
 
-export interface Member {
+export interface Manager {
   id: UUID;
-  profile_id: UUID;
-  display_name: string;
+  profile_id: UUID | null;
+  display_name: string | null;
+  team_name?: string | null;
+  email?: string | null;
   role: string;
-  status: string;
-  joined_at: string;
+  is_commissioner: boolean;
+  draft_slot: number | null;
+  status?: string;
+  joined_at?: string;
 }
+
+/** @deprecated Use Manager */
+export type Member = Manager;
+
+/** Fantasy team name, then profile display name, then email / fallback. */
+export function managerLabel(
+  m: Pick<Manager, "team_name" | "display_name" | "email"> | null | undefined,
+  fallback = "Manager",
+): string {
+  if (!m) return fallback;
+  return m.team_name?.trim() || m.display_name?.trim() || m.email || fallback;
+}
+
+/** @deprecated Use managerLabel */
+export const memberLabel = managerLabel;
 
 export interface Pool {
   id: UUID;
-  definition_key: string;
-  name: string;
-  ordinal: number;
-  roster_size: number;
-  draft_order: UUID[] | null;
-  provider_competition_code: string;
-  scoring_enabled: boolean;
-  provider_params: Record<string, Json>;
+  key: string;
+  label: string;
+  scores_match_results: boolean;
+  slot_count: number;
+  sort_order?: number;
+  provider: string;
+  competition_code: string | null;
+  season_year: number | null;
+  /** FE aliases */
+  name?: string;
+  definition_key?: string;
+  roster_size?: number;
+  scoring_enabled?: boolean;
 }
 
 export interface PhaseMetadata {
@@ -39,64 +79,91 @@ export interface PhaseMetadata {
   name: string;
   matchweek_range: number[] | null;
   stage_in: string[] | null;
-  matching_matches: number;
-  finished_matches: number;
-  remaining_matches: number;
+  matching_matches?: number;
+  finished_matches?: number;
+  remaining_matches?: number;
   is_final: boolean;
+  include_bonus_types?: string[];
 }
 
 export interface League extends LeagueSummary {
-  current_member_id: UUID;
+  current_member_id: UUID | null;
+  role: string;
   settings: Record<string, Json>;
   pools: Pool[];
   members: Member[];
   phases: PhaseMetadata[];
   bonus_type_keys: string[];
   provider_params: Record<string, Json>;
-  created_at: string;
-}
-
-export interface PoolConfig {
-  key: string;
-  name: string;
-  provider_competition_code: string;
-  slots_per_member: number;
-  slot_label: string;
-  scoring_enabled: boolean;
+  result_points?: Record<string, Json>;
+  upset_rules?: Record<string, Json>;
+  leaderboard_phases?: Record<string, Json>[];
+  leaderboard_tiebreaks?: LeaderboardRung[];
+  buy_in?: number | string;
+  payouts?: Json[];
+  preassign_mode?: string;
+  season: string;
+  max_members?: number | null;
+  visibility: string;
 }
 
 export interface LeaderboardRung {
-  metric: "total_points" | "event_points" | "event_count" | "bonus_points" | "bonus_count";
+  metric: "total_points" | "event_points" | "event_count" | "bonus_points" | "bonus_count" | string;
   event_types?: string[];
   bonus_type_keys?: string[];
-  direction: "desc" | "asc";
+  direction?: "desc" | "asc";
+  value?: number | string;
 }
 
 export interface CompetitionTemplate {
   id: UUID;
-  code: string;
-  name: string;
-  provider: string;
-  provider_competition_code: string;
-  default_team_count: number;
-  default_roster_size: number;
-  pools: PoolConfig[];
-  scoring: Record<string, Json>;
-  phases: Record<string, Json>[];
+  key: string;
+  label: string;
+  draft_style: string;
+  preassign_mode: string;
+  result_points: Record<string, Json>;
+  upset_rules: Record<string, Json>;
+  leaderboard_phases: Record<string, Json>[];
   leaderboard_tiebreaks: LeaderboardRung[];
-  bonuses: Record<string, number>;
-  payouts: Record<string, Json>[];
-  draft: Record<string, Json>;
-  is_active: boolean;
-  created_at: string;
-  updated_at: string;
+  buy_in: number | string;
+  payouts: Json[];
+  roster_slots: Json[];
+  pool_definitions: Json[];
+  bonus_types: Json[];
+  /** legacy aliases used by older UI */
+  code?: string;
+  name?: string;
+  is_active?: boolean;
+  pools?: Json[];
+  scoring?: Record<string, Json>;
+  phases?: Record<string, Json>[];
+  bonuses?: Record<string, number>;
+  draft?: Record<string, Json>;
+  created_at?: string;
+  updated_at?: string;
 }
 
-export type TemplateWrite = Omit<CompetitionTemplate, "id" | "created_at" | "updated_at">;
+export type TemplateWrite = {
+  key: string;
+  label: string;
+  draft_style: string;
+  preassign_mode: string;
+  result_points: Record<string, Json>;
+  upset_rules: Record<string, Json>;
+  leaderboard_phases: Record<string, Json>[];
+  leaderboard_tiebreaks: LeaderboardRung[];
+  buy_in: number | string;
+  payouts: Json[];
+  roster_slots: Json[];
+  pool_definitions: Json[];
+  bonus_types: Json[];
+};
 
 export interface Standing {
   member_id: UUID;
   display_name: string;
+  team_name?: string | null;
+  owner_name?: string | null;
   rank: number;
   total_points: number | string;
   upset_points: number | string;
@@ -127,31 +194,46 @@ export interface DraftPick {
   member_id?: UUID;
   team_id?: UUID;
   team_name?: string;
-  [key: string]: unknown;
+  crest_url?: string | null;
+  pool_id?: UUID;
 }
 
 export interface DraftState {
   id: UUID;
-  pool_id: UUID;
   status: string;
   current_pick_number: number;
   current_round: number;
   current_member_id: UUID | null;
+  on_clock_member_id?: UUID | null;
   version: number;
   picks: DraftPick[];
+  league_status?: string;
 }
 
 export interface RosterRow {
+  id?: UUID | null;
   member_id: UUID;
   display_name: string;
   pool_id: UUID;
   pool_name: string;
+  pool_sort_order?: number;
   slot_number: number;
   team_id: UUID | null;
   team_name: string | null;
+  crest_url?: string | null;
   acquired_via: string | null;
-  valid_from: string | null;
-  valid_until: string | null;
+  draft_pick_number?: number | null;
+  points?: number | null;
+  games_played?: number | null;
+  points_per_game?: number | null;
+  form?: string[] | null;
+  rank?: number | null;
+  member_total_points?: number | null;
+  member_points_per_game?: number | null;
+  member_wins?: number | null;
+  member_draws?: number | null;
+  member_losses?: number | null;
+  member_games_played?: number | null;
 }
 
 export interface Invite {
@@ -159,7 +241,9 @@ export interface Invite {
   email: string;
   role: string;
   status: string;
-  expires_at: string;
+  is_commissioner?: boolean;
+  draft_slot?: number | null;
+  expires_at?: string;
   token: string | null;
 }
 
@@ -168,82 +252,312 @@ export interface Bonus {
   member_id: UUID | null;
   display_name: string | null;
   team_id: UUID;
-  match_id: UUID | null;
+  match_id?: UUID | null;
   bonus_type: string;
-  phase: string;
+  phase?: string;
   points: number | string;
-  reason: string;
-  awarded_at: string;
+  reason: string | null;
+  awarded_at: string | null;
   revoked_at: string | null;
 }
 
 export interface RankingList {
   id: UUID;
-  pool_id: UUID;
-  name: string;
-  status: string;
-  locked_at: string | null;
-  rows: Array<{
-    id: UUID;
-    member_id: UUID;
-    team_id: UUID;
-    name: string;
-    rank: number;
-    source_value: string;
-  }>;
+  key: string;
+  label: string;
+  source: string;
+  locked: boolean;
+  as_of?: string | null;
 }
 
 export interface SyncStatus {
   id: UUID;
-  resource_type: string;
+  provider?: string;
+  resource_type?: string;
   status: string;
   last_attempt_at: string | null;
   last_success_at: string | null;
-  next_attempt_at: string | null;
+  next_attempt_at?: string | null;
   rate_limit_remaining: number | null;
-  rate_limit_reset_at: string | null;
+  rate_limit_reset_at?: string | null;
   last_error: string | null;
+  in_progress?: boolean;
+}
+
+export interface ReadinessCheck {
+  key: string;
+  label: string;
+  status: "ok" | "error" | "warning" | string;
+  detail?: string | null;
 }
 
 export interface Readiness {
   ready: boolean;
+  checks?: ReadinessCheck[];
   errors: string[];
   warnings: string[];
 }
 
-export interface MatchEvent {
+/** GET /leagues/{id}/match-log row (fixtures, not scoring events). */
+export interface MatchLogRow {
   id: UUID;
+  kickoff_at: string;
+  status: string;
+  scheduled_matchweek: number | null;
+  home_team_id: UUID;
+  away_team_id: UUID;
+  home_team_name: string;
+  away_team_name: string;
+  home_goals: number | null;
+  away_goals: number | null;
+  pool_id: UUID;
+  home_points?: number | null;
+  away_points?: number | null;
+}
+
+export interface TeamFixture extends MatchLogRow {
+  is_home: boolean;
+  points: number | null;
+  opponent_name: string;
+  opponent_id: UUID;
+  opponent_table_position?: number | null;
+}
+
+export interface VenueSplit {
+  wins: number;
+  draws: number;
+  losses: number;
+  games_played: number;
+  points: number;
+  points_per_game: number;
+}
+
+export interface BonusAward {
+  id: UUID;
+  team_id: UUID | null;
+  team_name: string | null;
+  crest_url?: string | null;
+  bonus_type: string;
+  bonus_type_label: string;
+  points: number;
+  reason: string | null;
+  awarded_at: string | null;
+}
+
+export interface ScoringEventMatch {
+  id: UUID;
+  event_type: string;
+  points: number;
   match_id: UUID;
   kickoff_at: string;
-  matchday: number;
+  scheduled_matchweek: number | null;
+  status: string;
+  is_home: boolean;
+  home_goals: number | null;
+  away_goals: number | null;
+  opponent_id: UUID;
+  opponent_name: string;
+  metadata?: Record<string, Json>;
+}
+
+export interface TeamDetail {
+  id: UUID;
+  name: string;
+  crest_url: string | null;
+  pool_id: UUID | null;
+  pool_name: string | null;
+  owner: { member_id: UUID | null; display_name: string | null; acquired_via: string } | null;
+  stats: {
+    total_points: number;
+    games_played: number;
+    wins: number;
+    draws: number;
+    losses: number;
+    upset_points: number;
+    bonus_points: number;
+    points_per_game: number;
+    event_points_by_type?: Record<string, number>;
+    event_counts_by_type?: Record<string, number>;
+    bonus_points_by_type?: Record<string, number>;
+    goals_for?: number;
+    goals_against?: number;
+    goal_difference?: number;
+    table_position?: number | null;
+    table_points?: number | null;
+    form?: string[];
+    current_streak?: { result: string; count: number } | null;
+    home?: VenueSplit;
+    away?: VenueSplit;
+    upcoming_difficulty?: {
+      next_three: Array<{
+        match_id: string;
+        opponent_name: string;
+        opponent_id: string;
+        opponent_table_position: number | null;
+        is_home: boolean;
+        kickoff_at: string;
+      }>;
+      avg_opponent_rank: number | null;
+    };
+  };
+  bonuses?: BonusAward[];
+  scoring_events?: ScoringEventMatch[];
+  recent_matches: TeamFixture[];
+  upcoming_matches: TeamFixture[];
+}
+
+export interface ManagerClub {
   team_id: UUID;
   team_name: string;
-  member_id: UUID | null;
+  crest_url: string | null;
+  pool_id: UUID | null;
+  pool_name: string | null;
+  pool_sort_order?: number;
+  acquired_via: string | null;
+  draft_pick_number?: number | null;
+  points: number;
+  games_played: number;
+  points_per_game: number;
+}
+
+/** @deprecated Use ManagerClub */
+export type MemberClub = ManagerClub;
+
+export interface ManagerDetail {
+  id: UUID;
+  team_name: string | null;
   display_name: string | null;
-  phase: string;
-  event_type: string;
-  points: number | string;
-  details: Record<string, Json>;
-  source_result_version: number;
+  draft_slot: number | null;
+  rank: number | null;
+  stats: {
+    total_points: number;
+    games_played: number;
+    wins: number;
+    draws: number;
+    losses: number;
+    upset_points: number;
+    bonus_points: number;
+    points_per_game: number;
+    event_points_by_type?: Record<string, number>;
+    event_counts_by_type?: Record<string, number>;
+    bonus_points_by_type?: Record<string, number>;
+  };
+  clubs: ManagerClub[];
+  bonuses?: BonusAward[];
+}
+
+/** @deprecated Use ManagerDetail */
+export type MemberDetail = ManagerDetail;
+
+export interface ManagerHighlights {
+  member_id: UUID;
+  display_name: string;
+  best_matchweek: { scheduled_matchweek: number; points: number } | null;
+  worst_matchweek: { scheduled_matchweek: number; points: number } | null;
+  biggest_upset: {
+    event_type: string;
+    points: number;
+    gap: number | null;
+    match_id: UUID | null;
+    team_id: UUID | null;
+    team_name: string | null;
+    opponent_name?: string | null;
+    underdog_rank?: number | null;
+    opponent_rank?: number | null;
+  } | null;
+  top_club: { team_id: UUID; team_name: string; points: number } | null;
+}
+
+/** @deprecated Use ManagerHighlights */
+export type MemberHighlights = ManagerHighlights;
+
+export interface VenueSplitRow {
+  member_id: UUID;
+  display_name: string;
+  team_id: UUID | null;
+  team_name: string | null;
+  home: VenueSplit;
+  away: VenueSplit;
 }
 
 export interface Snapshot {
   id: UUID;
   pool_id: UUID;
   kickoff_at: string;
-  source_match_version: number;
+  stale?: boolean;
   computed_at: string;
   rows: Array<{
-    team_id: UUID;
-    team_name: string;
+    team_id: UUID | null;
+    team_name: string | null;
     position: number;
     played: number;
     points: number;
+    goals_for?: number;
+    goals_against?: number;
+    goal_difference?: number;
   }>;
 }
 
+export interface PpgRow {
+  team_id: UUID | null;
+  team_name: string | null;
+  member_id: UUID | null;
+  display_name: string | null;
+  points: number;
+  games_played: number;
+  points_per_game: number;
+}
+
+export interface MatchweekRow {
+  member_id: UUID;
+  display_name: string;
+  scheduled_matchweek: number;
+  points: number;
+}
+
+export interface UpsetRow {
+  member_id: UUID;
+  display_name: string;
+  count: number;
+  points: number;
+  upset_count?: number;
+  upset_points?: number;
+  by_type?: Record<string, number>;
+}
+
+/** @deprecated Prefer typed analytics row interfaces. */
 export type AnalyticsRow = Record<string, string | number | null | Record<string, Json>>;
 
 export interface Message {
   detail: string;
+}
+
+/** Normalize API league detail into the shape components expect. */
+export function normalizeLeague(raw: League): League {
+  const pools = (raw.pools || []).map((p) => ({
+    ...p,
+    // Prefer backend `label`/`key`/`slot_count`; keep thin aliases for older UI.
+    name: p.label || p.name || p.key,
+    definition_key: p.key || p.definition_key,
+    roster_size: p.slot_count ?? p.roster_size ?? 0,
+    scoring_enabled: p.scores_match_results ?? p.scoring_enabled ?? true,
+  }));
+  const max =
+    raw.max_members ??
+    (typeof raw.settings?.max_members === "number" ? raw.settings.max_members : null);
+  return {
+    ...raw,
+    season_label: raw.season_label || raw.season || "",
+    season: raw.season_label || raw.season || "",
+    max_members: max,
+    visibility: raw.visibility || "private",
+    role: raw.role || (raw.members?.find((m) => m.id === raw.current_member_id)?.role) || "member",
+    pools,
+    members: (raw.members || []).map((m) => ({
+      ...m,
+      display_name: m.display_name || m.email || "Manager",
+      team_name: m.team_name?.trim() || null,
+      role: m.role || (m.is_commissioner ? "commissioner" : "member"),
+    })),
+  };
 }
