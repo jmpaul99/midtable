@@ -1,0 +1,117 @@
+"""Standings snapshot build from finished matches (strict kickoff ordering)."""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.models import Match, StandingsSnapshot, StandingsSnapshotRow, Team, TeamPool
+from app.services.scoring import (
+    MatchInput,
+    ResultPoints,
+    TableRow,
+    build_standings_before_kickoff,
+    is_finished,
+)
+
+
+def _match_input(match: Match) -> MatchInput:
+    return MatchInput(
+        match_id=match.id,
+        pool_id=match.pool_id,
+        home_team_id=match.home_team_id,
+        away_team_id=match.away_team_id,
+        kickoff_at=match.kickoff_at,
+        home_goals=match.home_goals or 0,
+        away_goals=match.away_goals or 0,
+        status=match.status,
+        scheduled_matchweek=match.scheduled_matchweek,
+        stage=match.stage,
+    )
+
+
+def initial_rows_for_pool(db: Session, pool: TeamPool) -> list[TableRow]:
+    from app.models import PoolTeam
+
+    teams = db.scalars(
+        select(Team)
+        .join(PoolTeam, PoolTeam.team_id == Team.id)
+        .where(PoolTeam.pool_id == pool.id)
+    ).all()
+    return [TableRow(team_id=t.id, name=t.name) for t in teams]
+
+
+def build_snapshot_for_kickoff(
+    db: Session,
+    *,
+    pool: TeamPool,
+    kickoff_at: datetime,
+    result_points: ResultPoints,
+    mark_fresh: bool = True,
+) -> StandingsSnapshot:
+    matches = [
+        _match_input(m)
+        for m in db.scalars(select(Match).where(Match.pool_id == pool.id)).all()
+        if is_finished(_match_input(m))
+    ]
+    ranked = build_standings_before_kickoff(
+        team_rows=initial_rows_for_pool(db, pool),
+        finished_matches=matches,
+        kickoff_at=kickoff_at,
+        pool_id=pool.id,
+        result_points=result_points,
+        tiebreaks=tuple(pool.tie_break_order or ["points", "gd", "gf", "name"]),
+    )
+
+    existing = db.scalars(
+        select(StandingsSnapshot).where(
+            StandingsSnapshot.pool_id == pool.id,
+            StandingsSnapshot.kickoff_at == kickoff_at,
+        )
+    ).first()
+    if existing:
+        for row in list(existing.rows):
+            db.delete(row)
+        snapshot = existing
+        snapshot.stale = not mark_fresh
+        snapshot.computed_at = datetime.now(UTC)
+    else:
+        snapshot = StandingsSnapshot(
+            pool_id=pool.id,
+            kickoff_at=kickoff_at,
+            stale=not mark_fresh,
+            computed_at=datetime.now(UTC),
+        )
+        db.add(snapshot)
+        db.flush()
+
+    for row in ranked:
+        db.add(
+            StandingsSnapshotRow(
+                snapshot_id=snapshot.id,
+                team_id=row.team_id,
+                rank=row.rank,
+                played=row.played,
+                points=row.points,
+                goals_for=row.goals_for,
+                goals_against=row.goals_against,
+                goal_difference=row.goal_difference,
+            )
+        )
+    db.flush()
+    return snapshot
+
+
+def mark_snapshots_stale_after(db: Session, pool_id: int, kickoff_at: datetime) -> int:
+    snapshots = db.scalars(
+        select(StandingsSnapshot).where(
+            StandingsSnapshot.pool_id == pool_id,
+            StandingsSnapshot.kickoff_at > kickoff_at,
+        )
+    ).all()
+    for snap in snapshots:
+        snap.stale = True
+    db.flush()
+    return len(snapshots)

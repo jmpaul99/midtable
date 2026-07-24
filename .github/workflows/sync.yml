@@ -1,0 +1,20 @@
+# Example external cron — enable when the API is hosted.
+# Replace API_URL secret and schedule as needed.
+name: Sync and score
+
+on:
+  workflow_dispatch:
+  # schedule:
+  #   - cron: "0 */3 * * *"
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger sync
+        env:
+          API_URL: ${{ secrets.API_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          curl -fsS -X POST "${API_URL}/internal/sync-and-score" \
+            -H "X-Cron-Secret: ${CRON_SECRET}"
