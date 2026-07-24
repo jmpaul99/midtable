@@ -52,8 +52,11 @@ Primary lockup: staggered **Midtable** wordmark (Outfit ExtraBold) over the rank
 | Matchday presentation | [`brand/midtable-logo-matchday.svg`](../../brand/midtable-logo-matchday.svg) | Spec / marketing on light |
 | Pitch Night presentation | [`brand/midtable-logo-pitch-night.svg`](../../brand/midtable-logo-pitch-night.svg) | Spec / marketing on dark |
 | Variants sheet | [`brand/midtable-logo-variants.svg`](../../brand/midtable-logo-variants.svg) | Side-by-side + swatches |
-| App lockups | `frontend/public/brand/lockup-*.svg` | Transparent lockups in product |
-| App marks | `frontend/public/brand/mark-*.svg` | Rank mark only (nav, favicon) |
+| App lockups | `frontend/public/brand/lockup-*.svg` | Transparent lockups (Outfit ExtraBold embedded) |
+| App marks | `frontend/public/brand/mark-*.svg` | Rank mark only (nav, empty states) |
+| App wordmarks | `frontend/public/brand/wordmark-*.svg` | Staggered Midtable text only |
+
+Presentation and lockup/wordmark SVGs embed a subset of Outfit ExtraBold via `@font-face` data URI so the wordmark matches the product face even when the file is opened alone or used as an `<img>`.
 
 ### Construction
 
@@ -72,10 +75,12 @@ Primary lockup: staggered **Midtable** wordmark (Outfit ExtraBold) over the rank
 
 ### Product usage
 
-- Nav: mark + Midtable wordmark text (`MidtableLogo` + themed label)
-- Home: full lockup via `MidtableLogo`
+- Nav: horizontal lockup (`MidtableLogo` `variant="nav"`) — rank mark + wordmark with box bottoms on the `table` baseline
+- Home: full lockup via `MidtableLogo` (inline SVG using `--font-display` / Outfit — not `<img>`, so the face matches the app)
+- Standalone wordmark: `variant="wordmark"` or `frontend/public/brand/wordmark-*.svg` / `brand/midtable-wordmark-*.svg`
+- Standalone mark: `variant="mark"` or `frontend/public/brand/mark-*.svg`
 - Favicon / apple touch: Matchday rank mark (`frontend/src/app/icon.svg`, `frontend/public/brand/apple-touch-icon.png`)
-- Always ship both themes; swap with `data-theme` (`matchday` | `pitch`)
+- Always ship both themes; colors swap with `data-theme` via `--logo-*` tokens in `globals.css`
 
 ---
 

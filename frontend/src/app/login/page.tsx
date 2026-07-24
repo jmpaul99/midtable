@@ -4,6 +4,7 @@ import { FormEvent, Suspense, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { errorMessage } from "@/lib/api";
+import { MidtableLogo } from "@/components/MidtableLogo";
 import { Loading, StatusBanner } from "@/components/ui/State";
 import { Button } from "@/components/ui/Button";
 import { LogInIcon, SendIcon, UserPlusIcon, SpinnerIcon } from "@/components/ui/icons";
@@ -78,7 +79,8 @@ function LoginForm() {
   }
 
   return (
-    <section className="mx-auto flex min-h-[70dvh] max-w-md items-center py-6 animate-in">
+    <section className="mx-auto flex min-h-[70dvh] max-w-md flex-col items-center justify-center gap-6 py-6 animate-in">
+      <MidtableLogo className="h-16 w-auto sm:h-20" />
       <Card className="w-full">
         <Stack gap="md">
           <div>

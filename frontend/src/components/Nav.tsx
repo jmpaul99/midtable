@@ -43,13 +43,10 @@ export function Nav() {
       <div className="mx-auto flex min-h-14 max-w-[1180px] items-center justify-between gap-3 px-4 sm:min-h-16 sm:px-5 [padding-left:max(1rem,env(safe-area-inset-left))] [padding-right:max(1rem,env(safe-area-inset-right))]">
         <Link
           href="/"
-          className="inline-flex items-center gap-2.5"
+          className="inline-flex h-8 items-center overflow-visible sm:h-9"
           aria-label="Midtable home"
         >
-          <MidtableLogo variant="mark" className="h-7 w-auto sm:h-8" />
-          <span className="font-display text-lg font-extrabold tracking-tight text-muted [[data-theme=pitch]_&]:text-brand">
-            Midtable
-          </span>
+          <MidtableLogo variant="nav" className="h-full" />
         </Link>
 
         <nav className="hidden items-center gap-1 md:flex" aria-label="Primary">

@@ -169,7 +169,7 @@ export function Leaderboard({ league }: { league: League }) {
         ) : (
           <div className="overflow-x-auto rounded-xl border border-line">
             <table className="w-full min-w-[20rem] text-left text-sm">
-              <thead className="border-b border-line bg-surface-2/80 text-xs font-bold uppercase tracking-wide text-muted">
+              <thead className="border-b border-line text-xs font-bold uppercase tracking-wide text-muted">
                 <tr>
                   <th className="px-3 py-2.5 font-bold">#</th>
                   <th className="px-3 py-2.5 font-bold">Team</th>
@@ -199,9 +199,9 @@ export function Leaderboard({ league }: { league: League }) {
                       }}
                       className={cn(
                         "border-b border-line last:border-0 transition",
-                        r.rank === 1 && "bg-accent/15",
+                        r.rank === 1 && "bg-brand/10",
                         href &&
-                          "group cursor-pointer hover:bg-surface-2/70 focus-visible:bg-surface-2/70 focus-visible:outline-none",
+                          "group cursor-pointer hover:bg-brand/5 focus-visible:bg-brand/5 focus-visible:outline-none",
                       )}
                     >
                       <td className="px-3 py-3 align-middle">

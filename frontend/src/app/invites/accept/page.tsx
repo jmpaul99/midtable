@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { RequireAuth } from "@/lib/auth";
 import { api, errorMessage, json } from "@/lib/api";
 import type { Manager } from "@/lib/types";
+import { MidtableLogo } from "@/components/MidtableLogo";
 import { Loading, StatusBanner } from "@/components/ui/State";
 import { IconButton } from "@/components/ui/IconButton";
 import { CheckIcon } from "@/components/ui/icons";
@@ -42,7 +43,8 @@ function AcceptForm() {
   }
 
   return (
-    <section className="mx-auto flex min-h-[60dvh] max-w-md items-center py-6 animate-in">
+    <section className="mx-auto flex min-h-[60dvh] max-w-md flex-col items-center justify-center gap-6 py-6 animate-in">
+      <MidtableLogo className="h-16 w-auto sm:h-20" />
       <Card className="w-full">
         <form className="flex flex-col gap-4" onSubmit={submit}>
           <div>

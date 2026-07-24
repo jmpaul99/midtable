@@ -11,9 +11,28 @@ const outfit = Outfit({
   variable: "--font-outfit",
 });
 
+const siteDescription = "Draft clubs, follow every result, and climb the table.";
+
+function siteUrl() {
+  if (process.env.NEXT_PUBLIC_SITE_URL) return process.env.NEXT_PUBLIC_SITE_URL;
+  if (process.env.VERCEL_URL) return `https://${process.env.VERCEL_URL}`;
+  return "http://localhost:3000";
+}
+
 export const metadata: Metadata = {
+  metadataBase: new URL(siteUrl()),
   title: "Midtable",
-  description: "Draft clubs, follow every result, and climb the table.",
+  description: siteDescription,
+  openGraph: {
+    title: "Midtable",
+    description: siteDescription,
+    type: "website",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Midtable",
+    description: siteDescription,
+  },
   icons: {
     icon: [
       { url: "/brand/favicon-32.png", sizes: "32x32", type: "image/png" },

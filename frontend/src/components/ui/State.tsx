@@ -1,6 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
+import { MidtableLogo } from "@/components/MidtableLogo";
 import { cn } from "@/lib/cn";
 import { IconButton } from "./IconButton";
 import { RefreshIcon } from "./icons";
@@ -34,6 +35,9 @@ export function ErrorState({ error, retry }: { error: string; retry?: () => void
 export function Empty({ title, children }: { title: string; children?: ReactNode }) {
   return (
     <div className="rounded-xl border border-dashed border-line bg-surface/70 px-4 py-10 text-center">
+      <div className="mb-3 flex justify-center opacity-70" aria-hidden>
+        <MidtableLogo variant="mark" className="h-8 w-auto sm:h-10" />
+      </div>
       <h3 className="text-lg font-extrabold">{title}</h3>
       {children && <div className="mt-2 text-sm text-muted">{children}</div>}
     </div>

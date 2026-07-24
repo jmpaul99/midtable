@@ -22,6 +22,13 @@
   --shadow-soft: 0 10px 30px rgba(24, 24, 27, 0.06);
   --gradient-radial: transparent;
   --gradient-top: #f4f4f5;
+
+  /* Logo lockup (inline SVG) */
+  --logo-wordmark: #71717a;
+  --logo-fill: #067a4a;
+  --logo-frame-top: #8fd94a;
+  --logo-frame-bot: #b9cdc0;
+  --logo-gap: #ffffff;
 }
 
 /* Pitch Night (dark) */
@@ -43,6 +50,12 @@
   --shadow-soft: 0 12px 32px rgba(0, 0, 0, 0.45);
   --gradient-radial: rgba(45, 214, 123, 0.14);
   --gradient-top: #0a0f0c;
+
+  --logo-wordmark: #2dd67b;
+  --logo-fill: #2dd67b;
+  --logo-frame-top: #b8f25a;
+  --logo-frame-bot: #9ee9d0;
+  --logo-gap: #0a0f0c;
 }
 
 @layer base {
