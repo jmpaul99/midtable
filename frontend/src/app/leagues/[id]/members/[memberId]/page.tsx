@@ -1,6 +1,7 @@
 "use client";
 
-import { redirect, use } from "next/navigation";
+import { use } from "react";
+import { redirect } from "next/navigation";
 
 /** Legacy URL — redirects to /managers/:id */
 export default function LegacyMemberRedirect({
