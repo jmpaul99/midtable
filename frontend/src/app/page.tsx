@@ -7,7 +7,8 @@ import { api, errorMessage } from "@/lib/api";
 import { formatNumber } from "@/lib/format";
 import type { LeagueSummary } from "@/lib/types";
 import { Empty, ErrorState, Loading, Status } from "@/components/ui/State";
-import { Muted, PageHeader, Stack } from "@/components/ui/Card";
+import { Muted, Stack } from "@/components/ui/Card";
+import { MidtableLogo } from "@/components/MidtableLogo";
 
 function ordinal(n: number): string {
   const abs = Math.abs(n);
@@ -80,7 +81,9 @@ function LeagueList() {
 
   return (
     <Stack gap="lg" className="animate-in">
-      <PageHeader title="Midtable" />
+      <div className="flex justify-center">
+        <MidtableLogo className="h-32 w-auto sm:h-40 md:h-48" />
+      </div>
 
       {error && <ErrorState error={error} retry={load} />}
 

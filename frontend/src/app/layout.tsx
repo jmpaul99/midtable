@@ -14,6 +14,13 @@ const outfit = Outfit({
 export const metadata: Metadata = {
   title: "Midtable",
   description: "Draft clubs, follow every result, and climb the table.",
+  icons: {
+    icon: [
+      { url: "/brand/favicon-32.png", sizes: "32x32", type: "image/png" },
+      { url: "/brand/mark-matchday.svg", type: "image/svg+xml" },
+    ],
+    apple: [{ url: "/brand/apple-touch-icon.png", sizes: "180x180", type: "image/png" }],
+  },
 };
 
 export const viewport: Viewport = {

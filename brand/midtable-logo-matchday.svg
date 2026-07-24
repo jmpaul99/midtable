@@ -1,0 +1,43 @@
+<svg width="400" height="400" viewBox="0 0 400 400" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Midtable logo Matchday">
+  <defs>
+    <style type="text/css"><![CDATA[
+      @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@800&display=swap');
+      .midtable-text {
+        font-family: 'Outfit', 'Segoe UI', ui-sans-serif, system-ui, sans-serif;
+        font-weight: 800;
+        letter-spacing: -0.02em;
+      }
+    ]]></style>
+    <filter id="soft-shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="10" stdDeviation="15" flood-color="#18181B" flood-opacity="0.06"/>
+    </filter>
+
+    <!-- Center frame: Matchday accent into mint line -->
+    <linearGradient id="rank-frame-matchday" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#8FD94A"/>
+      <stop offset="100%" stop-color="#B9CDC0"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="400" height="400" fill="#F4F4F5"/>
+
+  <rect x="60" y="60" width="280" height="280" rx="28" fill="#FFFFFF" filter="url(#soft-shadow)"/>
+
+  <g transform="translate(200, 168)">
+    <text font-size="46" fill="#71717A" class="midtable-text">
+      <tspan x="-94" y="-4">Mid</tspan>
+      <tspan x="-8" y="4">table</tspan>
+    </text>
+
+    <!-- Rank mark: solid side squares; center = green tile inside mint frame with gap -->
+    <g transform="translate(0, 36)">
+      <rect x="-73" y="12" width="36" height="36" fill="#067A4A"/>
+
+      <rect x="-27" y="-6" width="54" height="54" fill="url(#rank-frame-matchday)"/>
+      <rect x="-22" y="-1" width="44" height="44" fill="#FFFFFF"/>
+      <rect x="-18" y="3" width="36" height="36" fill="#067A4A"/>
+
+      <rect x="37" y="12" width="36" height="36" fill="#067A4A"/>
+    </g>
+  </g>
+</svg>

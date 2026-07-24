@@ -1,0 +1,1328 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Midtable Brand Guide</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #f4f4f5;
+      --bg-accent: #ebebef;
+      --surface: #ffffff;
+      --surface-2: #f0f0f2;
+      --ink: #18181b;
+      --muted: #71717a;
+      --line: #b9cdc0;
+      --brand: #067a4a;
+      --brand-dark: #055c38;
+      --on-brand: #ffffff;
+      --accent: #8fd94a;
+      --on-accent: #0a0f0c;
+      --danger: #c43c42;
+      --warning: #9a6410;
+      --pitch-bg: #0a0f0c;
+      --pitch-surface: #121a15;
+      --pitch-ink: #e8eee9;
+      --pitch-muted: #8a9a90;
+      --pitch-line: #243028;
+      --pitch-brand: #2dd67b;
+      --pitch-accent: #b8f25a;
+      --radius: 0.875rem;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    @page {
+      size: A4;
+      margin: 0;
+    }
+
+    html, body {
+      font-family: "Outfit", "Segoe UI", ui-sans-serif, system-ui, sans-serif;
+      color: var(--ink);
+      background: var(--bg);
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+
+    .page {
+      width: 210mm;
+      height: 297mm;
+      padding: 18mm 18mm 16mm;
+      page-break-after: always;
+      break-after: page;
+      position: relative;
+      overflow: hidden;
+      background:
+        radial-gradient(ellipse 70% 40% at 100% 0%, transparent, transparent 55%),
+        linear-gradient(180deg, #f4f4f5 0%, #f4f4f5 40%, #ebebef 100%);
+    }
+
+    .page:last-child {
+      page-break-after: auto;
+      break-after: auto;
+    }
+
+    .page-dark {
+      background:
+        radial-gradient(ellipse 70% 40% at 100% 0%, rgba(45, 214, 123, 0.14), transparent 55%),
+        linear-gradient(180deg, #0a0f0c 0%, #0a0f0c 40%, #0d1410 100%);
+      color: var(--pitch-ink);
+    }
+
+    .eyebrow {
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--brand);
+      margin-bottom: 8px;
+    }
+
+    .page-dark .eyebrow { color: var(--pitch-brand); }
+
+    h1 {
+      font-size: 42px;
+      font-weight: 800;
+      letter-spacing: -0.02em;
+      line-height: 1.1;
+    }
+
+    h2 {
+      font-size: 26px;
+      font-weight: 800;
+      letter-spacing: -0.02em;
+      line-height: 1.2;
+      margin-bottom: 6px;
+    }
+
+    h3 {
+      font-size: 15px;
+      font-weight: 800;
+      letter-spacing: -0.01em;
+      margin-bottom: 10px;
+    }
+
+    p, li {
+      font-size: 13px;
+      line-height: 1.55;
+      color: var(--muted);
+    }
+
+    .page-dark p, .page-dark li { color: var(--pitch-muted); }
+
+    .lede {
+      font-size: 15px;
+      line-height: 1.55;
+      color: var(--muted);
+      max-width: 420px;
+      margin-top: 14px;
+    }
+
+    .page-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 22px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .page-dark .page-header { border-bottom-color: var(--pitch-line); }
+
+    .mark-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .mark {
+      width: 28px;
+      height: 28px;
+      border-radius: 8px;
+      background: linear-gradient(to bottom right, var(--accent), var(--brand));
+      box-shadow: 0 1px 2px rgba(24, 24, 27, 0.08);
+      flex-shrink: 0;
+    }
+
+    .mark-lg {
+      width: 64px;
+      height: 64px;
+      border-radius: 14px;
+      box-shadow: 0 10px 30px rgba(24, 24, 27, 0.1);
+    }
+
+    .wordmark {
+      font-size: 18px;
+      font-weight: 800;
+      letter-spacing: -0.02em;
+      color: var(--ink);
+    }
+
+    .page-dark .wordmark { color: var(--pitch-ink); }
+
+    .page-num {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--muted);
+      letter-spacing: 0.04em;
+    }
+
+    .page-dark .page-num { color: var(--pitch-muted); }
+
+    /* Cover */
+    .cover {
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: 22mm 20mm 18mm;
+    }
+
+    .cover-top {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .cover-mid {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      padding: 40px 0;
+    }
+
+    .cover h1 {
+      font-size: 64px;
+      margin-top: 8px;
+    }
+
+    .cover-tag {
+      font-size: 18px;
+      font-weight: 500;
+      color: var(--muted);
+      margin-top: 18px;
+      max-width: 380px;
+      line-height: 1.45;
+    }
+
+    .cover-bottom {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      border-top: 1px solid var(--line);
+      padding-top: 16px;
+    }
+
+    .cover-meta {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--muted);
+      line-height: 1.6;
+    }
+
+    .cover-swatches {
+      display: flex;
+      gap: 6px;
+    }
+
+    .cover-swatch {
+      width: 28px;
+      height: 28px;
+      border-radius: 8px;
+      border: 1px solid rgba(0,0,0,0.06);
+    }
+
+    /* Grid helpers */
+    .grid-2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+
+    .grid-3 {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 12px;
+    }
+
+    .grid-4 {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr 1fr;
+      gap: 10px;
+    }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 16px;
+      box-shadow: 0 10px 30px rgba(24, 24, 27, 0.06);
+    }
+
+    .page-dark .card {
+      background: var(--pitch-surface);
+      border-color: var(--pitch-line);
+      box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+    }
+
+    .card-inset {
+      background: var(--surface-2);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 14px;
+    }
+
+    .page-dark .card-inset {
+      background: #1a241c;
+      border-color: var(--pitch-line);
+    }
+
+    .section { margin-bottom: 20px; }
+
+    .swatch {
+      border-radius: 12px;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      background: var(--surface);
+    }
+
+    .swatch-chip {
+      height: 72px;
+    }
+
+    .swatch-meta {
+      padding: 10px 12px;
+    }
+
+    .swatch-name {
+      font-size: 12px;
+      font-weight: 800;
+      color: var(--ink);
+    }
+
+    .swatch-hex {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--muted);
+      font-variant-numeric: tabular-nums;
+      margin-top: 2px;
+    }
+
+    .swatch-role {
+      font-size: 10px;
+      color: var(--muted);
+      margin-top: 4px;
+      line-height: 1.35;
+    }
+
+    .token {
+      font-family: ui-monospace, "Cascadia Code", "Segoe UI Mono", monospace;
+      font-size: 10px;
+      font-weight: 600;
+      color: var(--brand);
+      background: rgba(6, 122, 74, 0.08);
+      padding: 2px 6px;
+      border-radius: 4px;
+    }
+
+    .theme-panel {
+      border-radius: var(--radius);
+      padding: 18px;
+      border: 1px solid var(--line);
+    }
+
+    .theme-matchday {
+      background: linear-gradient(180deg, #f4f4f5 0%, #ebebef 100%);
+      color: var(--ink);
+    }
+
+    .theme-pitch {
+      background:
+        radial-gradient(ellipse 70% 40% at 100% 0%, rgba(45, 214, 123, 0.14), transparent 55%),
+        linear-gradient(180deg, #0a0f0c 0%, #0d1410 100%);
+      color: var(--pitch-ink);
+      border-color: var(--pitch-line);
+    }
+
+    .theme-panel h3 { margin-bottom: 4px; }
+    .theme-panel p { margin-bottom: 14px; font-size: 12px; }
+
+    .mini-ui {
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 12px;
+      box-shadow: 0 10px 30px rgba(24, 24, 27, 0.06);
+    }
+
+    .theme-pitch .mini-ui {
+      background: #121a15;
+      border-color: var(--pitch-line);
+      box-shadow: 0 12px 32px rgba(0,0,0,0.45);
+    }
+
+    .mini-bar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+
+    .mini-mark {
+      width: 22px;
+      height: 22px;
+      border-radius: 6px;
+      background: linear-gradient(to bottom right, #8fd94a, #067a4a);
+    }
+
+    .theme-pitch .mini-mark {
+      background: linear-gradient(to bottom right, #b8f25a, #2dd67b);
+    }
+
+    .mini-name {
+      font-size: 13px;
+      font-weight: 800;
+    }
+
+    .mini-btn {
+      margin-left: auto;
+      background: #067a4a;
+      color: #fff;
+      font-size: 11px;
+      font-weight: 700;
+      padding: 6px 10px;
+      border-radius: 10px;
+    }
+
+    .theme-pitch .mini-btn {
+      background: #2dd67b;
+      color: #0a0f0c;
+    }
+
+    .mini-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 8px 0;
+      border-top: 1px solid var(--line);
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .theme-pitch .mini-row { border-top-color: var(--pitch-line); }
+
+    .rank-1 {
+      background: #8fd94a;
+      color: #0a0f0c;
+      font-size: 10px;
+      font-weight: 800;
+      padding: 2px 7px;
+      border-radius: 6px;
+    }
+
+    .theme-pitch .rank-1 { background: #b8f25a; }
+
+    .type-specimen {
+      border-bottom: 1px solid var(--line);
+      padding: 12px 0;
+    }
+
+    .type-specimen:last-child { border-bottom: none; }
+
+    .type-label {
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+      margin-bottom: 4px;
+    }
+
+    .btn-demo {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 40px;
+      padding: 0 16px;
+      border-radius: var(--radius);
+      font-size: 13px;
+      font-weight: 700;
+      border: 1px solid transparent;
+    }
+
+    .btn-primary { background: var(--brand); color: var(--on-brand); }
+    .btn-secondary { background: var(--surface); color: var(--ink); border-color: var(--line); }
+    .btn-danger { background: var(--danger); color: #fff; }
+    .btn-ghost { background: transparent; color: var(--ink); border-color: transparent; }
+
+    .logo-lockup {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding: 20px;
+    }
+
+    .logo-lockup .wordmark { font-size: 28px; }
+
+    .logo-preview {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+
+    .logo-preview figure {
+      margin: 0;
+      border-radius: var(--radius);
+      border: 1px solid var(--line);
+      background: var(--surface);
+      overflow: hidden;
+    }
+
+    .logo-preview img {
+      display: block;
+      width: 100%;
+      height: auto;
+    }
+
+    .logo-preview figcaption {
+      padding: 10px 12px;
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--muted);
+      border-top: 1px solid var(--line);
+    }
+
+    .do-dont {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+
+    .rule-card {
+      border-radius: var(--radius);
+      padding: 14px;
+      border: 1px solid var(--line);
+      background: var(--surface);
+    }
+
+    .rule-card.dont {
+      border-color: rgba(196, 60, 66, 0.35);
+      background: rgba(196, 60, 66, 0.04);
+    }
+
+    .rule-label {
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      margin-bottom: 8px;
+    }
+
+    .rule-card .rule-label { color: var(--brand); }
+    .rule-card.dont .rule-label { color: var(--danger); }
+
+    .rule-example {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 12px;
+      border-radius: 10px;
+      background: var(--surface-2);
+      margin-bottom: 8px;
+      min-height: 56px;
+    }
+
+    .rule-card.dont .rule-example {
+      opacity: 0.85;
+    }
+
+    .wrong-mark {
+      width: 28px;
+      height: 28px;
+      border-radius: 999px;
+      background: linear-gradient(135deg, #a855f7, #6366f1);
+    }
+
+    .wrong-word {
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: 18px;
+      font-weight: 700;
+      color: #6366f1;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: rgba(6, 122, 74, 0.1);
+      color: var(--brand);
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 999px;
+      background: var(--brand);
+    }
+
+    .voice-quote {
+      font-size: 15px;
+      font-weight: 600;
+      color: var(--ink);
+      line-height: 1.45;
+      margin-bottom: 6px;
+    }
+
+    .footer-note {
+      position: absolute;
+      left: 18mm;
+      right: 18mm;
+      bottom: 12mm;
+      display: flex;
+      justify-content: space-between;
+      font-size: 10px;
+      color: var(--muted);
+      font-weight: 500;
+    }
+
+    .page-dark .footer-note { color: var(--pitch-muted); }
+
+    ul.clean {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    ul.clean li {
+      padding-left: 14px;
+      position: relative;
+    }
+
+    ul.clean li::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      top: 7px;
+      width: 6px;
+      height: 6px;
+      border-radius: 999px;
+      background: var(--brand);
+    }
+
+    .stack { display: flex; flex-direction: column; gap: 10px; }
+    .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    .mt-2 { margin-top: 8px; }
+    .mt-3 { margin-top: 12px; }
+    .mt-4 { margin-top: 16px; }
+    .mb-2 { margin-bottom: 8px; }
+    .mb-3 { margin-bottom: 12px; }
+    .strong { font-weight: 700; color: var(--ink); }
+    .page-dark .strong { color: var(--pitch-ink); }
+  </style>
+</head>
+<body>
+
+  <!-- 1. Cover -->
+  <section class="page cover">
+    <div class="cover-top">
+      <div class="wordmark" style="font-size: 22px;">Midtable</div>
+    </div>
+    <div class="cover-mid">
+      <div class="eyebrow">Brand guide</div>
+      <h1>Midtable</h1>
+      <p class="cover-tag">Draft clubs, follow every result, and climb the table.</p>
+    </div>
+    <div class="cover-bottom">
+      <div class="cover-meta">
+        Visual identity &amp; product system<br />
+        Version 1.0 · July 2026
+      </div>
+      <div class="cover-swatches">
+        <div class="cover-swatch" style="background:#067a4a;"></div>
+        <div class="cover-swatch" style="background:#8fd94a;"></div>
+        <div class="cover-swatch" style="background:#18181b;"></div>
+        <div class="cover-swatch" style="background:#b9cdc0;"></div>
+        <div class="cover-swatch" style="background:#0a0f0c;"></div>
+        <div class="cover-swatch" style="background:#2dd67b;"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 2. Brand essence -->
+  <section class="page">
+    <div class="page-header">
+      <div class="wordmark">Midtable</div>
+      <div class="page-num">02 / Essence</div>
+    </div>
+
+    <div class="section">
+      <div class="eyebrow">Positioning</div>
+      <h2>Football-first. Invite-only. Operationally clear.</h2>
+      <p class="lede">
+        Midtable is a multi-pool football draft platform for friends’ leagues.
+        The brand feels like a modern matchday companion — confident greens on cool neutrals,
+        bold compact type, and language commissioners actually use.
+      </p>
+    </div>
+
+    <div class="grid-2 mt-4">
+      <div class="card">
+        <h3>Brand promise</h3>
+        <p class="strong" style="font-size:14px; margin-bottom:8px;">
+          Make private draft leagues feel official without the noise.
+        </p>
+        <p>
+          Soft surfaces, mint borders, and pitch greens signal football without
+          stadium clichés or purple-saas defaults.
+        </p>
+      </div>
+      <div class="card">
+        <h3>Personality</h3>
+        <ul class="clean">
+          <li><span class="strong">Direct</span> — short CTAs, no hype filler</li>
+          <li><span class="strong">Fluent</span> — table, draft, matchday vocabulary</li>
+          <li><span class="strong">Invite-only</span> — private by default, never flashy</li>
+          <li><span class="strong">Precise</span> — ranks, scores, and status stay crisp</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="grid-3 mt-4">
+      <div class="card-inset">
+        <div class="eyebrow" style="margin-bottom:6px;">Product</div>
+        <p class="strong">Midtable</p>
+        <p class="mt-2">Primary product name.</p>
+      </div>
+      <div class="card-inset">
+        <div class="eyebrow" style="margin-bottom:6px;">Light theme</div>
+        <p class="strong">Matchday</p>
+        <p class="mt-2">Cool neutral canvas, green as trim.</p>
+      </div>
+      <div class="card-inset">
+        <div class="eyebrow" style="margin-bottom:6px;">Dark theme</div>
+        <p class="strong">Pitch Night</p>
+        <p class="mt-2">Deep turf black with bright pitch green.</p>
+      </div>
+    </div>
+
+    <div class="footer-note">
+      <span>midtable brand guide</span>
+      <span>source of truth · frontend/src/app/globals.css</span>
+    </div>
+  </section>
+
+  <!-- 3. Logo -->
+  <section class="page">
+    <div class="page-header">
+      <div class="wordmark">Midtable</div>
+      <div class="page-num">03 / Logo</div>
+    </div>
+
+    <div class="section">
+      <div class="eyebrow">Identity mark</div>
+      <h2>Wordmark + rank mark</h2>
+      <p class="lede">
+        Staggered Outfit ExtraBold wordmark over three sharp squares.
+        Center tile sits in a gradient frame with a surface gap — rank #1 energy without glow stacks.
+      </p>
+    </div>
+
+    <div class="logo-preview mt-3">
+      <figure>
+        <img src="../../brand/midtable-logo-matchday.svg" alt="Midtable logo Matchday" />
+        <figcaption>Matchday · brand/midtable-logo-matchday.svg</figcaption>
+      </figure>
+      <figure>
+        <img src="../../brand/midtable-logo-pitch-night.svg" alt="Midtable logo Pitch Night" />
+        <figcaption>Pitch Night · brand/midtable-logo-pitch-night.svg</figcaption>
+      </figure>
+    </div>
+
+    <div class="grid-2 mt-3">
+      <div class="card">
+        <h3>Matchday frame</h3>
+        <p class="mt-2">Gradient <span class="token">#8FD94A</span> → <span class="token">#B9CDC0</span>. Fill <span class="token">#067A4A</span>. Wordmark muted <span class="token">#71717A</span>.</p>
+      </div>
+      <div class="card">
+        <h3>Pitch Night frame</h3>
+        <p class="mt-2">Gradient <span class="token">#B8F25A</span> → <span class="token">#9EE9D0</span>. Fill <span class="token">#2DD67B</span>. Wordmark brand green.</p>
+      </div>
+    </div>
+
+    <div class="card mt-3">
+      <h3>Product wiring</h3>
+      <p class="mt-2">
+        App lockups &amp; marks live in <span class="token">frontend/public/brand/</span>.
+        Theme swap via <span class="token">MidtableLogo</span> + <span class="token">data-theme</span>.
+        Favicon uses the Matchday rank mark.
+      </p>
+      <p class="mt-2">Full sheet: <span class="token">brand/midtable-logo-variants.svg</span></p>
+    </div>
+
+    <div class="footer-note">
+      <span>midtable brand guide</span>
+      <span>assets · brand/</span>
+    </div>
+  </section>
+
+  <!-- 4. Color Matchday -->
+  <section class="page">
+    <div class="page-header">
+      <div class="wordmark">Midtable</div>
+      <div class="page-num">04 / Color · Matchday</div>
+    </div>
+
+    <div class="section">
+      <div class="eyebrow">Light theme</div>
+      <h2>Matchday palette</h2>
+      <p class="lede">Cool neutral canvas. Green is trim and brand — never the whole field.</p>
+    </div>
+
+    <div class="grid-4 mt-3">
+      <div class="swatch">
+        <div class="swatch-chip" style="background:#067a4a;"></div>
+        <div class="swatch-meta">
+          <div class="swatch-name">Brand</div>
+          <div class="swatch-hex">#067A4A</div>
+          <div class="swatch-role">Primary CTAs, links, eyebrows</div>
+        </div>
+      </div>
+      <div class="swatch">
+        <div class="swatch-chip" style="background:#055c38;"></div>
+        <div class="swatch-meta">
+          <div class="swatch-name">Brand dark</div>
+          <div class="swatch-hex">#055C38</div>
+          <div class="swatch-role">Hover / pressed primary</div>
+        </div>
+      </div>
+      <div class="swatch">
+        <div class="swatch-chip" style="background:#8fd94a;"></div>
+        <div class="swatch-meta">
+          <div class="swatch-name">Accent</div>
+          <div class="swatch-hex">#8FD94A</div>
+          <div class="swatch-role">Rank #1 and highlights</div>
+        </div>
+      </div>
+      <div class="swatch">
+        <div class="swatch-chip" style="background:#b9cdc0;"></div>
+        <div class="swatch-meta">
+          <div class="swatch-name">Line</div>
+          <div class="swatch-hex">#B9CDC0</div>
+          <div class="swatch-role">Mint-tinted borders</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid-4 mt-2">
+      <div class="swatch">
+        <div class="swatch-chip" style="background:#f4f4f5;"></div>
+        <div class="swatch-meta">
+          <div class="swatch-name">Background</div>
+          <div class="swatch-hex">#F4F4F5</div>
+          <div class="swatch-role">Page canvas</div>
+        </div>
+      </div>
+      <div class="swatch">
+        <div class="swatch-chip" style="background:#ffffff; border-bottom:1px solid #b9cdc0;"></div>
+        <div class="swatch-meta">
+          <div class="swatch-name">Surface</div>
+          <div class="swatch-hex">#FFFFFF</div>
+          <div class="swatch-role">Cards &amp; panels</div>
+        </div>
+      </div>
+      <div class="swatch">
+        <div class="swatch-chip" style="background:#18181b;"></div>
+        <div class="swatch-meta">
+          <div class="swatch-name">Ink</div>
+          <div class="swatch-hex">#18181B</div>
+          <div class="swatch-role">Primary text</div>
+        </div>
+      </div>
+      <div class="swatch">
+        <div class="swatch-chip" style="background:#71717a;"></div>
+        <div class="swatch-meta">
+          <div class="swatch-name">Muted</div>
+          <div class="swatch-hex">#71717A</div>
+          <div class="swatch-role">Labels &amp; secondary</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid-3 mt-3">
+      <div class="swatch">
+        <div class="swatch-chip" style="background:#c43c42;"></div>
+        <div class="swatch-meta">
+          <div class="swatch-name">Danger</div>
+          <div class="swatch-hex">#C43C42</div>
+          <div class="swatch-role">Errors / destructive</div>
+        </div>
+      </div>
+      <div class="swatch">
+        <div class="swatch-chip" style="background:#9a6410;"></div>
+        <div class="swatch-meta">
+          <div class="swatch-name">Warning</div>
+          <div class="swatch-hex">#9A6410</div>
+          <div class="swatch-role">Caution status</div>
+        </div>
+      </div>
+      <div class="swatch">
+        <div class="swatch-chip" style="background:#f0f0f2;"></div>
+        <div class="swatch-meta">
+          <div class="swatch-name">Surface 2</div>
+          <div class="swatch-hex">#F0F0F2</div>
+          <div class="swatch-role">Inset tracks &amp; hover</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="footer-note">
+      <span>midtable brand guide</span>
+      <span>CSS tokens · --color-brand etc.</span>
+    </div>
+  </section>
+
+  <!-- 5. Color Pitch Night -->
+  <section class="page page-dark">
+    <div class="page-header">
+      <div class="wordmark">Midtable</div>
+      <div class="page-num">05 / Color · Pitch Night</div>
+    </div>
+
+    <div class="section">
+      <div class="eyebrow">Dark theme</div>
+      <h2>Pitch Night palette</h2>
+      <p class="lede">Near-black green ground. Brand lifts to bright pitch green; text goes soft mint-white.</p>
+    </div>
+
+    <div class="grid-4 mt-3">
+      <div class="swatch" style="background:#121a15;border-color:#243028;">
+        <div class="swatch-chip" style="background:#2dd67b;"></div>
+        <div class="swatch-meta">
+          <div class="swatch-name" style="color:#e8eee9;">Brand</div>
+          <div class="swatch-hex" style="color:#8a9a90;">#2DD67B</div>
+          <div class="swatch-role" style="color:#8a9a90;">Primary on dark</div>
+        </div>
+      </div>
+      <div class="swatch" style="background:#121a15;border-color:#243028;">
+        <div class="swatch-chip" style="background:#22c46a;"></div>
+        <div class="swatch-meta">
+          <div class="swatch-name" style="color:#e8eee9;">Brand dark</div>
+          <div class="swatch-hex" style="color:#8a9a90;">#22C46A</div>
+          <div class="swatch-role" style="color:#8a9a90;">Hover primary</div>
+        </div>
+      </div>
+      <div class="swatch" style="background:#121a15;border-color:#243028;">
+        <div class="swatch-chip" style="background:#b8f25a;"></div>
+        <div class="swatch-meta">
+          <div class="swatch-name" style="color:#e8eee9;">Accent</div>
+          <div class="swatch-hex" style="color:#8a9a90;">#B8F25A</div>
+          <div class="swatch-role" style="color:#8a9a90;">Highlights &amp; rank #1</div>
+        </div>
+      </div>
+      <div class="swatch" style="background:#121a15;border-color:#243028;">
+        <div class="swatch-chip" style="background:#243028;"></div>
+        <div class="swatch-meta">
+          <div class="swatch-name" style="color:#e8eee9;">Line</div>
+          <div class="swatch-hex" style="color:#8a9a90;">#243028</div>
+          <div class="swatch-role" style="color:#8a9a90;">Borders on dark</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid-4 mt-2">
+      <div class="swatch" style="background:#121a15;border-color:#243028;">
+        <div class="swatch-chip" style="background:#0a0f0c;"></div>
+        <div class="swatch-meta">
+          <div class="swatch-name" style="color:#e8eee9;">Background</div>
+          <div class="swatch-hex" style="color:#8a9a90;">#0A0F0C</div>
+          <div class="swatch-role" style="color:#8a9a90;">Page canvas</div>
+        </div>
+      </div>
+      <div class="swatch" style="background:#121a15;border-color:#243028;">
+        <div class="swatch-chip" style="background:#121a15;border-bottom:1px solid #243028;"></div>
+        <div class="swatch-meta">
+          <div class="swatch-name" style="color:#e8eee9;">Surface</div>
+          <div class="swatch-hex" style="color:#8a9a90;">#121A15</div>
+          <div class="swatch-role" style="color:#8a9a90;">Cards &amp; panels</div>
+        </div>
+      </div>
+      <div class="swatch" style="background:#121a15;border-color:#243028;">
+        <div class="swatch-chip" style="background:#e8eee9;"></div>
+        <div class="swatch-meta">
+          <div class="swatch-name" style="color:#e8eee9;">Ink</div>
+          <div class="swatch-hex" style="color:#8a9a90;">#E8EEE9</div>
+          <div class="swatch-role" style="color:#8a9a90;">Primary text</div>
+        </div>
+      </div>
+      <div class="swatch" style="background:#121a15;border-color:#243028;">
+        <div class="swatch-chip" style="background:#8a9a90;"></div>
+        <div class="swatch-meta">
+          <div class="swatch-name" style="color:#e8eee9;">Muted</div>
+          <div class="swatch-hex" style="color:#8a9a90;">#8A9A90</div>
+          <div class="swatch-role" style="color:#8a9a90;">Secondary text</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card mt-3" style="background:#121a15;border-color:#243028;">
+      <h3 style="color:#e8eee9;">On-brand text</h3>
+      <p style="color:#8a9a90;">
+        On Pitch Night primaries, use <span class="strong">#0A0F0C</span> (<span class="token" style="background:rgba(45,214,123,0.15);color:#2dd67b;">--color-on-brand</span>)
+        so bright greens stay readable. Soft green radial glow appears top-right on dark only.
+      </p>
+    </div>
+
+    <div class="footer-note">
+      <span>midtable brand guide</span>
+      <span>data-theme="pitch"</span>
+    </div>
+  </section>
+
+  <!-- 6. Themes side by side -->
+  <section class="page">
+    <div class="page-header">
+      <div class="wordmark">Midtable</div>
+      <div class="page-num">06 / Themes</div>
+    </div>
+
+    <div class="section">
+      <div class="eyebrow">System</div>
+      <h2>Matchday &amp; Pitch Night</h2>
+      <p class="lede">Default preference follows the device. Users can lock Light or Dark. Storage key: midtable-theme.</p>
+    </div>
+
+    <div class="grid-2 mt-3">
+      <div class="theme-panel theme-matchday">
+        <h3>Matchday</h3>
+        <p>UI label: Light</p>
+        <div class="mini-ui">
+          <div class="mini-bar">
+            <div class="mini-name">Midtable</div>
+            <div class="mini-btn">Create</div>
+          </div>
+          <div class="mini-row" style="border-top:none;padding-top:0;">
+            <span>Premier League pool</span>
+            <span class="rank-1">1st</span>
+          </div>
+          <div class="mini-row">
+            <span style="color:#71717a;font-weight:500;">Live draft</span>
+            <span class="pill"><span class="dot"></span> On the clock</span>
+          </div>
+        </div>
+      </div>
+      <div class="theme-panel theme-pitch">
+        <h3>Pitch Night</h3>
+        <p style="color:#8a9a90;">UI label: Dark</p>
+        <div class="mini-ui">
+          <div class="mini-bar">
+            <div class="mini-name">Midtable</div>
+            <div class="mini-btn">Create</div>
+          </div>
+          <div class="mini-row" style="border-top:none;padding-top:0;">
+            <span>Premier League pool</span>
+            <span class="rank-1">1st</span>
+          </div>
+          <div class="mini-row">
+            <span style="color:#8a9a90;font-weight:500;">Live draft</span>
+            <span class="pill" style="background:rgba(45,214,123,0.15);color:#2dd67b;">
+              <span class="dot" style="background:#2dd67b;"></span> On the clock
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card mt-3">
+      <h3>Background recipe</h3>
+      <p>
+        Fixed dual-layer body: optional radial ellipse (dark glow) + vertical fade from
+        <span class="token">--gradient-top</span> → <span class="token">--color-bg</span> →
+        <span class="token">--color-bg-accent</span>. Sticky chrome uses
+        <span class="token">bg-bg/90</span> + backdrop blur.
+      </p>
+    </div>
+
+    <div class="footer-note">
+      <span>midtable brand guide</span>
+      <span>theme.tsx · midtable-theme</span>
+    </div>
+  </section>
+
+  <!-- 7. Typography -->
+  <section class="page">
+    <div class="page-header">
+      <div class="wordmark">Midtable</div>
+      <div class="page-num">07 / Typography</div>
+    </div>
+
+    <div class="section">
+      <div class="eyebrow">Typeface</div>
+      <h2>Outfit for everything</h2>
+      <p class="lede">
+        One family for UI and display. Loaded via next/font/google as --font-outfit.
+        Fallbacks: Segoe UI, ui-sans-serif, system-ui.
+      </p>
+    </div>
+
+    <div class="card mt-3">
+      <div class="type-specimen">
+        <div class="type-label">Display / H1 · ExtraBold</div>
+        <div style="font-size:36px;font-weight:800;letter-spacing:-0.02em;line-height:1.1;">
+          Climb the table
+        </div>
+      </div>
+      <div class="type-specimen">
+        <div class="type-label">H2 · ExtraBold</div>
+        <div style="font-size:24px;font-weight:800;letter-spacing:-0.02em;">
+          Premier League 2026–27
+        </div>
+      </div>
+      <div class="type-specimen">
+        <div class="type-label">Eyebrow · ExtraBold · 0.12em tracking</div>
+        <div class="eyebrow" style="margin:0;">Welcome · Account · Invite</div>
+      </div>
+      <div class="type-specimen">
+        <div class="type-label">Body · Regular · 15px / 1.5</div>
+        <div style="font-size:15px;font-weight:400;color:#71717a;max-width:480px;">
+          Draft clubs, follow every result, and climb the table. Leagues remain invite-only.
+        </div>
+      </div>
+      <div class="type-specimen">
+        <div class="type-label">UI control · Bold</div>
+        <div style="font-size:14px;font-weight:700;">Sign in · Send magic link · Create league</div>
+      </div>
+      <div class="type-specimen">
+        <div class="type-label">Stats · ExtraBold · tabular-nums</div>
+        <div style="font-size:28px;font-weight:800;font-variant-numeric:tabular-nums;letter-spacing:-0.02em;">
+          84 · 2–1 · +12
+        </div>
+      </div>
+    </div>
+
+    <div class="grid-3 mt-3">
+      <div class="card-inset">
+        <h3>Weights</h3>
+        <p>400 body · 600 labels · 700 controls · 800 titles &amp; stats</p>
+      </div>
+      <div class="card-inset">
+        <h3>Tracking</h3>
+        <p>Headings −0.02em. Eyebrows +0.12em uppercase.</p>
+      </div>
+      <div class="card-inset">
+        <h3>Numbers</h3>
+        <p>Use tabular-nums for scores, ranks, and standings.</p>
+      </div>
+    </div>
+
+    <div class="footer-note">
+      <span>midtable brand guide</span>
+      <span>Outfit · Google Fonts</span>
+    </div>
+  </section>
+
+  <!-- 8. Components -->
+  <section class="page">
+    <div class="page-header">
+      <div class="wordmark">Midtable</div>
+      <div class="page-num">08 / Components</div>
+    </div>
+
+    <div class="section">
+      <div class="eyebrow">UI system</div>
+      <h2>Surfaces, controls, status</h2>
+      <p class="lede">Rounded-xl shells, mint borders, soft elevation. Cards earn their keep — interaction or structure, not decoration.</p>
+    </div>
+
+    <div class="grid-2 mt-3">
+      <div class="card">
+        <h3>Buttons</h3>
+        <div class="row mt-2">
+          <span class="btn-demo btn-primary">Primary</span>
+          <span class="btn-demo btn-secondary">Secondary</span>
+          <span class="btn-demo btn-danger">Danger</span>
+          <span class="btn-demo btn-ghost">Ghost</span>
+        </div>
+        <p class="mt-3">Always rounded-xl + font-bold. Press: active:scale-[0.98].</p>
+      </div>
+      <div class="card">
+        <h3>Status &amp; rank</h3>
+        <div class="row mt-2">
+          <span class="pill"><span class="dot"></span> Live</span>
+          <span class="rank-1">1st</span>
+          <span class="pill" style="background:rgba(196,60,66,0.1);color:#c43c42;">
+            <span class="dot" style="background:#c43c42;"></span> Error
+          </span>
+        </div>
+        <p class="mt-3">Rank #1 uses accent fill + on-accent text. Live draft pulses a status dot.</p>
+      </div>
+    </div>
+
+    <div class="grid-3 mt-3">
+      <div class="card-inset">
+        <h3>Radius</h3>
+        <p><span class="token">0.875rem</span> primary · lg for compact · full for chips</p>
+      </div>
+      <div class="card-inset">
+        <h3>Shadow</h3>
+        <p>Matchday soft 10/30 @ 6%. Pitch Night 12/32 @ 45% black.</p>
+      </div>
+      <div class="card-inset">
+        <h3>Touch</h3>
+        <p>min-h-11 (44px) targets. Content max width 1180px.</p>
+      </div>
+    </div>
+
+    <div class="card mt-3">
+      <h3>Motion</h3>
+      <p>
+        Entrance: fade-up 0.28s (6px). Respects prefers-reduced-motion.
+        Use motion for hierarchy — not ambient noise. Live draft may pulse; everything else stays calm.
+      </p>
+    </div>
+
+    <div class="footer-note">
+      <span>midtable brand guide</span>
+      <span>components/ui</span>
+    </div>
+  </section>
+
+  <!-- 9. Voice -->
+  <section class="page">
+    <div class="page-header">
+      <div class="wordmark">Midtable</div>
+      <div class="page-num">09 / Voice</div>
+    </div>
+
+    <div class="section">
+      <div class="eyebrow">Tone of voice</div>
+      <h2>Short. Functional. Football-fluent.</h2>
+      <p class="lede">Write like a commissioner briefing the group chat — clear, invite-aware, zero fluff.</p>
+    </div>
+
+    <div class="grid-2 mt-3">
+      <div class="card">
+        <h3>Approved lines</h3>
+        <div class="stack mt-2">
+          <div>
+            <p class="voice-quote">“Draft clubs, follow every result, and climb the table.”</p>
+            <p>Product meta / tagline</p>
+          </div>
+          <div>
+            <p class="voice-quote">“Magic link or password. Leagues remain invite-only.”</p>
+            <p>Auth framing</p>
+          </div>
+          <div>
+            <p class="voice-quote">“Accept an invite link to join a league.”</p>
+            <p>Empty state</p>
+          </div>
+        </div>
+      </div>
+      <div class="card">
+        <h3>Principles</h3>
+        <ul class="clean mt-2">
+          <li>Imperative CTAs: Sign in, Create account, Send magic link</li>
+          <li>Prefer commissioner words: league, draft, standings, pool</li>
+          <li>Eyebrows stay sparse: Welcome, Account, Invite, Step 1</li>
+          <li>Never promise public social features Midtable doesn’t have</li>
+          <li>Don’t use emoji as brand voice</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="do-dont mt-3">
+      <div class="rule-card">
+        <div class="rule-label">Do</div>
+        <p class="voice-quote" style="margin-top:4px;">“Start from a template, build a new one, or create a blank league.”</p>
+        <p>Concrete options. Operational clarity.</p>
+      </div>
+      <div class="rule-card dont">
+        <div class="rule-label">Don’t</div>
+        <p class="voice-quote" style="margin-top:4px;">“Unleash next-level fantasy vibes with your squad 🔥”</p>
+        <p>Hype, emoji stacks, and generic fantasy-app copy.</p>
+      </div>
+    </div>
+
+    <div class="footer-note">
+      <span>midtable brand guide</span>
+      <span>voice &amp; messaging</span>
+    </div>
+  </section>
+
+  <!-- 10. Application -->
+  <section class="page">
+    <div class="page-header">
+      <div class="wordmark">Midtable</div>
+      <div class="page-num">10 / Application</div>
+    </div>
+
+    <div class="section">
+      <div class="eyebrow">Checklist</div>
+      <h2>Shipping Midtable on-brand</h2>
+      <p class="lede">Quick gate before new screens, emails, or marketing surfaces go out.</p>
+    </div>
+
+    <div class="grid-2 mt-3">
+      <div class="card">
+        <h3>Always</h3>
+        <ul class="clean mt-2">
+          <li>Outfit ExtraBold for titles; brand green eyebrows</li>
+          <li>Token colors only — no one-off hex in components</li>
+          <li>rounded-xl + border-line + soft shadow for panels</li>
+          <li>Support Matchday and Pitch Night</li>
+          <li>Use official logo assets from <span class="token">brand/</span> and <span class="token">frontend/public/brand/</span></li>
+          <li>44px minimum interactive height</li>
+          <li>Invite-only framing when talking about access</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>Never</h3>
+        <ul class="clean mt-2">
+          <li>Purple / indigo “AI default” themes</li>
+          <li>Warm cream + terracotta editorial looks</li>
+          <li>Newspaper / broadsheet layouts</li>
+          <li>Glow stacks, emoji rows, pill clusters as decoration</li>
+          <li>Cards in a hero that aren’t interactive</li>
+          <li>Replacing Midtable with the repo name in UI</li>
+          <li>Rounding the rank-mark squares or dropping the center frame gap</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="card mt-3">
+      <h3>Source of truth</h3>
+      <p class="mt-2">
+        <span class="token">brand/</span> ·
+        <span class="token">frontend/public/brand/</span> ·
+        <span class="token">frontend/src/components/MidtableLogo.tsx</span> ·
+        <span class="token">frontend/src/app/globals.css</span> ·
+        <span class="token">frontend/src/lib/theme.tsx</span> ·
+        <span class="token">frontend/src/components/ui/</span>
+      </p>
+      <p class="mt-2">
+        This guide documents the shipped product system as of July 2026.
+        When tokens change in CSS, update this guide.
+      </p>
+    </div>
+
+    <div class="card mt-3">
+      <div class="wordmark" style="font-size:20px;">Midtable</div>
+      <p class="mt-2">Draft clubs, follow every result, and climb the table.</p>
+    </div>
+
+    <div class="footer-note">
+      <span>midtable brand guide · v1.0</span>
+      <span>end</span>
+    </div>
+  </section>
+
+</body>
+</html>

@@ -6,6 +6,7 @@ import { useState } from "react";
 import { useAuth } from "@/lib/auth";
 import { cn } from "@/lib/cn";
 import { IconButton } from "@/components/ui/IconButton";
+import { MidtableLogo } from "@/components/MidtableLogo";
 import { LogInIcon, LogOutIcon, MenuIcon, XIcon } from "@/components/ui/icons";
 import { LeagueBottomNav, LeagueDesktopTabs, leagueNavItems } from "@/components/ui/BottomNav";
 
@@ -40,12 +41,15 @@ export function Nav() {
   return (
     <header className="sticky top-0 z-40 border-b border-line bg-bg/90 backdrop-blur-md safe-pt">
       <div className="mx-auto flex min-h-14 max-w-[1180px] items-center justify-between gap-3 px-4 sm:min-h-16 sm:px-5 [padding-left:max(1rem,env(safe-area-inset-left))] [padding-right:max(1rem,env(safe-area-inset-right))]">
-        <Link href="/" className="flex items-center gap-2.5 font-display text-lg font-extrabold tracking-tight">
-          <span
-            className="size-7 rounded-lg bg-gradient-to-br from-accent to-brand shadow-sm"
-            aria-hidden
-          />
-          <span>Midtable</span>
+        <Link
+          href="/"
+          className="inline-flex items-center gap-2.5"
+          aria-label="Midtable home"
+        >
+          <MidtableLogo variant="mark" className="h-7 w-auto sm:h-8" />
+          <span className="font-display text-lg font-extrabold tracking-tight text-muted [[data-theme=pitch]_&]:text-brand">
+            Midtable
+          </span>
         </Link>
 
         <nav className="hidden items-center gap-1 md:flex" aria-label="Primary">
