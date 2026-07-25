@@ -51,11 +51,14 @@ def send_invite_email(
     """Send a transactional invite via Mailjet HTML. Soft-fails when unconfigured."""
     cfg = settings or get_settings()
     if not cfg.mailjet_configured:
+        logger.info("invite email skipped reason=mailjet_not_configured")
         return MailSendResult(
             status="skipped",
             error="Mailjet is not configured",
             http_attempts=0,
         )
+
+    logger.debug("invite email send start to=%s league=%s", to_email, league_name)
 
     html = invite_html_body(
         league_name=league_name,
@@ -101,6 +104,12 @@ def send_invite_email(
             except httpx.TransportError as exc:
                 last_error = _truncate_error(f"Transport error: {exc}")
                 if attempt < MAX_ATTEMPTS:
+                    logger.warning(
+                        "invite email transport error attempt=%s/%s error=%s",
+                        attempt,
+                        MAX_ATTEMPTS,
+                        last_error,
+                    )
                     time.sleep(BACKOFF_SECONDS[min(attempt - 1, len(BACKOFF_SECONDS) - 1)])
                     continue
                 break
@@ -110,20 +119,38 @@ def send_invite_email(
                     f"Mailjet HTTP {response.status_code}: {response.text}"
                 )
                 if attempt < MAX_ATTEMPTS:
+                    logger.warning(
+                        "invite email retryable HTTP status=%s attempt=%s/%s",
+                        response.status_code,
+                        attempt,
+                        MAX_ATTEMPTS,
+                    )
                     time.sleep(BACKOFF_SECONDS[min(attempt - 1, len(BACKOFF_SECONDS) - 1)])
                     continue
                 break
 
             if response.status_code >= 400:
+                error = _truncate_error(
+                    f"Mailjet HTTP {response.status_code}: {response.text}"
+                )
+                logger.error(
+                    "invite email failed status=%s attempts=%s error=%s",
+                    response.status_code,
+                    attempts,
+                    error,
+                )
                 return MailSendResult(
                     status="failed",
-                    error=_truncate_error(
-                        f"Mailjet HTTP {response.status_code}: {response.text}"
-                    ),
+                    error=error,
                     http_attempts=attempts,
                 )
 
             message_id = _extract_message_id(response)
+            logger.info(
+                "invite email sent attempts=%s message_id=%s",
+                attempts,
+                message_id,
+            )
             return MailSendResult(
                 status="sent",
                 provider_message_id=message_id,
@@ -133,6 +160,11 @@ def send_invite_email(
         if owns_client:
             http.close()
 
+    logger.error(
+        "invite email failed after retries attempts=%s error=%s",
+        attempts,
+        last_error,
+    )
     return MailSendResult(
         status="failed",
         error=last_error,

@@ -1,3 +1,4 @@
+import logging
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -33,6 +34,8 @@ from app.services.draft import (
 )
 from app.services.errors import DomainError
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(tags=["draft"])
 
 
@@ -54,7 +57,14 @@ def _build_draft_state(db: Session, league: League) -> DraftStateResponse:
                 pick_number=state.current_pick_number,
             )
             on_clock_id = member.public_id
-        except DomainError:
+        except DomainError as exc:
+            logger.warning(
+                "draft on-clock unresolved league_id=%s status=%s pick=%s detail=%s",
+                league.public_id,
+                state.status,
+                state.current_pick_number,
+                exc.message,
+            )
             on_clock_id = None
     picks = db.scalars(
         select(DraftPick)
@@ -190,6 +200,11 @@ def set_draft_order(
     for index, mid in enumerate(payload.member_ids, start=1):
         members[mid].draft_slot = index
     db.commit()
+    logger.info(
+        "draft order set league_id=%s managers=%s",
+        league.public_id,
+        len(payload.member_ids),
+    )
     return [
         _member_response(m, db.get(Profile, m.profile_id))
         for m in sorted(members.values(), key=lambda row: row.draft_slot or 0)
@@ -245,6 +260,13 @@ def preassign_team(
     )
     db.add(entry)
     db.commit()
+    logger.info(
+        "preassign created league_id=%s member_id=%s team_id=%s pool_id=%s",
+        league.public_id,
+        member.public_id,
+        team.public_id,
+        pool.public_id,
+    )
     return {"id": str(entry.public_id)}
 
 

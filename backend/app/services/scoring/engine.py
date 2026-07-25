@@ -6,6 +6,7 @@ Standings snapshots use finished matches with kickoff_at < this kickoff
 
 from __future__ import annotations
 
+import logging
 from collections import defaultdict
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
@@ -13,6 +14,8 @@ from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 class Result(StrEnum):
@@ -462,6 +465,14 @@ def score_match_events(
     if home_result is Result.WIN:
         bonus, key, gap = upset_bonus(home, away, Result.WIN, upset_rules)
         if key and bonus:
+            logger.debug(
+                "upset bonus match_id=%s team_id=%s event_type=%s points=%s gap=%s",
+                match.match_id,
+                match.home_team_id,
+                key,
+                bonus,
+                gap,
+            )
             events.append(
                 ScoringEventDraft(
                     match_id=match.match_id,
@@ -481,6 +492,14 @@ def score_match_events(
     elif away_result is Result.WIN:
         bonus, key, gap = upset_bonus(away, home, Result.WIN, upset_rules)
         if key and bonus:
+            logger.debug(
+                "upset bonus match_id=%s team_id=%s event_type=%s points=%s gap=%s",
+                match.match_id,
+                match.away_team_id,
+                key,
+                bonus,
+                gap,
+            )
             events.append(
                 ScoringEventDraft(
                     match_id=match.match_id,
@@ -501,6 +520,14 @@ def score_match_events(
         underdog, opponent = (home, away) if home.rank > away.rank else (away, home)
         bonus, key, gap = upset_bonus(underdog, opponent, Result.DRAW, upset_rules)
         if key and bonus:
+            logger.debug(
+                "upset bonus match_id=%s team_id=%s event_type=%s points=%s gap=%s",
+                match.match_id,
+                underdog.team_id,
+                key,
+                bonus,
+                gap,
+            )
             events.append(
                 ScoringEventDraft(
                     match_id=match.match_id,
@@ -528,16 +555,6 @@ def plan_recompute_cascade(
     same_pool = [
         m for m in all_matches if m.pool_id == changed_match.pool_id and is_finished(m)
     ]
-    affected = tuple(
-        sorted(
-            (
-                m.match_id
-                for m in same_pool
-                if m.kickoff_at >= changed_match.kickoff_at
-            ),
-            key=lambda mid: mid,
-        )
-    )
     # Preserve kickoff order for affected ids
     ordered = sorted(
         (m for m in same_pool if m.kickoff_at >= changed_match.kickoff_at),
@@ -545,6 +562,13 @@ def plan_recompute_cascade(
     )
     affected = tuple(m.match_id for m in ordered)
     stale_kickoffs = tuple(sorted({m.kickoff_at for m in ordered if m.kickoff_at > changed_match.kickoff_at}))
+    logger.debug(
+        "plan_recompute_cascade changed_match_id=%s pool_id=%s affected=%s stale_kickoffs=%s",
+        changed_match.match_id,
+        changed_match.pool_id,
+        len(affected),
+        len(stale_kickoffs),
+    )
     return RecomputePlan(
         changed_match_id=changed_match.match_id,
         pool_id=changed_match.pool_id,

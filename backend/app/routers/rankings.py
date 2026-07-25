@@ -1,3 +1,4 @@
+import logging
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -6,9 +7,12 @@ from sqlalchemy.orm import Session
 
 from app.db import get_db
 from app.deps import require_commissioner, require_league_member
+from app.logging_config import log_id
 from app.models import League, LeagueMember, PoolTeam, RankingList, Team, TeamPool, TeamRanking
 from app.schemas.rankings import RankingImportRequest, RankingListCreate, RankingListResponse
 from app.services.rankings import parse_ranking_text, suggest_team_matches
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["rankings"])
 
@@ -44,6 +48,12 @@ def create_ranking_list(
     db.add(row)
     db.commit()
     db.refresh(row)
+    logger.info(
+        "ranking list created league_id=%s list_id=%s key=%s",
+        league.public_id,
+        row.public_id,
+        row.key,
+    )
     return RankingListResponse.model_validate(row)
 
 
@@ -75,6 +85,12 @@ def parse_rankings(
     ).all()
     team_pairs = [(str(t.public_id), t.name) for t in teams]
     suggestions = suggest_team_matches(parsed, team_pairs)
+    logger.info(
+        "ranking parse league_id=%s list_id=%s parsed_rows=%s",
+        log_id(league),
+        ranking_list.public_id,
+        len(parsed),
+    )
     return {"rows": suggestions}
 
 
@@ -137,6 +153,12 @@ def import_ranking_entries(
         )
         created += 1
     db.commit()
+    logger.info(
+        "ranking entries imported league_id=%s list_id=%s created=%s",
+        league.public_id,
+        ranking_list.public_id,
+        created,
+    )
     return {"created": created}
 
 
@@ -157,4 +179,10 @@ def lock_ranking_list(
         raise HTTPException(status_code=404, detail="Ranking list not found")
     ranking_list.locked = True
     db.commit()
+    logger.info(
+        "ranking list locked league_id=%s list_id=%s key=%s",
+        league.public_id,
+        ranking_list.public_id,
+        ranking_list.key,
+    )
     return {"id": str(ranking_list.public_id), "locked": True}

@@ -2,13 +2,7 @@
 
 from __future__ import annotations
 
-from app.services.errors import (
-    ConflictError,
-    DomainError,
-    ForbiddenError,
-    NotFoundError,
-)
-
+import logging
 from copy import deepcopy
 from datetime import UTC, date, datetime
 from decimal import Decimal
@@ -27,6 +21,14 @@ from app.models import (
     TeamPool,
 )
 from app.providers.base import FootballProvider
+from app.services.errors import (
+    ConflictError,
+    DomainError,
+    ForbiddenError,
+    NotFoundError,
+)
+
+logger = logging.getLogger(__name__)
 
 
 def prior_leagues_blocking(
@@ -92,6 +94,13 @@ def bootstrap_season(
         year = int(params["season_year"])
         info, _ = provider.resolve_competition_season(code, year)
         if not info.available:
+            logger.warning(
+                "bootstrap_season provider unavailable competition_code=%s season_year=%s "
+                "message=%s",
+                code,
+                year,
+                info.message,
+            )
             raise ConflictError({
                     "message": "provider season not available",
                     "competition_code": code,
@@ -179,6 +188,13 @@ def bootstrap_season(
 
     db.add(DraftState(league_id=league.id, current_pick_number=1, status="pending"))
     db.flush()
+    logger.info(
+        "bootstrap_season ok league_id=%s name=%s season_label=%s pools=%s",
+        league.public_id,
+        league.name,
+        league.season_label,
+        len(template.pool_definitions or []),
+    )
     return league
 
 
@@ -265,6 +281,15 @@ def bootstrap_teams_for_league(
             pool.competition_code, int(pool.season_year)
         )
         if not info.available:
+            logger.warning(
+                "bootstrap_teams provider unavailable league_id=%s pool_key=%s "
+                "competition_code=%s season_year=%s message=%s",
+                league.public_id,
+                pool.key,
+                pool.competition_code,
+                pool.season_year,
+                info.message,
+            )
             raise ConflictError({
                     "message": "provider season not available",
                     "pool_key": pool.key,
@@ -318,9 +343,19 @@ def bootstrap_teams_for_league(
         )
 
     db.flush()
-    return {
+    summary = {
         "created_teams": created_teams,
         "linked": linked,
         "skipped_existing": skipped_existing,
         "pools": pool_summaries,
     }
+    logger.info(
+        "bootstrap_teams_for_league ok league_id=%s created_teams=%s linked=%s "
+        "skipped_existing=%s pools=%s",
+        league.public_id,
+        created_teams,
+        linked,
+        skipped_existing,
+        len(pool_summaries),
+    )
+    return summary

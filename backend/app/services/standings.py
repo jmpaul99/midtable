@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 
 from sqlalchemy import select
@@ -15,6 +16,8 @@ from app.services.scoring import (
     build_standings_before_kickoff,
     is_finished,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def initial_rows_for_pool(db: Session, pool: TeamPool) -> list[TableRow]:
@@ -56,6 +59,7 @@ def build_snapshot_for_kickoff(
             StandingsSnapshot.kickoff_at == kickoff_at,
         )
     ).first()
+    reused = existing is not None
     if existing:
         for row in list(existing.rows):
             db.delete(row)
@@ -86,6 +90,13 @@ def build_snapshot_for_kickoff(
             )
         )
     db.flush()
+    logger.debug(
+        "build_snapshot_for_kickoff pool_id=%s kickoff=%s rows=%s reused=%s",
+        pool.id,
+        kickoff_at.isoformat(),
+        len(ranked),
+        reused,
+    )
     return snapshot
 
 
@@ -99,4 +110,12 @@ def mark_snapshots_stale_after(db: Session, pool_id: int, kickoff_at: datetime) 
     for snap in snapshots:
         snap.stale = True
     db.flush()
-    return len(snapshots)
+    count = len(snapshots)
+    if count > 0:
+        logger.info(
+            "mark_snapshots_stale_after pool_id=%s kickoff=%s stale_count=%s",
+            pool_id,
+            kickoff_at.isoformat(),
+            count,
+        )
+    return count

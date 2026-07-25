@@ -1,3 +1,4 @@
+import logging
 from decimal import Decimal
 from uuid import UUID
 
@@ -8,10 +9,12 @@ from sqlalchemy.orm import Session
 from app.auth.jwt import get_current_profile
 from app.db import get_db
 from app.deps import require_commissioner, team_in_league
+from app.logging_config import log_id
 from app.models import BonusType, League, LeagueMember, ManualBonus, Profile, RosterEntry, Team
 from app.schemas.admin import BonusTypeCreate, BonusTypeUpdate, ManualBonusCreate
 from app.services.members import member_label
 
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["admin"])
 
@@ -54,6 +57,13 @@ def create_bonus_type(
     db.add(row)
     db.commit()
     db.refresh(row)
+    logger.info(
+        "bonus type created league_id=%s bonus_type_id=%s key=%s default_points=%s",
+        log_id(league),
+        row.public_id,
+        row.key,
+        float(row.default_points),
+    )
     return {"id": str(row.public_id), "key": row.key}
 
 
@@ -78,6 +88,13 @@ def update_bonus_type(
         setattr(row, key, value)
     db.commit()
     db.refresh(row)
+    logger.info(
+        "bonus type updated league_id=%s bonus_type_id=%s key=%s changed_fields=%s",
+        log_id(league),
+        row.public_id,
+        row.key,
+        sorted(data.keys()),
+    )
     return {
         "id": str(row.public_id),
         "key": row.key,
@@ -106,6 +123,12 @@ def delete_bonus_type(
     ).first()
     if in_use is not None:
         raise HTTPException(status_code=409, detail="Bonus type has awarded manuals; revoke them first")
+    logger.warning(
+        "bonus type deleted league_id=%s bonus_type_id=%s key=%s",
+        log_id(league),
+        row.public_id,
+        row.key,
+    )
     db.delete(row)
     db.commit()
 
@@ -187,6 +210,16 @@ def award_manual_bonus(
     db.add(row)
     db.commit()
     db.refresh(row)
+    logger.info(
+        "manual bonus awarded league_id=%s bonus_id=%s team_id=%s bonus_type=%s "
+        "points=%s actor_profile_id=%s",
+        league.public_id,
+        row.public_id,
+        team.public_id,
+        bonus_type.key,
+        float(points),
+        profile.public_id,
+    )
     return {"id": str(row.public_id), "points": float(row.points)}
 
 
@@ -196,7 +229,7 @@ def revoke_manual_bonus(
     membership: tuple[League, LeagueMember] = Depends(require_commissioner),
     db: Session = Depends(get_db),
 ) -> None:
-    league, _ = membership
+    league, actor = membership
     row = db.scalars(
         select(ManualBonus).where(
             ManualBonus.public_id == bonus_id,
@@ -205,5 +238,12 @@ def revoke_manual_bonus(
     ).first()
     if row is None:
         raise HTTPException(status_code=404, detail="Manual bonus not found")
+    logger.info(
+        "manual bonus revoked league_id=%s bonus_id=%s points=%s actor=%s",
+        league.public_id,
+        row.public_id,
+        float(row.points),
+        actor.public_id,
+    )
     db.delete(row)
     db.commit()

@@ -1,6 +1,7 @@
 """Open league join links (not email-tied)."""
 from __future__ import annotations
 
+import logging
 import secrets
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -21,6 +22,8 @@ from app.schemas.leagues import (
     JoinLinkUpdate,
 )
 from app.services.members import default_team_name, required_manager_count
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["join-links"])
 
@@ -61,13 +64,16 @@ def update_join_link(
     if payload.rotate:
         league.join_token = secrets.token_urlsafe(24)
         league.join_link_enabled = True
+        action = "rotate"
     elif payload.enabled is True:
         if not league.join_token:
             league.join_token = secrets.token_urlsafe(24)
         league.join_link_enabled = True
+        action = "enable"
     elif payload.enabled is False:
         league.join_link_enabled = False
         league.join_token = None
+        action = "disable"
     else:
         raise HTTPException(
             status_code=400,
@@ -75,6 +81,20 @@ def update_join_link(
         )
     db.commit()
     db.refresh(league)
+    if action in {"rotate", "disable"}:
+        logger.warning(
+            "join link %s league_id=%s enabled=%s",
+            action,
+            league.public_id,
+            league.join_link_enabled,
+        )
+    else:
+        logger.info(
+            "join link %s league_id=%s enabled=%s",
+            action,
+            league.public_id,
+            league.join_link_enabled,
+        )
     return _join_link_response(league, settings)
 
 
@@ -128,6 +148,11 @@ def claim_join_link(
     if existing:
         _ensure_accepted_invite_audit(db, league=league, profile=profile)
         db.commit()
+        logger.info(
+            "join link claim existing_member league_id=%s profile_id=%s",
+            league.public_id,
+            profile.public_id,
+        )
         base = _member_response(existing, profile)
         return InviteAcceptResponse(**base.model_dump(), league_id=league.public_id)
 
@@ -152,6 +177,12 @@ def claim_join_link(
     _ensure_accepted_invite_audit(db, league=league, profile=profile)
     db.commit()
     db.refresh(member)
+    logger.info(
+        "join link claim new_member league_id=%s profile_id=%s member_id=%s",
+        league.public_id,
+        profile.public_id,
+        member.public_id,
+    )
     base = _member_response(member, profile)
     return InviteAcceptResponse(**base.model_dump(), league_id=league.public_id)
 

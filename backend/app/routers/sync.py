@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
@@ -6,6 +8,8 @@ from app.deps import get_football_provider, require_commissioner
 from app.models import League, LeagueMember
 from app.providers.football_data import FootballDataProvider
 from app.services.sync import sync_league_fixtures
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["sync"])
 
@@ -24,4 +28,8 @@ def commissioner_sync(
     provider: FootballDataProvider = Depends(get_football_provider),
 ) -> dict:
     league, _ = membership
+    logger.info(
+        "commissioner_sync start actor=commissioner league_id=%s",
+        league.public_id,
+    )
     return _raise_for_sync_result(sync_league_fixtures(db, league, provider))

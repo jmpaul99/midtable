@@ -1,6 +1,9 @@
 """Season ops: bootstrap, recompute, readiness, PL seasons."""
 from __future__ import annotations
 
+import logging
+import time
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -35,6 +38,8 @@ from app.services.bootstrap import (
 )
 from app.services.members import default_team_name
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(tags=["league-ops"])
 
 @router.post("/leagues/{league_id}/bootstrap-teams", response_model=BootstrapTeamsResponse)
@@ -52,6 +57,11 @@ def bootstrap_teams(
         pool_provider_params=payload.pool_provider_params,
     )
     db.commit()
+    logger.info(
+        "bootstrap_teams done league_id=%s summary=%s",
+        league.public_id,
+        summary,
+    )
     return BootstrapTeamsResponse(**summary)
 
 
@@ -63,6 +73,7 @@ def recompute_scores(
     from app.services.sync import earliest_finished_seeds_per_pool, score_changed_matches
 
     league, _ = membership
+    started = time.perf_counter()
     scoring_pool_ids = {
         p.id
         for p in db.scalars(
@@ -76,8 +87,25 @@ def recompute_scores(
     finished, seeds = earliest_finished_seeds_per_pool(
         matches, scoring_pool_ids=scoring_pool_ids
     )
+    logger.info(
+        "recompute_scores start league_id=%s finished=%s seeds=%s",
+        league.public_id,
+        len(finished),
+        len(seeds),
+    )
     summary = score_changed_matches(db, league, seeds)
     db.commit()
+    duration_ms = (time.perf_counter() - started) * 1000
+    logger.info(
+        "recompute_scores done league_id=%s finished_matches=%s scored=%s "
+        "cascaded=%s skipped_missing_snapshot=%s duration_ms=%.1f",
+        league.public_id,
+        len(finished),
+        summary.get("scored", 0),
+        summary.get("cascaded", 0),
+        summary.get("skipped_missing_snapshot", 0),
+        duration_ms,
+    )
     return RecomputeResponse(finished_matches=len(finished), **summary)
 
 
@@ -330,4 +358,10 @@ def start_pl_season(
     db.commit()
     db.refresh(league)
     db.refresh(member)
+    logger.info(
+        "PL season started league_id=%s season_label=%s creator_profile_id=%s",
+        league.public_id,
+        league.season_label,
+        profile.public_id,
+    )
     return _league_detail(db, league, member)

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+import time
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
@@ -20,7 +22,10 @@ from app.services.scoring import (
     plan_recompute_cascade,
     score_match_events,
 )
+from app.logging_config import log_id
 from app.services.standings import build_snapshot_for_kickoff, mark_snapshots_stale_after
+
+logger = logging.getLogger(__name__)
 
 STALE_LOCK_MINUTES = 15
 PROVIDER_KEY = "football-data.org"
@@ -96,6 +101,10 @@ def sync_league_fixtures(
         db.scalars(select(TeamPool).where(TeamPool.league_id == league.id)).all()
     )
     if not all_pools:
+        logger.warning(
+            "sync_league_fixtures soft-fail league_id=%s reason=no_pools",
+            log_id(league),
+        )
         return {
             "ok": False,
             "error": (
@@ -107,11 +116,21 @@ def sync_league_fixtures(
 
     status = _ensure_sync_status(db, league.id, PROVIDER_KEY)
     if status.in_progress and not _lock_stale(status):
+        logger.warning(
+            "sync_league_fixtures soft-fail league_id=%s reason=in_progress",
+            log_id(league),
+        )
         return {
             "ok": False,
             "error": "sync already in progress",
             "status_code": 409,
         }
+    if status.in_progress and _lock_stale(status):
+        logger.warning(
+            "sync_league_fixtures taking over stale lock league_id=%s in_progress_since=%s",
+            log_id(league),
+            status.in_progress_since,
+        )
 
     status.in_progress = True
     status.in_progress_since = datetime.now(UTC)
@@ -122,12 +141,19 @@ def sync_league_fixtures(
     created = 0
     updated = 0
     skipped_missing_teams = 0
+    skipped_pools_missing_code = 0
     rate: RateLimitInfo | None = None
 
     try:
         scoring_pools = [p for p in all_pools if p.scores_match_results]
         for pool in scoring_pools:
             if not pool.competition_code or not pool.season_year:
+                skipped_pools_missing_code += 1
+                logger.warning(
+                    "sync skipping pool missing competition/season league_id=%s pool_key=%s",
+                    log_id(league),
+                    pool.key,
+                )
                 continue
             matches, rate = provider.list_matches(pool.competition_code, pool.season_year)
             for pm in matches:
@@ -190,6 +216,12 @@ def sync_league_fixtures(
                         changed_matches.append(existing)
 
         db.flush()
+        if skipped_missing_teams > 0:
+            logger.warning(
+                "sync skipped_missing_teams league_id=%s count=%s",
+                log_id(league),
+                skipped_missing_teams,
+            )
         score_summary = score_changed_matches(db, league, changed_matches)
 
         status.last_sync_at = datetime.now(UTC)
@@ -201,13 +233,29 @@ def sync_league_fixtures(
             "updated": updated,
             "changed": len(changed_matches),
             "skipped_missing_teams": skipped_missing_teams,
+            "skipped_pools_missing_code": skipped_pools_missing_code,
             **score_summary,
         }
         status.in_progress = False
         status.in_progress_since = None
         db.commit()
+        logger.info(
+            "sync_league_fixtures ok league_id=%s created=%s updated=%s changed=%s "
+            "scored=%s skipped_missing_teams=%s skipped_pools=%s",
+            log_id(league),
+            created,
+            updated,
+            len(changed_matches),
+            score_summary.get("scored", 0),
+            skipped_missing_teams,
+            skipped_pools_missing_code,
+        )
         return {"ok": True, "status_code": 200, **status.last_summary}
     except Exception as exc:  # noqa: BLE001
+        logger.exception(
+            "sync_league_fixtures failed league_id=%s",
+            log_id(league),
+        )
         db.rollback()
         status = _ensure_sync_status(db, league.id, PROVIDER_KEY)
         status.in_progress = False
@@ -222,9 +270,19 @@ def score_changed_matches(
     league: League,
     changed: list[Match],
 ) -> dict[str, Any]:
+    started = time.perf_counter()
     if not changed:
+        logger.info(
+            "score_changed_matches empty league_id=%s seeds=0",
+            log_id(league),
+        )
         return {"scored": 0, "cascaded": 0, "skipped_missing_snapshot": 0}
 
+    logger.info(
+        "score_changed_matches start league_id=%s seeds=%s",
+        log_id(league),
+        len(changed),
+    )
     result_points = ResultPoints.from_config(league.result_points)
     upset_rules = UpsetRules.from_config(league.upset_rules)
     all_matches = list(db.scalars(select(Match).where(Match.league_id == league.id)).all())
@@ -235,9 +293,11 @@ def score_changed_matches(
     scored = 0
     cascaded = 0
     skipped_missing_snapshot = 0
+    skipped_match_ids: list[int] = []
     for match in changed:
         mi = match_to_input(match)
-        if not is_finished(mi):
+        finished = is_finished(mi)
+        if not finished:
             for event in db.scalars(
                 select(ScoringEvent).where(ScoringEvent.match_id == match.id)
             ).all():
@@ -246,9 +306,18 @@ def score_changed_matches(
             plan = plan_recompute_cascade(mi, all_inputs)
             mark_snapshots_stale_after(db, plan.pool_id, plan.starts_at)
             cascaded += len(plan.affected_match_ids)
+            logger.info(
+                "score seed league_id=%s match_id=%s pool_id=%s path=unfinished_wipe "
+                "cascade_affected=%s starts_at=%s",
+                log_id(league),
+                match.id,
+                match.pool_id,
+                len(plan.affected_match_ids),
+                plan.starts_at.isoformat(),
+            )
             pool = db.get(TeamPool, match.pool_id)
             assert pool is not None
-            s, skip = _rescore_plan_matches(
+            s, skip, skip_ids = _rescore_plan_matches(
                 db,
                 league=league,
                 pool=pool,
@@ -260,15 +329,25 @@ def score_changed_matches(
             )
             scored += s
             skipped_missing_snapshot += skip
+            skipped_match_ids.extend(skip_ids)
             continue
 
         plan = plan_recompute_cascade(mi, all_inputs)
         mark_snapshots_stale_after(db, plan.pool_id, plan.starts_at)
         cascaded += len(plan.affected_match_ids)
+        logger.info(
+            "score seed league_id=%s match_id=%s pool_id=%s path=finished "
+            "cascade_affected=%s starts_at=%s",
+            log_id(league),
+            match.id,
+            match.pool_id,
+            len(plan.affected_match_ids),
+            plan.starts_at.isoformat(),
+        )
 
         pool = db.get(TeamPool, match.pool_id)
         assert pool is not None
-        s, skip = _rescore_plan_matches(
+        s, skip, skip_ids = _rescore_plan_matches(
             db,
             league=league,
             pool=pool,
@@ -280,8 +359,28 @@ def score_changed_matches(
         )
         scored += s
         skipped_missing_snapshot += skip
+        skipped_match_ids.extend(skip_ids)
     db.flush()
     lock_ranking_lists_after_scoring(db, league)
+    duration_ms = (time.perf_counter() - started) * 1000
+    if skipped_missing_snapshot > 0:
+        sample = skipped_match_ids[:10]
+        logger.warning(
+            "score_changed_matches skipped_missing_snapshot league_id=%s count=%s "
+            "match_ids_sample=%s",
+            log_id(league),
+            skipped_missing_snapshot,
+            sample,
+        )
+    logger.info(
+        "score_changed_matches done league_id=%s scored=%s cascaded=%s "
+        "skipped_missing_snapshot=%s duration_ms=%.1f",
+        log_id(league),
+        scored,
+        cascaded,
+        skipped_missing_snapshot,
+        duration_ms,
+    )
     return {
         "scored": scored,
         "cascaded": cascaded,
@@ -338,11 +437,26 @@ def _rescore_plan_matches(
     result_points: ResultPoints,
     upset_rules: UpsetRules,
     fixed_ranks: dict[int, RankedTeam] | None,
-) -> tuple[int, int]:
+) -> tuple[int, int, list[int]]:
     scored = 0
     skipped = 0
+    skipped_ids: list[int] = []
+    events_upserted = 0
+    events_deleted = 0
+    rank_source = "fixed_ranking" if fixed_ranks is not None else "snapshot"
     kickoffs = sorted({by_id[mid].kickoff_at for mid in plan_match_ids if mid in by_id})
     for kickoff in kickoffs:
+        batch_count = sum(
+            1 for mid in plan_match_ids if mid in by_id and by_id[mid].kickoff_at == kickoff
+        )
+        logger.debug(
+            "rescore kickoff batch league_id=%s pool_id=%s kickoff=%s matches=%s source=%s",
+            log_id(league),
+            pool.id,
+            kickoff.isoformat(),
+            batch_count,
+            rank_source,
+        )
         if fixed_ranks is None:
             snap = build_snapshot_for_kickoff(
                 db,
@@ -376,9 +490,19 @@ def _rescore_plan_matches(
                     select(ScoringEvent).where(ScoringEvent.match_id == m.id)
                 ).all():
                     db.delete(event)
+                    events_deleted += 1
                 continue
             if m.home_team_id not in ranked or m.away_team_id not in ranked:
                 skipped += 1
+                skipped_ids.append(m.id)
+                logger.warning(
+                    "rescore skip missing rank league_id=%s match_id=%s "
+                    "home_team_id=%s away_team_id=%s",
+                    log_id(league),
+                    m.id,
+                    m.home_team_id,
+                    m.away_team_id,
+                )
                 continue
             existing_events = {
                 (e.team_id, e.event_type): e
@@ -393,6 +517,7 @@ def _rescore_plan_matches(
             for key, event in list(existing_events.items()):
                 if key not in desired_keys:
                     db.delete(event)
+                    events_deleted += 1
             for draft in desired:
                 key = (draft.team_id, draft.event_type)
                 if key in existing_events:
@@ -401,6 +526,7 @@ def _rescore_plan_matches(
                     row.scheduled_matchweek = draft.scheduled_matchweek
                     row.stage = draft.stage
                     row.metadata_ = draft.metadata
+                    events_upserted += 1
                 else:
                     db.add(
                         ScoringEvent(
@@ -414,8 +540,19 @@ def _rescore_plan_matches(
                             metadata_=draft.metadata,
                         )
                     )
+                    events_upserted += 1
             scored += 1
-    return scored, skipped
+    logger.info(
+        "rescore plan done league_id=%s pool_id=%s scored=%s skipped=%s "
+        "events_upserted=%s events_deleted=%s",
+        log_id(league),
+        pool.id,
+        scored,
+        skipped,
+        events_upserted,
+        events_deleted,
+    )
+    return scored, skipped, skipped_ids
 
 
 def lock_ranking_lists_after_scoring(db: Session, league: League) -> int:
@@ -441,4 +578,10 @@ def lock_ranking_lists_after_scoring(db: Session, league: League) -> int:
         row.locked = True
     if lists:
         db.flush()
+        logger.info(
+            "auto-locked ranking lists league_id=%s key=%s count=%s",
+            log_id(league),
+            key,
+            len(lists),
+        )
     return len(lists)

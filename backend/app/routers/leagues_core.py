@@ -1,6 +1,7 @@
 """League CRUD + settings."""
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -32,7 +33,10 @@ from app.services.members import (
     is_sole_commissioner,
     renumber_draft_slots,
 )
+from app.logging_config import log_id
 from app.services import analytics as analytics_service
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["leagues"])
 
@@ -49,7 +53,12 @@ def _my_standing(
     """Return (rank, member_count, points, has_scored) for the current membership."""
     try:
         entries = analytics_service.leaderboard(db, league, phase_key=None)
-    except ValueError:
+    except ValueError as exc:
+        logger.warning(
+            "leaderboard unavailable for standing league_id=%s error=%s",
+            log_id(league),
+            exc,
+        )
         members = db.scalars(
             select(LeagueMember).where(LeagueMember.league_id == league.id)
         ).all()
@@ -148,6 +157,13 @@ def create_league(
     db.commit()
     db.refresh(league)
     db.refresh(member)
+    logger.info(
+        "league created league_id=%s name=%s template_id=%s creator_profile_id=%s",
+        log_id(league),
+        league.name,
+        payload.template_id,
+        log_id(profile),
+    )
     return _league_detail(db, league, member)
 
 
@@ -179,10 +195,15 @@ def update_my_membership(
     db: Session = Depends(get_db),
 ) -> MemberResponse:
     """Update the current user's fantasy team name in this league."""
-    _, member = membership
+    league, member = membership
     data = payload.model_dump(exclude_unset=True)
     if "team_name" in data:
         member.team_name = data["team_name"]
+        logger.info(
+            "member team_name updated league_id=%s member_id=%s",
+            log_id(league),
+            log_id(member),
+        )
     db.commit()
     db.refresh(member)
     return _member_response(member, db.get(Profile, member.profile_id))
@@ -196,7 +217,7 @@ def update_member(
     db: Session = Depends(get_db),
 ) -> MemberResponse:
     """Appoint or demote a commissioner on an existing membership."""
-    league, _ = membership
+    league, actor = membership
     members = list(
         db.scalars(select(LeagueMember).where(LeagueMember.league_id == league.id)).all()
     )
@@ -211,6 +232,13 @@ def update_member(
     target.is_commissioner = payload.is_commissioner
     db.commit()
     db.refresh(target)
+    logger.info(
+        "member commissioner updated league_id=%s actor=%s target=%s is_commissioner=%s",
+        log_id(league),
+        log_id(actor),
+        log_id(target),
+        payload.is_commissioner,
+    )
     return _member_response(target, db.get(Profile, target.profile_id))
 
 
@@ -242,6 +270,12 @@ def remove_member(
             detail="Cannot remove the last commissioner",
         )
     remaining = [m for m in members if m.id != target.id]
+    logger.warning(
+        "member removed league_id=%s actor=%s target=%s",
+        log_id(league),
+        log_id(actor),
+        log_id(target),
+    )
     db.delete(target)
     db.flush()
     renumber_draft_slots(remaining)
@@ -401,6 +435,16 @@ def update_settings(
                 pool.slot_count = new_slots
     db.commit()
     db.refresh(league)
+    changed_keys = sorted(payload.model_dump(exclude_unset=True).keys())
+    logger.info(
+        "league settings updated league_id=%s actor=%s changed_keys=%s "
+        "pools_creating=%s pools_removing=%s",
+        log_id(league),
+        log_id(member),
+        changed_keys,
+        creating,
+        removing,
+    )
     return _league_detail(db, league, member)
 
 
@@ -413,9 +457,16 @@ def complete_league(
     league, member = membership
     if league.status == "complete":
         raise HTTPException(status_code=409, detail="League is already complete")
+    prior = league.status
     league.status = "complete"
     db.commit()
     db.refresh(league)
+    logger.info(
+        "league completed league_id=%s prior_status=%s actor=%s",
+        log_id(league),
+        prior,
+        log_id(member),
+    )
     return _league_detail(db, league, member)
 
 
@@ -428,7 +479,14 @@ def delete_league(
     db: Session = Depends(get_db),
 ) -> Response:
     """Permanently delete a league and cascaded season data."""
-    league, _member = membership
+    league, member = membership
+    logger.warning(
+        "league deleted league_id=%s name=%s status=%s actor=%s",
+        log_id(league),
+        getattr(league, "name", "?"),
+        getattr(league, "status", "?"),
+        log_id(member),
+    )
     db.delete(league)
     db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)

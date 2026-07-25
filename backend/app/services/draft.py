@@ -2,13 +2,7 @@
 
 from __future__ import annotations
 
-from app.services.errors import (
-    ConflictError,
-    DomainError,
-    ForbiddenError,
-    NotFoundError,
-)
-
+import logging
 from dataclasses import dataclass
 
 from sqlalchemy import select
@@ -26,7 +20,16 @@ from app.models import (
     Team,
     TeamPool,
 )
+from app.services.errors import (
+    ConflictError,
+    DomainError,
+    ForbiddenError,
+    NotFoundError,
+)
+from app.logging_config import log_id
 from app.services.members import required_manager_count
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -253,8 +256,21 @@ def make_pick(
             )
             if existing is not None:
                 return existing
+        logger.warning(
+            "draft pick conflict league_id=%s pick_number=%s",
+            log_id(league),
+            state.current_pick_number,
+        )
         raise ConflictError("Pick conflict (already taken or not your turn)") from exc
 
+    logger.info(
+        "draft pick made league_id=%s pick_number=%s round=%s member_id=%s team_id=%s",
+        log_id(league),
+        pick.pick_number,
+        pick.round_number,
+        log_id(acting_member),
+        log_id(team),
+    )
     return pick
 
 
@@ -295,6 +311,7 @@ def reset_draft(db: Session, league: League) -> DraftState:
         state.status = "pending"
     league.status = "pre_draft"
     db.flush()
+    logger.info("draft reset league_id=%s", log_id(league))
     return state
 
 
@@ -334,6 +351,12 @@ def undo_last_pick(db: Session, league: League) -> DraftPick:
     state.status = "open"
     league.status = "drafting"
     db.flush()
+    logger.info(
+        "draft pick undone league_id=%s pick_number=%s team_id=%s",
+        log_id(league),
+        pick.pick_number,
+        pick.team_id,
+    )
     return pick
 
 
@@ -386,6 +409,13 @@ def reassign_roster_entry(
         entry.team_id = new_team.id
         entry.source = "commissioner"
     db.flush()
+    logger.info(
+        "roster reassigned league_id=%s entry_id=%s member_id=%s team_id=%s",
+        log_id(league),
+        log_id(entry),
+        entry.member_id,
+        entry.team_id,
+    )
     return entry
 
 
@@ -450,4 +480,9 @@ def open_draft(db: Session, league: League) -> DraftState:
         state.status = "open"
     league.status = "drafting"
     db.flush()
+    logger.info(
+        "draft opened league_id=%s managers=%s",
+        log_id(league),
+        len(ordered),
+    )
     return state

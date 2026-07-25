@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import APIRouter, Depends
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -5,9 +7,11 @@ from sqlalchemy.orm import Session
 from app.auth.jwt import AuthenticatedUser, get_current_profile, get_current_user
 from app.db import get_db
 from app.deps import is_platform_admin
-from app.models import Invite, LeagueMember, Profile
+from app.models import Invite, League, LeagueMember, Profile
 from app.schemas.auth import MeResponse, MeUpdate
 from app.services.members import default_team_name
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["auth"])
 
@@ -35,6 +39,7 @@ def auth_me(
             Invite.status == "pending",
         )
     ).all()
+    joined_league_ids: list[str] = []
     for invite in pending:
         existing = db.scalars(
             select(LeagueMember).where(
@@ -52,9 +57,21 @@ def auth_me(
                     team_name=default_team_name(profile.display_name),
                 )
             )
+            league = db.get(League, invite.league_id)
+            if league is not None:
+                joined_league_ids.append(str(league.public_id))
         invite.status = "accepted"
     db.commit()
     db.refresh(profile)
+    if pending:
+        logger.info(
+            "auth_me auto-accepted invites profile_id=%s accepted=%s new_memberships=%s "
+            "league_ids=%s",
+            profile.public_id,
+            len(pending),
+            len(joined_league_ids),
+            joined_league_ids,
+        )
     return _me_response(profile, platform_admin=is_platform_admin(user))
 
 
@@ -69,4 +86,6 @@ def update_me(
     profile.display_name = body.display_name
     db.commit()
     db.refresh(profile)
+    logger.info("profile display_name updated profile_id=%s", profile.public_id)
+    logger.debug("profile display_name updated profile_id=%s name=%s", profile.public_id, body.display_name)
     return _me_response(profile, platform_admin=is_platform_admin(user))

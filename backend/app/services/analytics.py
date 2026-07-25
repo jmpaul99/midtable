@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections import defaultdict
 from decimal import Decimal
 from typing import Any
@@ -27,6 +28,8 @@ from app.services.scoring import (
     match_passes_phase_filter,
     rank_leaderboard,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _phase_filter(league: League, phase_key: str | None) -> dict[str, Any] | None:
@@ -58,10 +61,12 @@ def leaderboard(
     event_points: dict[int, dict[str, Decimal]] = defaultdict(lambda: defaultdict(lambda: Decimal(0)))
     event_counts: dict[int, dict[str, int]] = defaultdict(lambda: defaultdict(int))
     totals: dict[int, Decimal] = defaultdict(lambda: Decimal(0))
+    orphan_events = 0
 
     for event in events:
         member_id = roster.get(event.team_id)
         if member_id is None:
+            orphan_events += 1
             continue
         if not match_passes_phase_filter(
             scheduled_matchweek=event.scheduled_matchweek,
@@ -73,6 +78,14 @@ def leaderboard(
         totals[member_id] += pts
         event_points[member_id][event.event_type] += pts
         event_counts[member_id][event.event_type] += 1
+
+    if orphan_events:
+        logger.warning(
+            "leaderboard orphan scoring events league_id=%s count=%s phase_key=%s",
+            league.public_id,
+            orphan_events,
+            phase_key,
+        )
 
     # Manual bonuses: season total only unless phase includes them
     include_bonuses: set[str] = set()

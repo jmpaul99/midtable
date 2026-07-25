@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterator
 from typing import Annotated
 from uuid import UUID
@@ -15,6 +16,8 @@ from app.config import Settings, get_settings
 from app.db import get_db
 from app.models import League, LeagueMember, PoolTeam, Profile, Team, TeamPool
 from app.providers.football_data import FootballDataProvider
+
+logger = logging.getLogger(__name__)
 
 
 def get_league_by_public_id(db: Session, public_id: UUID) -> League:
@@ -37,6 +40,11 @@ def require_league_member(
         )
     ).first()
     if member is None:
+        logger.warning(
+            "authz denied reason=not_manager league_id=%s profile_id=%s",
+            league_id,
+            profile.public_id,
+        )
         raise HTTPException(status_code=403, detail="Not a manager in this league")
     return league, member
 
@@ -48,6 +56,11 @@ def require_commissioner(
 ) -> tuple[League, LeagueMember]:
     league, member = require_league_member(league_id, db, profile)
     if not member.is_commissioner:
+        logger.warning(
+            "authz denied reason=not_commissioner league_id=%s profile_id=%s",
+            league.public_id,
+            profile.public_id,
+        )
         raise HTTPException(status_code=403, detail="Commissioner access required")
     return league, member
 
@@ -62,6 +75,10 @@ def require_platform_admin(
 ) -> AuthenticatedUser:
     if is_platform_admin(user):
         return user
+    logger.warning(
+        "authz denied reason=not_platform_admin email=%s",
+        user.email,
+    )
     raise HTTPException(status_code=403, detail="Platform admin access required")
 
 
@@ -70,6 +87,7 @@ def require_cron_secret(
     settings: Settings = Depends(get_settings),
 ) -> None:
     if not settings.cron_secret or x_cron_secret != settings.cron_secret:
+        logger.warning("Rejected request with invalid cron secret")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid cron secret",
@@ -81,6 +99,7 @@ def get_football_provider(
 ) -> Iterator[FootballDataProvider]:
     """Yield a configured football-data.org provider; closes the HTTP client after use."""
     if not settings.football_data_api_token:
+        logger.error("football-data.org token not configured")
         raise HTTPException(
             status_code=503, detail="football-data.org token not configured"
         )

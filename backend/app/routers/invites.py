@@ -1,6 +1,7 @@
 """League invites."""
 from __future__ import annotations
 
+import logging
 import secrets
 from uuid import UUID
 
@@ -23,6 +24,8 @@ from app.schemas.leagues import (
 )
 from app.services.mailjet import send_invite_email
 from app.services.members import default_team_name, required_manager_count
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["invites"])
 
@@ -121,6 +124,13 @@ def _send_and_record(
     db.commit()
     db.refresh(invite)
     db.refresh(delivery)
+    logger.info(
+        "invite email delivery invite_id=%s league_id=%s trigger=%s status=%s",
+        invite.public_id,
+        league.public_id,
+        trigger,
+        result.status,
+    )
     return delivery
 
 
@@ -174,6 +184,12 @@ def create_invite(
     _send_and_record(db, invite, league, actor, trigger="create", settings=settings)
     invite = _load_invite_with_deliveries(db, invite_id=invite.public_id, league_id=league.id)
     assert invite is not None
+    logger.info(
+        "invite created invite_id=%s league_id=%s",
+        invite.public_id,
+        league.public_id,
+    )
+    logger.debug("invite created email=%s", invite.email)
     return _invite_response(invite, settings, include_send_status=True)
 
 
@@ -216,6 +232,11 @@ def revoke_invite(
         raise HTTPException(status_code=404, detail="Invite not found")
     invite.status = "revoked"
     db.commit()
+    logger.info(
+        "invite revoked invite_id=%s league_id=%s",
+        invite.public_id,
+        league.public_id,
+    )
 
 
 @router.patch("/leagues/{league_id}/invites/{invite_id}", response_model=InviteResponse)
@@ -240,6 +261,12 @@ def update_invite(
     db.refresh(invite)
     invite = _load_invite_with_deliveries(db, invite_id=invite_id, league_id=league.id)
     assert invite is not None
+    logger.info(
+        "invite updated invite_id=%s league_id=%s is_commissioner=%s",
+        invite.public_id,
+        league.public_id,
+        invite.is_commissioner,
+    )
     return _invite_response(invite, settings)
 
 
@@ -270,6 +297,12 @@ def accept_invite(
     if existing:
         invite.status = "accepted"
         db.commit()
+        logger.info(
+            "invite accepted existing_member invite_id=%s league_id=%s profile_id=%s",
+            invite.public_id,
+            league.public_id,
+            profile.public_id,
+        )
         base = _member_response(existing, profile)
         return InviteAcceptResponse(**base.model_dump(), league_id=league.public_id)
 
@@ -305,5 +338,12 @@ def accept_invite(
     invite.status = "accepted"
     db.commit()
     db.refresh(member)
+    logger.info(
+        "invite accepted new_member invite_id=%s league_id=%s profile_id=%s member_id=%s",
+        invite.public_id,
+        league.public_id,
+        profile.public_id,
+        member.public_id,
+    )
     base = _member_response(member, profile)
     return InviteAcceptResponse(**base.model_dump(), league_id=league.public_id)

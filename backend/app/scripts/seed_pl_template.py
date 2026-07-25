@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 from decimal import Decimal
 
 from sqlalchemy import select
 
 from app.db import SessionLocal
 from app.models import CompetitionTemplate
+
+logger = logging.getLogger(__name__)
 
 PL_UPSET_RULES = {
     "enabled": True,
@@ -138,9 +141,13 @@ def seed() -> CompetitionTemplate:
         existing.bonus_types = PL_BONUS_TYPES
         db.commit()
         db.refresh(existing)
-        print(f"Seeded competition_templates.premier_league public_id={existing.public_id}")
+        logger.info(
+            "Seeded competition_templates.premier_league public_id=%s",
+            existing.public_id,
+        )
         return existing
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
     seed()

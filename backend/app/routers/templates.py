@@ -1,3 +1,4 @@
+import logging
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -9,6 +10,8 @@ from app.db import get_db
 from app.deps import require_platform_admin
 from app.models import CompetitionTemplate, Profile
 from app.schemas.templates import TemplateCreate, TemplateResponse, TemplateUpdate
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["templates"])
 
@@ -37,6 +40,7 @@ def create_template(
     db.add(row)
     db.commit()
     db.refresh(row)
+    logger.info("template created template_id=%s key=%s", row.public_id, row.key)
     return TemplateResponse.model_validate(row)
 
 
@@ -70,6 +74,7 @@ def update_template(
         setattr(row, key, value)
     db.commit()
     db.refresh(row)
+    logger.info("template updated template_id=%s key=%s", row.public_id, row.key)
     return TemplateResponse.model_validate(row)
 
 
@@ -109,6 +114,12 @@ def duplicate_template(
     db.add(row)
     db.commit()
     db.refresh(row)
+    logger.info(
+        "template duplicated source_id=%s template_id=%s key=%s",
+        source.public_id,
+        row.public_id,
+        row.key,
+    )
     return TemplateResponse.model_validate(row)
 
 
@@ -123,5 +134,6 @@ def delete_template(
     ).first()
     if row is None:
         raise HTTPException(status_code=404, detail="Template not found")
+    logger.info("template deleted template_id=%s key=%s", row.public_id, row.key)
     db.delete(row)
     db.commit()

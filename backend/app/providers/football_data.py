@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime, timedelta
 from email.utils import parsedate_to_datetime
 from typing import Any
@@ -14,6 +15,8 @@ from app.providers.base import (
     ProviderTeam,
     RateLimitInfo,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class FootballDataError(RuntimeError):
@@ -81,9 +84,19 @@ class FootballDataProvider:
         )
 
     def _get(self, path: str, params: dict[str, Any] | None = None) -> tuple[Any, RateLimitInfo]:
-        response = self._client.get(path, params=params)
+        try:
+            response = self._client.get(path, params=params)
+        except httpx.HTTPError as exc:
+            logger.error("football-data.org request failed path=%s error=%s", path, exc)
+            raise FootballDataError(f"football-data.org request failed: {exc}") from exc
         rate = self.parse_rate_limit_headers(response.headers)
         if response.status_code == 429:
+            logger.warning(
+                "football-data.org rate limited path=%s retry_after=%s available_minute=%s",
+                path,
+                rate.retry_after_seconds,
+                rate.requests_available_minute,
+            )
             raise FootballDataError(
                 f"rate limit exceeded; retry after {rate.retry_after_seconds or 'unknown'}s",
                 rate,
@@ -92,9 +105,23 @@ class FootballDataProvider:
         try:
             response.raise_for_status()
         except httpx.HTTPStatusError as exc:
+            logger.error(
+                "football-data.org HTTP error path=%s status=%s",
+                path,
+                response.status_code,
+            )
             raise FootballDataError(
                 f"football-data.org returned {response.status_code}", rate
             ) from exc
+        if (
+            rate.requests_available_minute is not None
+            and rate.requests_available_minute <= 2
+        ):
+            logger.warning(
+                "football-data.org low rate budget path=%s available_minute=%s",
+                path,
+                rate.requests_available_minute,
+            )
         return response.json(), rate
 
     def list_teams(
@@ -122,16 +149,19 @@ class FootballDataProvider:
             f"/competitions/{competition_code}/matches", {"season": season_year}
         )
         matches: list[ProviderMatch] = []
+        skipped_parse = 0
         for item in payload.get("matches", []):
             score = item.get("score") or {}
             full = score.get("fullTime") or {}
             utc_date = item.get("utcDate")
             if not utc_date:
+                skipped_parse += 1
                 continue
             kickoff = datetime.fromisoformat(utc_date.replace("Z", "+00:00")).astimezone(UTC)
             home = item.get("homeTeam") or {}
             away = item.get("awayTeam") or {}
             if not home.get("id") or not away.get("id"):
+                skipped_parse += 1
                 continue
             matches.append(
                 ProviderMatch(
@@ -145,6 +175,14 @@ class FootballDataProvider:
                     matchday=item.get("matchday"),
                     stage=item.get("stage"),
                 )
+            )
+        if skipped_parse:
+            logger.warning(
+                "football-data.org parse skips competition=%s season=%s skipped=%s kept=%s",
+                competition_code,
+                season_year,
+                skipped_parse,
+                len(matches),
             )
         return matches, rate
 

@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     )
 
     app_env: str = "development"
+    log_level: str = "INFO"
     database_url: str = "postgresql+psycopg://postgres:postgres@127.0.0.1:54322/postgres"
     supabase_url: str = "http://127.0.0.1:54321"
     supabase_jwt_audience: str = "authenticated"

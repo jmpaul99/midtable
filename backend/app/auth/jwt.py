@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any
@@ -18,6 +19,8 @@ from sqlalchemy.orm import Session
 from app.config import Settings, get_settings
 from app.db import get_db
 from app.models import Invite, Profile
+
+logger = logging.getLogger(__name__)
 
 bearer = HTTPBearer(auto_error=False)
 
@@ -43,9 +46,13 @@ class SupabaseTokenVerifier:
             raise InvalidTokenError("JWT is missing a key id")
         if kid not in self._keys:
             jwks_url = f"{self.settings.supabase_url.rstrip('/')}/auth/v1/.well-known/jwks.json"
-            async with httpx.AsyncClient(timeout=5.0) as client:
-                response = await client.get(jwks_url)
-                response.raise_for_status()
+            try:
+                async with httpx.AsyncClient(timeout=5.0) as client:
+                    response = await client.get(jwks_url)
+                    response.raise_for_status()
+            except httpx.HTTPError as exc:
+                logger.warning("JWKS fetch failed url=%s error=%s", jwks_url, exc)
+                raise
             self._keys = {
                 item["kid"]: PyJWK.from_dict(item)
                 for item in response.json().get("keys", [])
@@ -68,6 +75,10 @@ class SupabaseTokenVerifier:
                 options={"require": ["exp", "iat", "sub"]},
             )
         except (InvalidTokenError, httpx.HTTPError, KeyError, ValueError) as exc:
+            logger.warning(
+                "JWT verification failed reason=%s",
+                type(exc).__name__,
+            )
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid or expired access token",
@@ -154,6 +165,8 @@ def get_or_create_profile(
     )
     db.add(profile)
     db.flush()
+    logger.info("profile created profile_id=%s", profile.public_id)
+    logger.debug("profile created email=%s", normalized)
     return profile
 
 
@@ -168,6 +181,9 @@ async def get_current_user(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="AUTH_BYPASS_EMAIL is not allowed in production",
             )
+        logger.warning(
+            "AUTH_BYPASS_EMAIL active; authenticating as bypass user"
+        )
         return AuthenticatedUser(
             auth_user_id=None,
             email=settings.auth_bypass_email.strip().lower(),
