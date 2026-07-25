@@ -43,6 +43,11 @@ supabase/.temp/
 *.swo
 .DS_Store
 Thumbs.db
+Desktop.ini
+
+# Accidental secrets / certs
+*.pem
+*.key
 
 # Local test / agent artifacts
 pytest-results.txt
