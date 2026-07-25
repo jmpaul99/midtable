@@ -9,6 +9,11 @@ import { IconButton } from "@/components/ui/IconButton";
 import { PlusIcon } from "@/components/ui/icons";
 import { Card, Muted, Stack } from "@/components/ui/Card";
 import { Input, Label } from "@/components/ui/Field";
+import {
+  AVAILABLE_COMPETITIONS,
+  defaultFootballSeasonYear,
+} from "@/lib/availableCompetitions";
+import { CompetitionAutocomplete } from "@/components/settings/CompetitionAutocomplete";
 
 type TemplatePool = {
   key: string;
@@ -29,7 +34,7 @@ function poolsFromTemplate(template: CompetitionTemplate | null): TemplatePool[]
         key: String(p.key || ""),
         label: p.label != null ? String(p.label) : undefined,
         competition_code: p.competition_code != null ? String(p.competition_code) : "",
-        season_year: Number(p.season_year) || new Date().getFullYear(),
+        season_year: Number(p.season_year) || defaultFootballSeasonYear(),
         provider: p.provider != null ? String(p.provider) : "football-data.org",
       } satisfies TemplatePool;
     })
@@ -67,7 +72,7 @@ export function CreateLeagueForm({
           p.key,
           {
             competition_code: p.competition_code || "",
-            season_year: String(p.season_year || new Date().getFullYear()),
+            season_year: String(p.season_year || defaultFootballSeasonYear()),
           },
         ]),
       ),
@@ -231,8 +236,8 @@ export function CreateLeagueForm({
               <div>
                 <h3 className="font-display text-base font-extrabold">Load teams</h3>
                 <Muted className="text-xs">
-                  Competition code and season year per competition — clubs are pulled right after the league
-                  is created.
+                  Competition and season year per pool — clubs are pulled right after the league is
+                  created.
                 </Muted>
               </div>
               {templatePools.map((p) => (
@@ -242,18 +247,19 @@ export function CreateLeagueForm({
                 >
                   <strong className="sm:col-span-2">{p.label || p.key}</strong>
                   <Label>
-                    Competition code
-                    <Input
+                    Competition
+                    <CompetitionAutocomplete
                       value={poolParams[p.key]?.competition_code || ""}
-                      onChange={(e) =>
+                      onChange={(code) =>
                         setPoolParams((prev) => ({
                           ...prev,
                           [p.key]: {
                             ...prev[p.key],
-                            competition_code: e.target.value,
+                            competition_code: code,
                           },
                         }))
                       }
+                      options={AVAILABLE_COMPETITIONS}
                       required
                     />
                   </Label>

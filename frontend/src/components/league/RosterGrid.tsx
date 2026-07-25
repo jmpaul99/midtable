@@ -7,29 +7,16 @@ import type { Manager, RosterRow, UUID } from "@/lib/types";
 import { managerLabel } from "@/lib/types";
 import { Empty, ErrorState, Loading } from "@/components/ui/State";
 import { Card, Muted, RankBadge, Stack } from "@/components/ui/Card";
+import {
+  compareRosterClubs,
+  effectiveRosterClubOrder,
+  type RosterClubOrder,
+} from "@/lib/rosterClubOrder";
 import { TeamCrest } from "./TeamCrest";
 import { TeamLink } from "./TeamLink";
 import { ManagerLink } from "./ManagerLink";
 import { TeamNameEditor } from "./TeamNameEditor";
-
-function isPreassigned(row: RosterRow): boolean {
-  return (row.acquired_via || "").toLowerCase() === "preassigned";
-}
-
-/** Draft pick first, then configured pool display order, then slot. */
-function compareRosterSlots(a: RosterRow, b: RosterRow): number {
-  const draftRank = (row: RosterRow) => {
-    if (isPreassigned(row)) return 0;
-    if (row.draft_pick_number != null) return row.draft_pick_number;
-    if (row.team_id) return 10_000;
-    return 20_000;
-  };
-  const byDraft = draftRank(a) - draftRank(b);
-  if (byDraft !== 0) return byDraft;
-  const byPool = (a.pool_sort_order ?? 999) - (b.pool_sort_order ?? 999);
-  if (byPool !== 0) return byPool;
-  return a.slot_number - b.slot_number || a.pool_name.localeCompare(b.pool_name);
-}
+import { StagePointsBreakdown } from "./StagePointsBreakdown";
 
 function FormDots({ form }: { form?: string[] | null }) {
   if (!form?.length) return null;
@@ -58,12 +45,17 @@ export function RosterGrid({
   members = [],
   currentMemberId,
   onTeamNameSaved,
+  leagueStatus,
+  rosterClubOrder = "draft",
 }: {
   leagueId: UUID;
   members?: Manager[];
   currentMemberId?: UUID | null;
   onTeamNameSaved?: () => void;
+  leagueStatus?: string;
+  rosterClubOrder?: RosterClubOrder;
 }) {
+  const clubOrder = effectiveRosterClubOrder(leagueStatus, rosterClubOrder);
   const [rows, setRows] = useState<RosterRow[]>();
   const [error, setError] = useState("");
 
@@ -117,7 +109,7 @@ export function RosterGrid({
           draws: sample?.member_draws ?? 0,
           losses: sample?.member_losses ?? 0,
           maxClub,
-          slots: [...slots].sort(compareRosterSlots),
+          slots: [...slots].sort((a, b) => compareRosterClubs(a, b, clubOrder)),
         };
       })
       .sort(
@@ -126,7 +118,7 @@ export function RosterGrid({
           a.draftSlot - b.draftSlot ||
           a.teamName.localeCompare(b.teamName),
       );
-  }, [rows, draftOrder, membersById]);
+  }, [rows, draftOrder, membersById, clubOrder]);
 
   if (error) return <ErrorState error={error} />;
   if (!rows) return <Loading label="Loading rosters" />;
@@ -220,6 +212,12 @@ export function RosterGrid({
                             </span>
                             <FormDots form={r.form} />
                           </div>
+                        )}
+                        {r.team_id && (
+                          <StagePointsBreakdown
+                            pointsByStage={r.points_by_stage}
+                            compact
+                          />
                         )}
                       </div>
                     </div>

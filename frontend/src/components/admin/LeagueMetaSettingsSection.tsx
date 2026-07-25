@@ -1,15 +1,28 @@
 "use client";
 
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import { api, errorMessage, json } from "@/lib/api";
-import type { Invite, League, Manager, UUID } from "@/lib/types";
+import { formatDate } from "@/lib/format";
+import type { Invite, JoinLink, League, Manager, UUID } from "@/lib/types";
 import { managerLabel } from "@/lib/types";
 import { Status, StatusBanner } from "@/components/ui/State";
 import { IconButton } from "@/components/ui/IconButton";
-import { BanIcon, SaveIcon, SendIcon, TrashIcon } from "@/components/ui/icons";
+import {
+  BanIcon,
+  CopyIcon,
+  RefreshIcon,
+  SaveIcon,
+  SendIcon,
+  TrashIcon,
+} from "@/components/ui/icons";
 import { Card, Muted, Stack } from "@/components/ui/Card";
 import { Input, Label, Switch } from "@/components/ui/Field";
 import { cn } from "@/lib/cn";
+import { defaultFootballSeasonYear } from "@/lib/availableCompetitions";
+import {
+  normalizeRosterClubOrder,
+  type RosterClubOrder,
+} from "@/lib/rosterClubOrder";
 import {
   LeaguePoolsEditor,
   normalizePayouts,
@@ -37,13 +50,43 @@ function poolsFromLeague(
 ): LeaguePoolEdit[] {
   return (league.pools || []).map((p, i) => ({
     id: p.id,
+    isNew: false,
     key: p.key,
     label: p.label || p.name || p.key,
     sort_order: p.sort_order ?? i + 1,
     slot_count: p.slot_count ?? p.roster_size ?? 1,
     scores_match_results: p.scores_match_results ?? p.scoring_enabled ?? true,
+    competition_code: p.competition_code || "",
+    season_year: p.season_year ?? defaultFootballSeasonYear(),
+    provider: p.provider || "football-data.org",
     team_count: teamCounts[p.id] ?? 0,
   }));
+}
+
+/**
+ * True when pools were added/removed or competition code / season year changed.
+ * Slot count, sort order, scoring flag, and roster club order do not need a reload.
+ */
+function competitionLoadSettingsChanged(
+  league: League,
+  pools: LeaguePoolEdit[],
+  removePoolIds: string[],
+): boolean {
+  if (removePoolIds.length > 0) return true;
+  if (pools.some((p) => p.isNew)) return true;
+  const originalById = new Map((league.pools || []).map((p) => [p.id, p]));
+  for (const p of pools) {
+    if (p.isNew) continue;
+    const orig = originalById.get(p.id);
+    if (!orig) return true;
+    if ((orig.competition_code || "").toUpperCase() !== (p.competition_code || "").toUpperCase()) {
+      return true;
+    }
+    const origYear = Number(orig.season_year ?? defaultFootballSeasonYear());
+    const nextYear = Number(p.season_year ?? defaultFootballSeasonYear());
+    if (origYear !== nextYear) return true;
+  }
+  return false;
 }
 
 export function LeagueMetaSettingsSection({
@@ -51,25 +94,36 @@ export function LeagueMetaSettingsSection({
   teamCounts = {},
   bonusTypeOptions = [],
   invites,
+  joinLink,
   atOrOverCap = false,
   maxMembers = null,
   onInvite,
+  onResendInvite,
   onRevoke,
+  onJoinLinkUpdate,
   onToggleCommissioner,
   onRemove,
   onSaved,
+  onReloadTeams,
 }: {
   league: League;
   teamCounts?: Record<string, number>;
   bonusTypeOptions?: Array<{ value: string; label: string }>;
   invites?: Invite[];
+  joinLink?: JoinLink;
   atOrOverCap?: boolean;
   maxMembers?: number | null;
   onInvite?: (e: FormEvent<HTMLFormElement>) => void;
+  onResendInvite?: (id: UUID) => void;
   onRevoke?: (id: UUID) => void;
+  onJoinLinkUpdate?: (body: { enabled?: boolean; rotate?: boolean }) => void;
   onToggleCommissioner?: (memberId: UUID, isCommissioner: boolean) => void;
   onRemove?: (memberId: UUID) => void;
   onSaved?: () => void;
+  /** Load/reload clubs from the provider when competition settings change. */
+  onReloadTeams?: (
+    params: Array<{ key: string; competition_code: string; season_year: number }>,
+  ) => Promise<void>;
 }) {
   const [tab, setTab] = useState<Tab>("basics");
   const [name, setName] = useState(league.name || "");
@@ -88,9 +142,23 @@ export function LeagueMetaSettingsSection({
   const [pools, setPools] = useState<LeaguePoolEdit[]>(() =>
     poolsFromLeague(league, teamCounts),
   );
+  const [rosterClubOrder, setRosterClubOrder] = useState<RosterClubOrder>(() =>
+    normalizeRosterClubOrder(league.roster_club_order),
+  );
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+
+  const serverPoolIds = (league.pools || []).map((p) => p.id).join(",");
+  useEffect(() => {
+    setPools(poolsFromLeague(league, teamCounts));
+    // Refresh editor rows when competitions are created/removed on the server.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- teamCounts applied via poolsWithCounts
+  }, [serverPoolIds]);
+
+  useEffect(() => {
+    setRosterClubOrder(normalizeRosterClubOrder(league.roster_club_order));
+  }, [league.roster_club_order]);
 
   const memberCount = league.members?.length || 0;
 
@@ -144,6 +212,19 @@ export function LeagueMetaSettingsSection({
       setTab("pools");
       return;
     }
+    const incomplete = pools.find((p) => !p.competition_code || !p.key || !p.label.trim());
+    if (incomplete) {
+      setError("Each competition needs a selection from the available list.");
+      setTab("pools");
+      return;
+    }
+    const originalIds = new Set((league.pools || []).map((p) => p.id));
+    const keptIds = new Set(pools.filter((p) => !p.isNew).map((p) => p.id));
+    const remove_pool_ids = [...originalIds].filter((id) => !keptIds.has(id));
+    const shouldReloadTeams =
+      Boolean(onReloadTeams) &&
+      pools.length > 0 &&
+      competitionLoadSettingsChanged(league, pools, remove_pool_ids);
     setBusy(true);
     setError("");
     setMessage("");
@@ -155,18 +236,54 @@ export function LeagueMetaSettingsSection({
           season_label: trimmedSeason,
           buy_in: Number(buyIn),
           max_members: parsedMax,
+          roster_club_order: rosterClubOrder,
           leaderboard_phases: phases,
           payouts,
-          pools: pools.map((p) => ({
-            id: p.id,
-            label: p.label.trim(),
-            sort_order: Number(p.sort_order),
-            slot_count: Number(p.slot_count),
-            scores_match_results: Boolean(p.scores_match_results),
-          })),
+          remove_pool_ids: remove_pool_ids.length ? remove_pool_ids : undefined,
+          pools: pools.map((p) =>
+            p.isNew
+              ? {
+                  key: p.key,
+                  label: p.label.trim(),
+                  sort_order: Number(p.sort_order),
+                  slot_count: Number(p.slot_count),
+                  scores_match_results: Boolean(p.scores_match_results),
+                  competition_code: p.competition_code,
+                  season_year: Number(p.season_year),
+                  provider: p.provider || "football-data.org",
+                }
+              : {
+                  id: p.id,
+                  label: p.label.trim(),
+                  sort_order: Number(p.sort_order),
+                  slot_count: Number(p.slot_count),
+                  scores_match_results: Boolean(p.scores_match_results),
+                  competition_code: p.competition_code || undefined,
+                  season_year: Number(p.season_year) || undefined,
+                  provider: p.provider || undefined,
+                },
+          ),
         }),
       );
-      setMessage("League settings saved.");
+      if (shouldReloadTeams && onReloadTeams) {
+        try {
+          await onReloadTeams(
+            pools.map((p) => ({
+              key: p.key,
+              competition_code: p.competition_code,
+              season_year: Number(p.season_year),
+            })),
+          );
+          setMessage("League settings saved and clubs reloaded.");
+        } catch (reloadErr) {
+          setMessage("League settings saved.");
+          setError(
+            `Settings saved, but reloading clubs failed: ${errorMessage(reloadErr)}`,
+          );
+        }
+      } else {
+        setMessage("League settings saved.");
+      }
       onSaved?.();
     } catch (err) {
       setError(errorMessage(err));
@@ -209,10 +326,13 @@ export function LeagueMetaSettingsSection({
             <ManagersInvitesPanel
               league={league}
               invites={invites}
+              joinLink={joinLink}
               atOrOverCap={atOrOverCap}
               maxMembers={maxMembers}
               onInvite={onInvite}
+              onResendInvite={onResendInvite}
               onRevoke={onRevoke}
+              onJoinLinkUpdate={onJoinLinkUpdate}
               onToggleCommissioner={onToggleCommissioner}
               onRemove={onRemove}
             />
@@ -279,6 +399,20 @@ export function LeagueMetaSettingsSection({
                   value={poolsWithCounts}
                   onChange={setPools}
                   managerCapacity={managerCapacity}
+                  structureEditable={league.status === "pre_draft"}
+                  rosterClubOrder={rosterClubOrder}
+                  onRosterClubOrderChange={setRosterClubOrder}
+                  trailingAction={
+                    <IconButton
+                      type="submit"
+                      label="Save league settings"
+                      variant="primary"
+                      busy={busy}
+                      disabled={capacityErrors.length > 0}
+                    >
+                      <SaveIcon />
+                    </IconButton>
+                  }
                 />
               )}
               {tab === "phases" && (
@@ -288,20 +422,31 @@ export function LeagueMetaSettingsSection({
                   bonusTypeOptions={bonusTypeOptions}
                 />
               )}
-              {tab === "payouts" && <PayoutsEditor value={payouts} onChange={setPayouts} />}
+              {tab === "payouts" && (
+                <PayoutsEditor
+                  value={payouts}
+                  onChange={setPayouts}
+                  phaseOptions={phases.map((p) => ({
+                    value: p.key,
+                    label: p.label || p.key,
+                  }))}
+                />
+              )}
             </div>
 
-            <div className="flex justify-start">
-              <IconButton
-                type="submit"
-                label="Save league settings"
-                variant="primary"
-                busy={busy}
-                disabled={capacityErrors.length > 0}
-              >
-                <SaveIcon />
-              </IconButton>
-            </div>
+            {tab !== "pools" && (
+              <div className="flex justify-start">
+                <IconButton
+                  type="submit"
+                  label="Save league settings"
+                  variant="primary"
+                  busy={busy}
+                  disabled={capacityErrors.length > 0}
+                >
+                  <SaveIcon />
+                </IconButton>
+              </div>
+            )}
           </form>
         )}
       </Stack>
@@ -312,19 +457,25 @@ export function LeagueMetaSettingsSection({
 function ManagersInvitesPanel({
   league,
   invites,
+  joinLink,
   atOrOverCap,
   maxMembers,
   onInvite,
+  onResendInvite,
   onRevoke,
+  onJoinLinkUpdate,
   onToggleCommissioner,
   onRemove,
 }: {
   league: League;
   invites?: Invite[];
+  joinLink?: JoinLink;
   atOrOverCap: boolean;
   maxMembers: number | null;
   onInvite?: (e: FormEvent<HTMLFormElement>) => void;
+  onResendInvite?: (id: UUID) => void;
   onRevoke?: (id: UUID) => void;
+  onJoinLinkUpdate?: (body: { enabled?: boolean; rotate?: boolean }) => void;
   onToggleCommissioner?: (memberId: UUID, isCommissioner: boolean) => void;
   onRemove?: (memberId: UUID) => void;
 }) {
@@ -336,6 +487,12 @@ function ManagersInvitesPanel({
     if (sa !== sb) return sa - sb;
     return managerLabel(a).localeCompare(managerLabel(b));
   });
+  const [copied, setCopied] = useState(false);
+  const joinUrl =
+    joinLink?.join_url ||
+    (joinLink?.enabled && joinLink.token
+      ? `${typeof location !== "undefined" ? location.origin : ""}/join?token=${encodeURIComponent(joinLink.token)}`
+      : null);
 
   function canDemote(m: Manager) {
     return !(m.is_commissioner && commissionerCount <= 1);
@@ -348,8 +505,73 @@ function ManagersInvitesPanel({
     return true;
   }
 
+  async function copyJoinLink() {
+    if (!joinUrl) return;
+    try {
+      await navigator.clipboard.writeText(joinUrl);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2000);
+    } catch {
+      /* ignore */
+    }
+  }
+
   return (
     <Stack>
+      <div className="rounded-xl border border-line bg-surface-2/50 p-3">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div className="min-w-0">
+            <strong className="text-sm">Share join link</strong>
+            <Muted className="mt-0.5 text-xs leading-snug">
+              Anyone with the link can sign up and claim a manager seat. Not tied to an email.
+            </Muted>
+          </div>
+          <label className="flex shrink-0 items-center gap-2">
+            <Switch
+              size="sm"
+              checked={Boolean(joinLink?.enabled)}
+              onChange={(e) => onJoinLinkUpdate?.({ enabled: e.target.checked })}
+            />
+            <span className="text-xs font-semibold text-muted">
+              {joinLink?.enabled ? "Enabled" : "Disabled"}
+            </span>
+          </label>
+        </div>
+        {joinLink?.enabled && joinUrl && (
+          <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center">
+            <code className="min-w-0 flex-1 break-all rounded-lg border border-line bg-surface px-2.5 py-2 text-[0.7rem] text-muted">
+              {joinUrl}
+            </code>
+            <div className="flex flex-wrap gap-2">
+              <IconButton
+                type="button"
+                size="icon-sm"
+                label={copied ? "Copied" : "Copy join link"}
+                onClick={copyJoinLink}
+              >
+                <CopyIcon className="size-4" />
+              </IconButton>
+              <IconButton
+                type="button"
+                size="icon-sm"
+                label="Rotate join link"
+                onClick={() => {
+                  if (
+                    confirm(
+                      "Rotate the join link? The current link will stop working.",
+                    )
+                  ) {
+                    onJoinLinkUpdate?.({ rotate: true });
+                  }
+                }}
+              >
+                <RefreshIcon className="size-4" />
+              </IconButton>
+            </div>
+          </div>
+        )}
+      </div>
+
       {!preDraft && (
         <Muted className="text-xs">
           Managers can only be removed before the draft opens.
@@ -458,39 +680,81 @@ function ManagersInvitesPanel({
       </form>
       {invites && invites.length > 0 && (
         <Stack gap="sm">
-          {invites.map((i) => (
-            <div
-              className="flex flex-col gap-3 rounded-xl border border-line bg-surface-2/50 p-3 sm:flex-row sm:items-center sm:justify-between"
-              key={i.id}
-            >
-              <div className="min-w-0">
-                <strong className="break-all">{i.email}</strong>
-                <Muted>
-                  {i.is_commissioner
-                    ? "Commissioner"
-                    : i.role === "member" || !i.role
-                      ? "Manager"
-                      : i.role.replaceAll("_", " ")}
-                </Muted>
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                <Status value={i.status} />
-                {i.status === "pending" && (
-                  <IconButton
-                    type="button"
-                    variant="danger"
-                    size="icon-sm"
-                    label="Revoke invite"
-                    onClick={() => {
-                      if (confirm("Revoke this invite?")) onRevoke?.(i.id);
-                    }}
-                  >
-                    <BanIcon className="size-4" />
-                  </IconButton>
+          {invites.map((i) => {
+            const deliveries = i.email_deliveries || [];
+            const latest = deliveries[0];
+            return (
+              <div
+                className="flex flex-col gap-3 rounded-xl border border-line bg-surface-2/50 p-3"
+                key={i.id}
+              >
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="min-w-0">
+                    <strong className="break-all">{i.email}</strong>
+                    <Muted>
+                      {i.is_commissioner
+                        ? "Commissioner"
+                        : i.role === "member" || !i.role
+                          ? "Manager"
+                          : i.role.replaceAll("_", " ")}
+                      {latest
+                        ? ` · Last email ${latest.status}${
+                            latest.created_at ? ` · ${formatDate(latest.created_at)}` : ""
+                          }`
+                        : ""}
+                    </Muted>
+                    {latest?.status !== "sent" && latest?.error && (
+                      <Muted className="mt-0.5 break-words text-[0.7rem] text-danger">
+                        {latest.error}
+                      </Muted>
+                    )}
+                    {i.accept_url && i.status === "pending" && (
+                      <Muted className="mt-0.5 break-all text-[0.7rem]">{i.accept_url}</Muted>
+                    )}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Status value={i.status} />
+                    {i.status === "pending" && (
+                      <>
+                        <IconButton
+                          type="button"
+                          size="icon-sm"
+                          label="Resend invite email"
+                          onClick={() => onResendInvite?.(i.id)}
+                        >
+                          <SendIcon className="size-4" />
+                        </IconButton>
+                        <IconButton
+                          type="button"
+                          variant="danger"
+                          size="icon-sm"
+                          label="Revoke invite"
+                          onClick={() => {
+                            if (confirm("Revoke this invite?")) onRevoke?.(i.id);
+                          }}
+                        >
+                          <BanIcon className="size-4" />
+                        </IconButton>
+                      </>
+                    )}
+                  </div>
+                </div>
+                {deliveries.length > 0 && (
+                  <ul className="space-y-1 border-t border-line pt-2">
+                    {deliveries.slice(0, 5).map((d) => (
+                      <li key={d.id} className="text-[0.7rem] text-muted">
+                        <span className="font-semibold text-ink/80">{d.status}</span>
+                        {" · "}
+                        {d.trigger}
+                        {d.created_at ? ` · ${formatDate(d.created_at)}` : ""}
+                        {d.error ? ` — ${d.error}` : ""}
+                      </li>
+                    ))}
+                  </ul>
                 )}
               </div>
-            </div>
-          ))}
+            );
+          })}
         </Stack>
       )}
     </Stack>

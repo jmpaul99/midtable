@@ -7,7 +7,10 @@ export type ResultPoints = {
 };
 
 export type UpsetThreshold = {
+  /** Stable machine id for scoring / tiebreaks / match events. System-generated. */
   key: string;
+  /** User-facing label. */
+  name: string;
   result: "win" | "draw" | "loss";
   min_gap: number;
   max_gap: number | null;
@@ -94,6 +97,50 @@ export function normalizeResultPoints(raw: unknown): ResultPoints {
   };
 }
 
+/** Slugify a display name into a candidate machine key. */
+export function slugifyKey(name: string): string {
+  return name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_|_$/g, "")
+    .slice(0, 40);
+}
+
+/** Ensure a unique key among siblings. */
+export function uniqueKey(
+  base: string,
+  existingKeys: string[],
+  selfIndex?: number,
+  fallback = "item",
+): string {
+  const root = base || fallback;
+  let candidate = root;
+  let n = 2;
+  while (existingKeys.some((k, i) => k === candidate && i !== selfIndex)) {
+    candidate = `${root}_${n++}`;
+  }
+  return candidate;
+}
+
+/** @deprecated Prefer slugifyKey */
+export const slugifyUpsetKey = slugifyKey;
+/** @deprecated Prefer uniqueKey */
+export function uniqueUpsetKey(
+  base: string,
+  existingKeys: string[],
+  selfIndex?: number,
+): string {
+  return uniqueKey(base, existingKeys, selfIndex, "upset");
+}
+
+/** Map threshold key → display name. */
+export function upsetNameByKey(raw: unknown): Record<string, string> {
+  return Object.fromEntries(
+    normalizeUpsetRules(raw).thresholds.map((t) => [t.key, t.name || t.key]),
+  );
+}
+
 export function normalizeUpsetRules(raw: unknown): UpsetRules {
   const o = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
   const eligibility =
@@ -103,8 +150,12 @@ export function normalizeUpsetRules(raw: unknown): UpsetRules {
   const thresholds = arr(o.thresholds).map((item, i) => {
     const t = (item && typeof item === "object" ? item : {}) as Record<string, unknown>;
     const result = str(t.result, "win");
+    const key = str(t.key, `threshold_${i + 1}`);
+    // Legacy rows have no name yet — use the key as the editable name (not humanized).
+    const name = str(t.name ?? t.label, "") || key;
     return {
-      key: str(t.key, `threshold_${i + 1}`),
+      key,
+      name,
       result: (result === "draw" || result === "loss" ? result : "win") as UpsetThreshold["result"],
       min_gap: num(t.min_gap ?? t.minimum_position_gap, 0),
       max_gap:
@@ -131,13 +182,25 @@ export function serializeUpsetRules(rules: UpsetRules): Record<string, unknown> 
     ranking_list_key:
       rules.rank_source === "fixed_ranking_at_event_start" ? rules.ranking_list_key : null,
     eligibility: { min_played: rules.min_played },
-    thresholds: rules.thresholds.map((t) => ({
-      key: t.key,
-      result: t.result,
-      min_gap: t.min_gap,
-      max_gap: t.max_gap,
-      points: t.points,
-    })),
+    thresholds: rules.thresholds.map((t, i) => {
+      const name = (t.name ?? "").trim() || (t.key ?? "").trim() || `upset_${i + 1}`;
+      const key =
+        (t.key ?? "").trim() ||
+        uniqueKey(
+          slugifyKey(name) || `upset_${i + 1}`,
+          rules.thresholds.map((x) => x.key),
+          i,
+          "upset",
+        );
+      return {
+        key,
+        name,
+        result: t.result,
+        min_gap: t.min_gap,
+        max_gap: t.max_gap,
+        points: t.points,
+      };
+    }),
   };
 }
 

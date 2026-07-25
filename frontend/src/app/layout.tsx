@@ -35,10 +35,10 @@ export const metadata: Metadata = {
   },
   icons: {
     icon: [
-      { url: "/brand/favicon-32.png", sizes: "32x32", type: "image/png" },
-      { url: "/brand/mark-matchday.svg", type: "image/svg+xml" },
+      { url: "/brand/icons/favicon-32.png", sizes: "32x32", type: "image/png" },
+      { url: "/brand/svg/mark-matchday.svg", type: "image/svg+xml" },
     ],
-    apple: [{ url: "/brand/apple-touch-icon.png", sizes: "180x180", type: "image/png" }],
+    apple: [{ url: "/brand/icons/apple-touch-icon.png", sizes: "180x180", type: "image/png" }],
   },
 };
 

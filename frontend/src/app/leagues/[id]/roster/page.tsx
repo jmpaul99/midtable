@@ -11,6 +11,8 @@ export default function LeagueRosterPage() {
       members={league.members}
       currentMemberId={league.current_member_id}
       onTeamNameSaved={reload}
+      leagueStatus={league.status}
+      rosterClubOrder={league.roster_club_order}
     />
   );
 }

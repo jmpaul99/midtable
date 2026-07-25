@@ -1,12 +1,16 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { IconButton } from "@/components/ui/IconButton";
-import { ChevronDownIcon, ChevronUpIcon } from "@/components/ui/icons";
+import { useMemo } from "react";
 import { Label, Select } from "@/components/ui/Field";
 import { Muted } from "@/components/ui/Card";
-import { cn } from "@/lib/cn";
-import { AddRowButton, EditorSection, RemoveButton, RowItem, RowList } from "./chrome";
+import {
+  AddRowButton,
+  EditorSection,
+  RemoveButton,
+  ReorderButtons,
+  RowItem,
+  RowList,
+} from "./chrome";
 import type { TiebreakRung } from "./types";
 
 type Option = { id: string; label: string; group: string };
@@ -177,9 +181,6 @@ export function TiebreaksEditor({
   eventTypeOptions?: Array<{ value: string; label: string }>;
   bonusTypeOptions?: Array<{ value: string; label: string }>;
 }) {
-  const [dragIndex, setDragIndex] = useState<number | null>(null);
-  const [overIndex, setOverIndex] = useState<number | null>(null);
-
   const events = eventTypeOptions?.length ? eventTypeOptions : DEFAULT_EVENTS;
   const bonuses = bonusTypeOptions || [];
 
@@ -244,75 +245,14 @@ export function TiebreaksEditor({
           {value.map((r, index) => {
             const criterionId = rungToCriterionId(r);
             return (
-              <RowItem
-                key={index}
-                className={cn(
-                  "transition",
-                  dragIndex === index && "opacity-60",
-                  overIndex === index &&
-                    dragIndex !== null &&
-                    dragIndex !== index &&
-                    "bg-brand/5",
-                )}
-              >
-                <div
-                  className="flex items-start gap-2"
-                  onDragOver={(e) => {
-                    e.preventDefault();
-                    e.dataTransfer.dropEffect = "move";
-                    if (overIndex !== index) setOverIndex(index);
-                  }}
-                  onDragLeave={() => {
-                    if (overIndex === index) setOverIndex(null);
-                  }}
-                  onDrop={(e) => {
-                    e.preventDefault();
-                    const from = dragIndex ?? Number(e.dataTransfer.getData("text/plain"));
-                    reorder(from, index);
-                    setDragIndex(null);
-                    setOverIndex(null);
-                  }}
-                >
-                  <div className="flex shrink-0 flex-col gap-1">
-                    <IconButton
-                      type="button"
-                      variant="secondary"
-                      size="icon-sm"
-                      label={`Move tiebreak ${index + 1} up`}
-                      disabled={index === 0}
-                      onClick={() => reorder(index, index - 1)}
-                    >
-                      <ChevronUpIcon className="size-4" />
-                    </IconButton>
-                    <IconButton
-                      type="button"
-                      variant="secondary"
-                      size="icon-sm"
-                      label={`Move tiebreak ${index + 1} down`}
-                      disabled={index === value.length - 1}
-                      onClick={() => reorder(index, index + 1)}
-                    >
-                      <ChevronDownIcon className="size-4" />
-                    </IconButton>
-                    <button
-                      type="button"
-                      draggable
-                      onDragStart={(e) => {
-                        setDragIndex(index);
-                        e.dataTransfer.effectAllowed = "move";
-                        e.dataTransfer.setData("text/plain", String(index));
-                      }}
-                      onDragEnd={() => {
-                        setDragIndex(null);
-                        setOverIndex(null);
-                      }}
-                      className="mt-0.5 hidden min-h-11 min-w-11 cursor-grab select-none items-center justify-center rounded-lg border border-line bg-surface text-sm text-muted active:cursor-grabbing sm:inline-flex"
-                      aria-label={`Drag to reorder tiebreak ${index + 1}`}
-                      title="Drag to reorder"
-                    >
-                      ⋮⋮
-                    </button>
-                  </div>
+              <RowItem key={index}>
+                <div className="flex items-start gap-2">
+                  <ReorderButtons
+                    index={index}
+                    total={value.length}
+                    onMove={reorder}
+                    itemLabel="tiebreak"
+                  />
                   <div className="grid min-w-0 flex-1 grid-cols-1 gap-2 sm:grid-cols-[auto_1fr_8.5rem]">
                     <Muted className="self-center text-xs font-bold tabular-nums">#{index + 1}</Muted>
                     <Label className="min-w-0">
@@ -362,9 +302,9 @@ export function TiebreaksEditor({
   );
 }
 
-/** Build event-type options from result events + upset threshold keys. */
+/** Build event-type options from result events + upset thresholds. */
 export function eventOptionsFromUpsetKeys(
-  thresholdKeys: string[],
+  thresholds: Array<string | { key: string; name?: string }>,
 ): Array<{ value: string; label: string }> {
   const base = [
     { value: "win", label: "Win" },
@@ -372,11 +312,13 @@ export function eventOptionsFromUpsetKeys(
     { value: "loss", label: "Loss" },
   ];
   const seen = new Set(base.map((b) => b.value));
-  const extras = thresholdKeys
-    .filter((k) => k && !seen.has(k))
-    .map((k) => {
-      seen.add(k);
-      return { value: k, label: humanize(k) };
-    });
+  const extras: Array<{ value: string; label: string }> = [];
+  for (const item of thresholds) {
+    const key = typeof item === "string" ? item : item.key;
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    const name = typeof item === "string" ? "" : item.name?.trim();
+    extras.push({ value: key, label: name || humanize(key) });
+  }
   return [...base, ...extras];
 }

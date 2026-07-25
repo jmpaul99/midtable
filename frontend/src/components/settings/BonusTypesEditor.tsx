@@ -2,14 +2,16 @@
 
 import { Input, Label } from "@/components/ui/Field";
 import { AddRowButton, EditorSection, RemoveButton, RowItem, RowList } from "./chrome";
-import type { BonusTypeDef } from "./types";
+import { slugifyKey, uniqueKey, type BonusTypeDef } from "./types";
 
-const blankBonus = (sortOrder: number): BonusTypeDef => ({
-  key: "",
-  label: "",
-  default_points: 0,
-  sort_order: sortOrder,
-});
+function blankBonus(sortOrder: number, existingKeys: string[]): BonusTypeDef {
+  return {
+    key: uniqueKey("bonus", existingKeys, undefined, "bonus"),
+    label: "",
+    default_points: 0,
+    sort_order: sortOrder,
+  };
+}
 
 export function BonusTypesEditor({
   value,
@@ -22,6 +24,24 @@ export function BonusTypesEditor({
     onChange(value.map((b, i) => (i === index ? { ...b, ...patch } : b)));
   }
 
+  function updateName(index: number, label: string) {
+    const current = value[index];
+    if (!current) return;
+    const patch: Partial<BonusTypeDef> = { label };
+    const hadName = Boolean((current.label ?? "").trim());
+    const key = (current.key ?? "").trim();
+    const placeholderKey = !key || /^bonus(_\d+)?$/.test(key);
+    if (!hadName && label.trim() && placeholderKey) {
+      patch.key = uniqueKey(
+        slugifyKey(label) || "bonus",
+        value.map((b) => b.key),
+        index,
+        "bonus",
+      );
+    }
+    update(index, patch);
+  }
+
   return (
     <EditorSection
       title="Bonus types"
@@ -30,23 +50,15 @@ export function BonusTypesEditor({
       {value.length > 0 && (
         <RowList>
           {value.map((b, index) => (
-            <RowItem key={index}>
+            <RowItem key={b.key || index}>
               <div className="flex flex-col gap-2">
-                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_6.5rem_5.5rem]">
                   <Label>
-                    Key
+                    Name
                     <Input
-                      value={b.key}
-                      onChange={(e) => update(index, { key: e.target.value })}
-                      placeholder="cl"
-                    />
-                  </Label>
-                  <Label>
-                    Label
-                    <Input
-                      value={b.label}
-                      onChange={(e) => update(index, { label: e.target.value })}
-                      placeholder="Champions League Qualification"
+                      value={b.label ?? ""}
+                      onChange={(e) => updateName(index, e.target.value)}
+                      required
                     />
                   </Label>
                   <Label>
@@ -77,7 +89,15 @@ export function BonusTypesEditor({
       )}
       <AddRowButton
         label="Add bonus type"
-        onClick={() => onChange([...value, blankBonus(value.length + 1)])}
+        onClick={() =>
+          onChange([
+            ...value,
+            blankBonus(
+              value.length + 1,
+              value.map((b) => b.key),
+            ),
+          ])
+        }
       />
     </EditorSection>
   );

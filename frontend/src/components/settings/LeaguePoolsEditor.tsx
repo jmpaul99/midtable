@@ -1,132 +1,322 @@
 "use client";
 
+import type { ReactNode } from "react";
 import { Checkbox, Input, Label } from "@/components/ui/Field";
-import { EditorSection, RowItem, RowList } from "./chrome";
+import {
+  AVAILABLE_COMPETITIONS,
+  competitionDisplayLabel,
+  defaultFootballSeasonYear,
+  findAvailableCompetition,
+} from "@/lib/availableCompetitions";
+import { cn } from "@/lib/cn";
+import {
+  normalizeRosterClubOrder,
+  type RosterClubOrder,
+} from "@/lib/rosterClubOrder";
+import { CompetitionAutocomplete } from "./CompetitionAutocomplete";
+import { SeasonYearField } from "./SeasonYearField";
+import {
+  AddRowButton,
+  EditorSection,
+  RemoveButton,
+  ReorderButtons,
+  RowItem,
+  RowList,
+} from "./chrome";
 
 export type LeaguePoolEdit = {
+  /** Persisted public id, or a client-only temp id for unsaved rows. */
   id: string;
+  isNew?: boolean;
   key: string;
   label: string;
   sort_order: number;
   slot_count: number;
   scores_match_results: boolean;
+  competition_code: string;
+  season_year: number;
+  provider: string;
   team_count?: number;
 };
+
+function blankPool(sortOrder: number): LeaguePoolEdit {
+  return {
+    id: `temp-${crypto.randomUUID()}`,
+    isNew: true,
+    key: "",
+    label: "",
+    sort_order: sortOrder,
+    slot_count: 1,
+    scores_match_results: true,
+    competition_code: "",
+    season_year: defaultFootballSeasonYear(),
+    provider: "football-data.org",
+    team_count: 0,
+  };
+}
+
+function sortPools(pools: LeaguePoolEdit[]): LeaguePoolEdit[] {
+  return [...pools].sort(
+    (a, b) => a.sort_order - b.sort_order || a.label.localeCompare(b.label),
+  );
+}
+
+function withRenumberedOrder(pools: LeaguePoolEdit[]): LeaguePoolEdit[] {
+  return pools.map((p, i) => ({ ...p, sort_order: i + 1 }));
+}
 
 export function LeaguePoolsEditor({
   value,
   onChange,
   managerCapacity,
+  structureEditable,
+  trailingAction,
+  rosterClubOrder = "draft",
+  onRosterClubOrderChange,
 }: {
   value: LeaguePoolEdit[];
   onChange: (next: LeaguePoolEdit[]) => void;
   /** Required manager count used for club capacity checks. */
   managerCapacity: number;
+  /** When true, allow add/remove and competition selection (pre-draft only). */
+  structureEditable: boolean;
+  /** Shown on the right of the footer row (e.g. Save), opposite Add. */
+  trailingAction?: ReactNode;
+  rosterClubOrder?: RosterClubOrder;
+  onRosterClubOrderChange?: (next: RosterClubOrder) => void;
 }) {
-  function update(index: number, patch: Partial<LeaguePoolEdit>) {
-    onChange(value.map((p, i) => (i === index ? { ...p, ...patch } : p)));
+  const ordered = sortPools(value);
+
+  function updateById(id: string, patch: Partial<LeaguePoolEdit>) {
+    onChange(value.map((p) => (p.id === id ? { ...p, ...patch } : p)));
+  }
+
+  function selectCompetition(id: string, code: string) {
+    const entry = findAvailableCompetition(code);
+    if (!entry) {
+      updateById(id, { competition_code: "", key: "", label: "" });
+      return;
+    }
+    updateById(id, {
+      competition_code: entry.code,
+      key: entry.key,
+      label: entry.label,
+    });
+  }
+
+  function reorder(from: number, to: number) {
+    if (from === to || from < 0 || to < 0 || from >= ordered.length || to >= ordered.length) {
+      return;
+    }
+    const next = [...ordered];
+    const [item] = next.splice(from, 1);
+    next.splice(to, 0, item);
+    onChange(withRenumberedOrder(next));
   }
 
   const capacity = Math.max(1, managerCapacity || 1);
+  const usedCodes = new Set(
+    value.map((p) => p.competition_code?.trim().toUpperCase()).filter(Boolean),
+  );
 
   return (
     <EditorSection
       title="Competitions"
-      description="Each competition (e.g. Premier League, Championship) has its own roster slots, display order, and week-to-week scoring toggle."
+      description="These are the real-world leagues managers draft clubs from (e.g. Premier League, Championship). The arrows set the pre-draft order shown on rosters. After the draft, rosters default to draft order — change that below if you want."
     >
-      {value.length === 0 ? (
-        <p className="text-sm text-muted">No competitions configured for this league.</p>
+      {!structureEditable && (
+        <p className="text-sm text-muted">
+          Competitions can only be added or removed before the draft opens.
+        </p>
+      )}
+
+      {onRosterClubOrderChange && (
+        <div className="flex max-w-lg flex-col gap-1 sm:flex-row sm:items-center sm:gap-3">
+          <p className="shrink-0 text-xs font-semibold text-muted sm:w-36">
+            Roster order after draft
+          </p>
+          <div className="min-w-0 flex-1">
+            <div
+              className="inline-flex w-full gap-0.5 rounded-lg bg-surface-2 p-0.5 sm:w-auto"
+              role="radiogroup"
+              aria-label="Roster order after draft"
+            >
+              {(
+                [
+                  { id: "draft", label: "Draft order" },
+                  { id: "competition", label: "Competition order" },
+                ] as const
+              ).map((opt) => {
+                const selected = normalizeRosterClubOrder(rosterClubOrder) === opt.id;
+                return (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    role="radio"
+                    aria-checked={selected}
+                    onClick={() => onRosterClubOrderChange(opt.id)}
+                    className={cn(
+                      "min-h-8 flex-1 rounded-md px-2.5 py-1 text-xs font-bold transition sm:flex-none",
+                      selected ? "bg-surface text-ink shadow-sm" : "text-muted hover:text-ink",
+                    )}
+                  >
+                    {opt.label}
+                  </button>
+                );
+              })}
+            </div>
+            <p className="mt-1 text-[0.65rem] leading-snug text-muted">
+              Pre-draft always uses competition order.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {ordered.length === 0 ? (
+        <p className="text-sm text-muted">
+          {structureEditable
+            ? "No competitions yet. Add at least one before the draft opens."
+            : "No competitions configured for this league."}
+        </p>
       ) : (
         <RowList>
-          {[...value]
-            .map((p, index) => ({ p, index }))
-            .sort(
-              (a, b) =>
-                a.p.sort_order - b.p.sort_order || a.p.label.localeCompare(b.p.label),
-            )
-            .map(({ p, index }) => {
-              const slots = Number(p.slot_count) || 0;
-              const teams = p.team_count ?? 0;
-              const needed = slots * capacity;
-              const overCapacity = teams > 0 && needed > teams;
-              const maxSlots =
-                teams > 0 ? Math.max(1, Math.floor(teams / capacity)) : undefined;
+          {ordered.map((p, sortedIndex) => {
+            const slots = Number(p.slot_count) || 0;
+            const teams = p.team_count ?? 0;
+            const needed = slots * capacity;
+            const overCapacity = teams > 0 && needed > teams;
+            const maxSlots =
+              teams > 0 ? Math.max(1, Math.floor(teams / capacity)) : undefined;
+            const options = AVAILABLE_COMPETITIONS.filter(
+              (c) =>
+                c.code === p.competition_code?.toUpperCase() || !usedCodes.has(c.code),
+            );
+            const displayName = competitionDisplayLabel(p.competition_code, p.label);
 
-              return (
-                <RowItem key={p.id}>
-                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
-                    <Label>
-                      Label
-                      <Input
-                        value={p.label}
-                        onChange={(e) => update(index, { label: e.target.value })}
+            return (
+              <RowItem key={p.id} className="p-2.5 sm:p-3">
+                <div className="flex items-start gap-2">
+                  <ReorderButtons
+                    index={sortedIndex}
+                    total={ordered.length}
+                    onMove={reorder}
+                    itemLabel="competition"
+                  />
+                  <div className="min-w-0 flex-1 space-y-2">
+                    <div
+                      className={cn(
+                        "grid items-start gap-2",
+                        structureEditable
+                          ? "grid-cols-[minmax(0,1fr)_4.5rem_5.5rem_auto]"
+                          : "grid-cols-[minmax(0,1fr)_4.5rem_5.5rem]",
+                      )}
+                    >
+                      <Label className="min-w-0 gap-1">
+                        Competition
+                        {structureEditable ? (
+                          <CompetitionAutocomplete
+                            value={p.competition_code || ""}
+                            onChange={(code) => selectCompetition(p.id, code)}
+                            options={options}
+                            required
+                            className="min-h-10 rounded-lg px-2.5 py-2 text-sm"
+                          />
+                        ) : (
+                          <Input
+                            value={displayName || p.key}
+                            disabled
+                            readOnly
+                            className="min-h-10 rounded-lg px-2.5 py-2 text-sm"
+                          />
+                        )}
+                      </Label>
+                      <Label className="gap-1">
+                        Slots
+                        <Input
+                          type="number"
+                          min={1}
+                          max={maxSlots}
+                          value={p.slot_count}
+                          onChange={(e) =>
+                            updateById(p.id, { slot_count: Number(e.target.value) })
+                          }
+                          className="min-h-10 rounded-lg px-2.5 py-2 text-sm"
+                        />
+                        <span
+                          className={cn(
+                            "text-[0.65rem] font-normal leading-snug",
+                            overCapacity ? "font-semibold text-danger" : "text-muted",
+                          )}
+                        >
+                          {teams > 0
+                            ? `${teams} teams${maxSlots != null ? ` · max ${maxSlots}` : ""}`
+                            : "No teams yet"}
+                          {overCapacity ? " — too many slots" : ""}
+                        </span>
+                      </Label>
+                      <SeasonYearField
+                        value={p.season_year}
+                        onChange={(year) => updateById(p.id, { season_year: year })}
+                        disabled={!structureEditable}
+                        required={structureEditable}
+                        compact
                       />
-                    </Label>
-                    <Label>
-                      Key
-                      <Input value={p.key} disabled readOnly />
-                    </Label>
-                    <Label>
-                      Display order
-                      <Input
-                        type="number"
-                        min={0}
-                        value={p.sort_order}
+                      {structureEditable && (
+                        <div className="pt-[1.375rem]">
+                          <RemoveButton
+                            onClick={() =>
+                              onChange(
+                                withRenumberedOrder(
+                                  ordered.filter((row) => row.id !== p.id),
+                                ),
+                              )
+                            }
+                          />
+                        </div>
+                      )}
+                    </div>
+
+                    <label className="flex items-start gap-1.5 text-xs font-semibold text-muted">
+                      <Checkbox
+                        className="mt-0.5 size-4"
+                        checked={p.scores_match_results}
                         onChange={(e) =>
-                          update(index, { sort_order: Number(e.target.value) })
+                          updateById(p.id, { scores_match_results: e.target.checked })
                         }
                       />
-                    </Label>
-                    <Label>
-                      Roster slots
-                      <Input
-                        type="number"
-                        min={1}
-                        max={maxSlots}
-                        value={p.slot_count}
-                        onChange={(e) =>
-                          update(index, { slot_count: Number(e.target.value) })
-                        }
-                      />
-                    </Label>
-                  </div>
-
-                  <p
-                    className={
-                      overCapacity
-                        ? "mt-2 text-xs font-semibold text-danger"
-                        : "mt-2 text-xs text-muted"
-                    }
-                  >
-                    {slots} slots × {capacity} managers = {needed} clubs needed
-                    {teams > 0
-                      ? ` · ${teams} loaded${maxSlots != null ? ` · max ${maxSlots} slots` : ""}`
-                      : " · load clubs to validate capacity"}
-                    {overCapacity
-                      ? ". Too many slots for the clubs available."
-                      : "."}
-                  </p>
-
-                  <label className="mt-3 flex items-start gap-2 text-sm font-semibold text-muted">
-                    <Checkbox
-                      className="mt-0.5"
-                      checked={p.scores_match_results}
-                      onChange={(e) =>
-                        update(index, { scores_match_results: e.target.checked })
-                      }
-                    />
-                    <span>
-                      Score week-to-week match results
-                      <span className="mt-0.5 block text-xs font-normal">
-                        When on, fixtures sync and W/D/L points count toward the leaderboard. When
-                        off, clubs stay on rosters for season bonuses only.
+                      <span>
+                        Score week-to-week match results
+                        <span className="mt-0.5 block text-[0.7rem] font-normal leading-snug">
+                          When on, fixtures sync and W/D/L points count toward the leaderboard. When
+                          off, clubs stay on rosters for season bonuses only.
+                        </span>
                       </span>
-                    </span>
-                  </label>
-                </RowItem>
-              );
-            })}
+                    </label>
+                  </div>
+                </div>
+              </RowItem>
+            );
+          })}
         </RowList>
+      )}
+
+      {(structureEditable || trailingAction) && (
+        <div className="flex items-center justify-between gap-3">
+          {structureEditable ? (
+            <AddRowButton
+              label="Add competition"
+              onClick={() =>
+                onChange([
+                  ...withRenumberedOrder(ordered),
+                  blankPool(ordered.length + 1),
+                ])
+              }
+            />
+          ) : (
+            <span />
+          )}
+          {trailingAction}
+        </div>
       )}
     </EditorSection>
   );

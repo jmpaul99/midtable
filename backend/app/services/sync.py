@@ -92,6 +92,19 @@ def sync_league_fixtures(
     provider: FootballProvider,
 ) -> dict[str, Any]:
     """Pull matches for scoring pools only; preserve scheduled_matchweek on postponements."""
+    all_pools = list(
+        db.scalars(select(TeamPool).where(TeamPool.league_id == league.id)).all()
+    )
+    if not all_pools:
+        return {
+            "ok": False,
+            "error": (
+                "No competitions configured. "
+                "Add competitions in League settings → Competitions."
+            ),
+            "status_code": 400,
+        }
+
     status = _ensure_sync_status(db, league.id, PROVIDER_KEY)
     if status.in_progress and not _lock_stale(status):
         return {
@@ -112,11 +125,7 @@ def sync_league_fixtures(
     rate: RateLimitInfo | None = None
 
     try:
-        scoring_pools = [
-            p
-            for p in db.scalars(select(TeamPool).where(TeamPool.league_id == league.id)).all()
-            if p.scores_match_results
-        ]
+        scoring_pools = [p for p in all_pools if p.scores_match_results]
         for pool in scoring_pools:
             if not pool.competition_code or not pool.season_year:
                 continue

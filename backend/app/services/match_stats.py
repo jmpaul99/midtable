@@ -488,3 +488,28 @@ def draft_pick_numbers(db: Session, league_id: int) -> dict[int, int]:
     """Map team_id → draft pick_number for the league."""
     picks = db.scalars(select(DraftPick).where(DraftPick.league_id == league_id)).all()
     return {p.team_id: p.pick_number for p in picks}
+
+
+def points_by_stage_from_events(events: Sequence[Any]) -> dict[str, float]:
+    """Sum fantasy points by match stage code (skips blank/null stages)."""
+    out: dict[str, float] = {}
+    for event in events:
+        stage = (getattr(event, "stage", None) or "").strip()
+        if not stage:
+            continue
+        out[stage] = out.get(stage, 0.0) + float(event.points)
+    return out
+
+
+def points_by_stage_by_team(events: Sequence[Any]) -> dict[int, dict[str, float]]:
+    """Map team_id → {stage_code: points} from scoring events."""
+    out: dict[int, dict[str, float]] = {}
+    for event in events:
+        stage = (getattr(event, "stage", None) or "").strip()
+        if not stage:
+            continue
+        team_id = int(event.team_id)
+        bucket = out.setdefault(team_id, {})
+        bucket[stage] = bucket.get(stage, 0.0) + float(event.points)
+    return out
+

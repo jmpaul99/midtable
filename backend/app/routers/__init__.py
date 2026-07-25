@@ -8,6 +8,7 @@ from app.routers import (
     health,
     internal,
     invites,
+    join_links,
     league_ops,
     league_reads,
     leagues_core,
@@ -23,6 +24,7 @@ def build_api_router() -> APIRouter:
     router.include_router(auth_me.router)
     router.include_router(leagues_core.router)
     router.include_router(invites.router)
+    router.include_router(join_links.router)
     router.include_router(league_ops.router)
     router.include_router(league_reads.router)
     router.include_router(draft.router)

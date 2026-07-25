@@ -14,6 +14,11 @@ import {
   StatGrid,
   StatTile,
 } from "@/components/ui/Card";
+import {
+  compareRosterClubs,
+  effectiveRosterClubOrder,
+  type RosterClubOrder,
+} from "@/lib/rosterClubOrder";
 import { TeamCrest } from "./TeamCrest";
 import { TeamLink } from "./TeamLink";
 import { TeamNameEditor } from "./TeamNameEditor";
@@ -24,12 +29,19 @@ export function ManagerPage({
   managerId,
   currentManagerId,
   onTeamNameSaved,
+  leagueStatus,
+  rosterClubOrder = "draft",
+  eventTypeLabels,
 }: {
   leagueId: UUID;
   managerId: UUID;
   currentManagerId?: UUID | null;
   onTeamNameSaved?: () => void;
+  leagueStatus?: string;
+  rosterClubOrder?: RosterClubOrder;
+  eventTypeLabels?: Record<string, string>;
 }) {
+  const clubOrder = effectiveRosterClubOrder(leagueStatus, rosterClubOrder);
   const [detail, setDetail] = useState<ManagerDetail>();
   const [highlights, setHighlights] = useState<ManagerHighlights>();
   const [splits, setSplits] = useState<VenueSplitRow[]>();
@@ -66,18 +78,7 @@ export function ManagerPage({
   const managerSplit = splits?.[0];
   const isMine = Boolean(currentManagerId && currentManagerId === managerId);
   const bonuses = detail.bonuses || [];
-  const clubs = [...detail.clubs].sort((a, b) => {
-    const draftRank = (club: (typeof detail.clubs)[number]) => {
-      if ((club.acquired_via || "").toLowerCase() === "preassigned") return 0;
-      if (club.draft_pick_number != null) return club.draft_pick_number;
-      return 10_000;
-    };
-    const byDraft = draftRank(a) - draftRank(b);
-    if (byDraft !== 0) return byDraft;
-    const byPool = (a.pool_sort_order ?? 999) - (b.pool_sort_order ?? 999);
-    if (byPool !== 0) return byPool;
-    return a.team_name.localeCompare(b.team_name);
-  });
+  const clubs = [...detail.clubs].sort((a, b) => compareRosterClubs(a, b, clubOrder));
 
   return (
     <Stack gap="md" className="animate-in">
@@ -169,7 +170,8 @@ export function ManagerPage({
                   <div className="min-w-0 rounded-xl border border-line bg-surface-2/40 p-3">
                     <Eyebrow>Biggest upset</Eyebrow>
                     <div className="font-display text-lg font-extrabold capitalize sm:text-xl">
-                      {(highlights.biggest_upset.event_type || "").replaceAll("_", " ")}
+                      {eventTypeLabels?.[highlights.biggest_upset.event_type || ""] ||
+                        (highlights.biggest_upset.event_type || "").replaceAll("_", " ")}
                     </div>
                     <Muted className="break-words text-sm tabular-nums">
                       {highlights.biggest_upset.gap != null

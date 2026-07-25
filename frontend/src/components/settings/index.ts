@@ -5,6 +5,8 @@ export { TiebreaksEditor, eventOptionsFromUpsetKeys } from "./TiebreaksEditor";
 export { PayoutsEditor } from "./PayoutsEditor";
 export { PoolDefinitionsEditor } from "./PoolDefinitionsEditor";
 export { LeaguePoolsEditor } from "./LeaguePoolsEditor";
+export { CompetitionAutocomplete } from "./CompetitionAutocomplete";
+export { StageMultiSelect } from "./StageMultiSelect";
 export { BonusTypesEditor } from "./BonusTypesEditor";
 export { RosterSlotsEditor } from "./RosterSlotsEditor";
 export {

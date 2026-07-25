@@ -6,42 +6,150 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.auth.jwt import get_current_profile
+from app.config import Settings, get_settings
 from app.db import get_db
 from app.deps import require_commissioner
-from app.models import Invite, League, LeagueMember, Profile
+from app.models import Invite, InviteEmailDelivery, League, LeagueMember, Profile
 from app.routers.league_mappers import _member_response
 from app.schemas.leagues import (
     InviteAcceptRequest,
     InviteAcceptResponse,
     InviteCreate,
+    InviteEmailDeliveryResponse,
     InviteResponse,
 )
-from app.services.members import default_team_name
+from app.services.mailjet import send_invite_email
+from app.services.members import default_team_name, required_manager_count
 
 router = APIRouter(tags=["invites"])
+
+
+def _accept_url(token: str | None, settings: Settings) -> str | None:
+    if not token:
+        return None
+    base = settings.public_app_url.rstrip("/")
+    return f"{base}/invites/accept?token={token}"
+
+
+def _delivery_response(d: InviteEmailDelivery) -> InviteEmailDeliveryResponse:
+    return InviteEmailDeliveryResponse(
+        id=d.public_id,
+        status=d.status,
+        trigger=d.trigger,
+        error=d.error,
+        provider_message_id=d.provider_message_id,
+        http_attempts=d.http_attempts,
+        created_at=d.created_at,
+    )
+
+
+def _invite_response(
+    invite: Invite,
+    settings: Settings,
+    *,
+    include_send_status: bool = False,
+) -> InviteResponse:
+    deliveries = sorted(
+        invite.email_deliveries or [],
+        key=lambda d: d.created_at,
+        reverse=True,
+    )
+    latest = deliveries[0] if deliveries else None
+    email_sent: bool | None = None
+    email_error: str | None = None
+    if include_send_status and latest is not None:
+        email_sent = latest.status == "sent"
+        email_error = latest.error if latest.status != "sent" else None
+    elif include_send_status:
+        email_sent = False
+        email_error = "No delivery attempt recorded"
+    return InviteResponse(
+        id=invite.public_id,
+        email=invite.email,
+        is_commissioner=invite.is_commissioner,
+        draft_slot=invite.draft_slot,
+        status=invite.status,
+        token=invite.token,
+        role="commissioner" if invite.is_commissioner else "member",
+        accept_url=_accept_url(invite.token, settings),
+        email_sent=email_sent,
+        email_error=email_error,
+        email_deliveries=[_delivery_response(d) for d in deliveries],
+    )
+
+
+def _inviter_display_name(db: Session, member: LeagueMember) -> str:
+    profile = member.profile
+    if profile is None:
+        profile = db.get(Profile, member.profile_id)
+    if profile is None:
+        return "a commissioner"
+    name = (profile.display_name or "").strip()
+    return name or profile.email or "a commissioner"
+
+
+def _send_and_record(
+    db: Session,
+    invite: Invite,
+    league: League,
+    actor: LeagueMember,
+    *,
+    trigger: str,
+    settings: Settings,
+) -> InviteEmailDelivery:
+    accept = _accept_url(invite.token, settings)
+    result = send_invite_email(
+        to_email=invite.email,
+        league_name=league.name,
+        accept_url=accept or "",
+        inviter_name=_inviter_display_name(db, actor),
+        settings=settings,
+    )
+    delivery = InviteEmailDelivery(
+        invite_id=invite.id,
+        status=result.status,
+        trigger=trigger,
+        error=result.error,
+        provider="mailjet",
+        provider_message_id=result.provider_message_id,
+        http_attempts=result.http_attempts,
+    )
+    db.add(delivery)
+    db.commit()
+    db.refresh(invite)
+    db.refresh(delivery)
+    return delivery
+
+
+def _load_invite_with_deliveries(
+    db: Session,
+    *,
+    invite_id: UUID,
+    league_id: int,
+) -> Invite | None:
+    return db.scalars(
+        select(Invite)
+        .options(selectinload(Invite.email_deliveries))
+        .where(Invite.public_id == invite_id, Invite.league_id == league_id)
+    ).first()
+
 
 @router.get("/leagues/{league_id}/invites", response_model=list[InviteResponse])
 def list_invites(
     membership: tuple[League, LeagueMember] = Depends(require_commissioner),
     db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
 ) -> list[InviteResponse]:
     league, _ = membership
-    invites = db.scalars(select(Invite).where(Invite.league_id == league.id)).all()
-    return [
-        InviteResponse(
-            id=i.public_id,
-            email=i.email,
-            is_commissioner=i.is_commissioner,
-            draft_slot=i.draft_slot,
-            status=i.status,
-            token=i.token,
-            role="commissioner" if i.is_commissioner else "member",
-        )
-        for i in invites
-    ]
+    invites = db.scalars(
+        select(Invite)
+        .options(selectinload(Invite.email_deliveries))
+        .where(Invite.league_id == league.id)
+    ).all()
+    return [_invite_response(i, settings) for i in invites]
 
 
 @router.post("/leagues/{league_id}/invites", response_model=InviteResponse)
@@ -49,8 +157,9 @@ def create_invite(
     payload: InviteCreate,
     membership: tuple[League, LeagueMember] = Depends(require_commissioner),
     db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
 ) -> InviteResponse:
-    league, _ = membership
+    league, actor = membership
     invite = Invite(
         league_id=league.id,
         email=payload.email.strip().lower(),
@@ -62,15 +171,32 @@ def create_invite(
     db.add(invite)
     db.commit()
     db.refresh(invite)
-    return InviteResponse(
-        id=invite.public_id,
-        email=invite.email,
-        is_commissioner=invite.is_commissioner,
-        draft_slot=invite.draft_slot,
-        status=invite.status,
-        token=invite.token,
-        role="commissioner" if invite.is_commissioner else "member",
-    )
+    _send_and_record(db, invite, league, actor, trigger="create", settings=settings)
+    invite = _load_invite_with_deliveries(db, invite_id=invite.public_id, league_id=league.id)
+    assert invite is not None
+    return _invite_response(invite, settings, include_send_status=True)
+
+
+@router.post(
+    "/leagues/{league_id}/invites/{invite_id}/resend",
+    response_model=InviteResponse,
+)
+def resend_invite(
+    invite_id: UUID,
+    membership: tuple[League, LeagueMember] = Depends(require_commissioner),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> InviteResponse:
+    league, actor = membership
+    invite = _load_invite_with_deliveries(db, invite_id=invite_id, league_id=league.id)
+    if invite is None:
+        raise HTTPException(status_code=404, detail="Invite not found")
+    if invite.status != "pending":
+        raise HTTPException(status_code=409, detail="Only pending invites can be resent")
+    _send_and_record(db, invite, league, actor, trigger="resend", settings=settings)
+    invite = _load_invite_with_deliveries(db, invite_id=invite_id, league_id=league.id)
+    assert invite is not None
+    return _invite_response(invite, settings, include_send_status=True)
 
 
 @router.delete("/leagues/{league_id}/invites/{invite_id}", status_code=204)
@@ -98,14 +224,10 @@ def update_invite(
     payload: InviteCreate,
     membership: tuple[League, LeagueMember] = Depends(require_commissioner),
     db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
 ) -> InviteResponse:
     league, _ = membership
-    invite = db.scalars(
-        select(Invite).where(
-            Invite.public_id == invite_id,
-            Invite.league_id == league.id,
-        )
-    ).first()
+    invite = _load_invite_with_deliveries(db, invite_id=invite_id, league_id=league.id)
     if invite is None:
         raise HTTPException(status_code=404, detail="Invite not found")
     if invite.status != "pending":
@@ -116,15 +238,9 @@ def update_invite(
         invite.draft_slot = payload.draft_slot
     db.commit()
     db.refresh(invite)
-    return InviteResponse(
-        id=invite.public_id,
-        email=invite.email,
-        is_commissioner=invite.is_commissioner,
-        draft_slot=invite.draft_slot,
-        status=invite.status,
-        token=invite.token,
-        role="commissioner" if invite.is_commissioner else "member",
-    )
+    invite = _load_invite_with_deliveries(db, invite_id=invite_id, league_id=league.id)
+    assert invite is not None
+    return _invite_response(invite, settings)
 
 
 @router.post("/invites/accept", response_model=InviteAcceptResponse)
@@ -160,13 +276,7 @@ def accept_invite(
     member_count = len(
         list(db.scalars(select(LeagueMember).where(LeagueMember.league_id == league.id)).all())
     )
-    config = league.config or {}
-    max_members: int | None = None
-    if "max_members" in config and config.get("max_members") is not None:
-        try:
-            max_members = max(2, int(config["max_members"]))
-        except (TypeError, ValueError):
-            max_members = None
+    max_members = required_manager_count(league)
     if max_members is not None and member_count >= max_members:
         raise HTTPException(
             status_code=409,
@@ -197,5 +307,3 @@ def accept_invite(
     db.refresh(member)
     base = _member_response(member, profile)
     return InviteAcceptResponse(**base.model_dump(), league_id=league.public_id)
-
-

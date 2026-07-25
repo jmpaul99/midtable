@@ -25,8 +25,8 @@ const CATEGORY_LABELS: Record<string, string> = {
   bonus: "Bonus awards",
 };
 
-function categoryLabel(key: string) {
-  return CATEGORY_LABELS[key] || key.replaceAll("_", " ");
+function categoryLabel(key: string, labels?: Record<string, string>) {
+  return labels?.[key] || CATEGORY_LABELS[key] || key.replaceAll("_", " ");
 }
 
 function Chevron({ open }: { open: boolean }) {
@@ -112,6 +112,7 @@ export function TeamScoringBreakdown({
   bonusPoints,
   eventPointsByType,
   eventCountsByType,
+  eventTypeLabels,
 }: {
   leagueId: UUID;
   events: ScoringEventMatch[];
@@ -119,6 +120,8 @@ export function TeamScoringBreakdown({
   bonusPoints: number;
   eventPointsByType?: Record<string, number>;
   eventCountsByType?: Record<string, number>;
+  /** Upset threshold key → display name from league settings. */
+  eventTypeLabels?: Record<string, string>;
 }) {
   const [openKey, setOpenKey] = useState<string | null>(null);
 
@@ -192,7 +195,7 @@ export function TeamScoringBreakdown({
             return (
               <CategoryRow
                 key={cat.key}
-                label={categoryLabel(cat.key)}
+                label={categoryLabel(cat.key, eventTypeLabels)}
                 count={cat.count}
                 points={cat.points}
                 open={open}

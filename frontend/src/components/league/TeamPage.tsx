@@ -17,6 +17,7 @@ import {
 import { TeamCrest } from "./TeamCrest";
 import { TeamLink } from "./TeamLink";
 import { TeamScoringBreakdown } from "./TeamScoringBreakdown";
+import { StagePointsBreakdown } from "./StagePointsBreakdown";
 
 function FormDots({ form }: { form?: string[] }) {
   if (!form?.length) return null;
@@ -116,7 +117,15 @@ function FixtureList({
   );
 }
 
-export function TeamPage({ leagueId, teamId }: { leagueId: UUID; teamId: UUID }) {
+export function TeamPage({
+  leagueId,
+  teamId,
+  eventTypeLabels,
+}: {
+  leagueId: UUID;
+  teamId: UUID;
+  eventTypeLabels?: Record<string, string>;
+}) {
   const [team, setTeam] = useState<TeamDetail>();
   const [error, setError] = useState("");
 
@@ -214,7 +223,16 @@ export function TeamPage({ leagueId, teamId }: { leagueId: UUID; teamId: UUID })
         bonusPoints={s.bonus_points}
         eventPointsByType={s.event_points_by_type}
         eventCountsByType={s.event_counts_by_type}
+        eventTypeLabels={eventTypeLabels}
       />
+
+      {s.points_by_stage && Object.keys(s.points_by_stage).length > 1 && (
+        <Card className="min-w-0 overflow-hidden">
+          <Stack>
+            <StagePointsBreakdown pointsByStage={s.points_by_stage} />
+          </Stack>
+        </Card>
+      )}
 
       {(s.home || s.away) && (
         <Card className="min-w-0 overflow-hidden">

@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Your Midtable phone number was changed</title>
+  <!--
+    Supabase template: Phone number changed (security notification)
+    Subject: Your Midtable phone number was changed
+    Enable: Authentication → Email → security notifications (phone changed)
+    Variables used:
+      {{ .OldPhone }} — previous phone number (notification template only)
+      {{ .Phone }}    — new phone number
+      {{ .SiteURL }}  — app site URL (optional)
+    config.toml: [auth.email.notification.phone_changed]
+  -->
+</head>
+<body style="margin:0;padding:0;background-color:#F4F4F5;-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;">
+  <div style="display:none;max-height:0;overflow:hidden;mso-hide:all;">
+    Your Midtable phone number was changed from {{ .OldPhone }} to {{ .Phone }}.
+  </div>
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#F4F4F5;">
+    <tr>
+      <td align="center" style="padding:32px 16px;">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:520px;background-color:#FFFFFF;border:1px solid #B9CDC0;border-radius:14px;overflow:hidden;">
+          <tr>
+            <td align="center" style="padding:32px 28px 28px 28px;font-family:'Outfit','Segoe UI',ui-sans-serif,system-ui,sans-serif;color:#18181B;text-align:center;">
+              <table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center" style="margin:0 auto 28px auto;">
+                <tr>
+                  <td align="center">
+                    <a href="{{ .SiteURL }}" target="_blank" style="display:inline-block;text-decoration:none;border:0;outline:none;">
+                      <img src="{{ .SiteURL }}/brand/png/lockup-matchday.png" width="160" height="100" alt="Midtable" style="display:block;margin:0 auto;width:160px;height:auto;border:0;outline:none;text-decoration:none;">
+                    </a>
+                  </td>
+                </tr>
+              </table>
+
+              <p style="text-align:center;margin:0 0 8px 0;font-size:12px;font-weight:800;line-height:1.3;letter-spacing:0.12em;text-transform:uppercase;color:#067A4A;">
+                Account
+              </p>
+              <h1 style="text-align:center;margin:0 0 16px 0;font-size:28px;font-weight:800;line-height:1.2;letter-spacing:-0.02em;color:#18181B;">
+                Your phone number was changed
+              </h1>
+              <p style="text-align:center;margin:0 0 28px 0;font-size:15px;font-weight:400;line-height:1.5;color:#18181B;">
+                The phone number for your Midtable account was changed from <strong style="font-weight:700;">{{ .OldPhone }}</strong> to <strong style="font-weight:700;">{{ .Phone }}</strong>.
+              </p>
+
+              <table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center" style="margin:0 auto 24px auto;">
+                <tr>
+                  <td align="center" bgcolor="#067A4A" style="border-radius:10px;background-color:#067A4A;">
+                    <a href="{{ .SiteURL }}" target="_blank" style="display:inline-block;padding:11px 22px;font-family:'Outfit','Segoe UI',ui-sans-serif,system-ui,sans-serif;font-size:14px;font-weight:700;line-height:16px;color:#FFFFFF;text-decoration:none;border-radius:10px;">Sign in to Midtable</a>
+                  </td>
+                </tr>
+              </table>
+
+              <p style="text-align:center;margin:0 0 28px 0;font-size:13px;line-height:1.5;color:#C43C42;">
+                If you didn't make this change, contact support immediately.
+              </p>
+
+                            <table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center" style="margin:0 auto;width:100%;">
+                <tr>
+                  <td align="center" style="padding-top:20px;padding-bottom:8px;border-top:1px solid #B9CDC0;">
+                    <a href="{{ .SiteURL }}" target="_blank" style="display:inline-block;text-decoration:none;border:0;outline:none;"><img src="{{ .SiteURL }}/brand/png/wordmark-matchday.png" width="90" height="31" alt="Midtable" style="display:block;margin:0 auto;width:90px;height:auto;border:0;outline:none;text-decoration:none;"></a>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>

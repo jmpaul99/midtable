@@ -26,6 +26,11 @@ class Settings(BaseSettings):
     api_host: str = "0.0.0.0"
     api_port: int = 8000
     auth_bypass_email: str = ""
+    public_app_url: str = "http://localhost:3000"
+    mailjet_api_key_public: str = ""
+    mailjet_api_key_private: str = ""
+    mailjet_from_email: str = ""
+    mailjet_from_name: str = "Midtable"
 
     @property
     def is_production(self) -> bool:
@@ -48,6 +53,14 @@ class Settings(BaseSettings):
         """Prefer SUPABASE_SECRET_KEY; accept legacy SUPABASE_SERVICE_ROLE_KEY."""
         return self.supabase_secret_key or self.supabase_service_role_key
 
+    @property
+    def mailjet_configured(self) -> bool:
+        return bool(
+            self.mailjet_api_key_public.strip()
+            and self.mailjet_api_key_private.strip()
+            and self.mailjet_from_email.strip()
+        )
+
     def validate_runtime(self) -> None:
         if not self.is_production:
             return
@@ -59,6 +72,13 @@ class Settings(BaseSettings):
             raise RuntimeError("AUTH_BYPASS_EMAIL must not be set in production")
         if "*" in self.cors_origin_list:
             raise RuntimeError("CORS_ORIGINS must not include '*' when credentials are enabled")
+        if not self.public_app_url.strip():
+            raise RuntimeError("PUBLIC_APP_URL must be set in production")
+        if not self.mailjet_configured:
+            raise RuntimeError(
+                "Mailjet must be configured in production "
+                "(MAILJET_API_KEY_PUBLIC, MAILJET_API_KEY_PRIVATE, MAILJET_FROM_EMAIL)"
+            )
 
 
 @lru_cache

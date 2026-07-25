@@ -1,12 +1,16 @@
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.auth.jwt import MAX_DISPLAY_NAME_LEN
 from app.schemas.common import IdSchema
+from app.services.competitions import (
+    is_allowed_competition_code,
+    normalize_competition_code,
+)
 
 
 class LeagueCreate(BaseModel):
@@ -88,6 +92,7 @@ class LeagueResponse(IdSchema):
     scheduled_end_date: date | None = None
     template_id: UUID | None = None
     max_members: int | None = None
+    roster_club_order: Literal["draft", "competition"] = "draft"
     role: str | None = None
     my_rank: int | None = None
     member_count: int | None = None
@@ -113,6 +118,15 @@ class InviteCreate(BaseModel):
     draft_slot: int | None = None
 
 
+class InviteEmailDeliveryResponse(IdSchema):
+    status: str
+    trigger: str
+    error: str | None = None
+    provider_message_id: str | None = None
+    http_attempts: int = 1
+    created_at: datetime
+
+
 class InviteResponse(IdSchema):
     email: str
     is_commissioner: bool
@@ -120,6 +134,10 @@ class InviteResponse(IdSchema):
     status: str
     token: str | None = None
     role: str = "member"
+    accept_url: str | None = None
+    email_sent: bool | None = None
+    email_error: str | None = None
+    email_deliveries: list[InviteEmailDeliveryResponse] = Field(default_factory=list)
 
 
 class InviteAcceptRequest(BaseModel):
@@ -128,6 +146,28 @@ class InviteAcceptRequest(BaseModel):
 
 class InviteAcceptResponse(MemberResponse):
     league_id: UUID
+
+
+class JoinLinkResponse(BaseModel):
+    enabled: bool
+    token: str | None = None
+    join_url: str | None = None
+
+
+class JoinLinkUpdate(BaseModel):
+    enabled: bool | None = None
+    rotate: bool = False
+
+
+class JoinLinkClaimRequest(BaseModel):
+    token: str
+
+
+class JoinLinkPreviewResponse(BaseModel):
+    league_name: str
+    league_id: UUID
+    enabled: bool
+    season_label: str | None = None
 
 
 class DraftOrderUpdate(BaseModel):
@@ -152,23 +192,55 @@ class BootstrapSeasonRequest(BaseModel):
 
 
 class PoolSettingsPatch(BaseModel):
-    """Commissioner updates for an existing league competition (matched by public id)."""
+    """Create (no id) or update (with id) a league competition."""
 
-    id: UUID
+    id: UUID | None = None
+    key: str | None = Field(default=None, min_length=1, max_length=80)
     sort_order: int | None = Field(default=None, ge=0)
     label: str | None = Field(default=None, min_length=1, max_length=120)
     scores_match_results: bool | None = None
     slot_count: int | None = Field(default=None, ge=1, le=50)
+    competition_code: str | None = Field(default=None, min_length=1, max_length=16)
+    season_year: int | None = Field(default=None, ge=2000, le=2100)
+    provider: str | None = Field(default=None, min_length=1, max_length=80)
 
-    @field_validator("label")
+    @field_validator("label", "key", "provider")
     @classmethod
-    def trim_label(cls, value: str | None) -> str | None:
+    def trim_text(cls, value: str | None) -> str | None:
         if value is None:
             return None
         trimmed = value.strip()
         if not trimmed:
             raise ValueError("Value cannot be empty")
         return trimmed
+
+    @field_validator("competition_code")
+    @classmethod
+    def normalize_code(cls, value: str | None) -> str | None:
+        normalized = normalize_competition_code(value)
+        if value is not None and normalized is None:
+            raise ValueError("Value cannot be empty")
+        if normalized is not None and not is_allowed_competition_code(normalized):
+            raise ValueError(
+                f"Unsupported competition code: {normalized}. "
+                "Choose a competition from the free-plan list."
+            )
+        return normalized
+
+    @model_validator(mode="after")
+    def require_create_fields(self) -> PoolSettingsPatch:
+        if self.id is not None:
+            return self
+        missing = [
+            name
+            for name in ("key", "label", "slot_count", "competition_code", "season_year")
+            if getattr(self, name) is None
+        ]
+        if missing:
+            raise ValueError(
+                "Creating a competition requires: " + ", ".join(missing)
+            )
+        return self
 
 
 class LeagueSettingsUpdate(BaseModel):
@@ -181,7 +253,9 @@ class LeagueSettingsUpdate(BaseModel):
     buy_in: Decimal | None = None
     payouts: list[Any] | None = None
     max_members: int | None = Field(default=None, ge=2, le=100)
+    roster_club_order: Literal["draft", "competition"] | None = None
     pools: list[PoolSettingsPatch] | None = None
+    remove_pool_ids: list[UUID] | None = None
 
     @field_validator("name", "season_label")
     @classmethod
@@ -248,6 +322,7 @@ class RosterRowResponse(BaseModel):
     member_draws: int | None = None
     member_losses: int | None = None
     member_games_played: int | None = None
+    points_by_stage: dict[str, float] = Field(default_factory=dict)
 
 
 class RosterPatchRequest(BaseModel):

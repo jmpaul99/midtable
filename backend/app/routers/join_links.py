@@ -1,0 +1,183 @@
+"""Open league join links (not email-tied)."""
+from __future__ import annotations
+
+import secrets
+
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.auth.jwt import get_current_profile
+from app.config import Settings, get_settings
+from app.db import get_db
+from app.deps import require_commissioner
+from app.models import Invite, League, LeagueMember, Profile
+from app.routers.league_mappers import _member_response
+from app.schemas.leagues import (
+    InviteAcceptResponse,
+    JoinLinkClaimRequest,
+    JoinLinkPreviewResponse,
+    JoinLinkResponse,
+    JoinLinkUpdate,
+)
+from app.services.members import default_team_name, required_manager_count
+
+router = APIRouter(tags=["join-links"])
+
+
+def _join_url(token: str | None, settings: Settings) -> str | None:
+    if not token:
+        return None
+    base = settings.public_app_url.rstrip("/")
+    return f"{base}/join?token={token}"
+
+
+def _join_link_response(league: League, settings: Settings) -> JoinLinkResponse:
+    token = league.join_token if league.join_link_enabled else None
+    return JoinLinkResponse(
+        enabled=bool(league.join_link_enabled and league.join_token),
+        token=token,
+        join_url=_join_url(token, settings),
+    )
+
+
+@router.get("/leagues/{league_id}/join-link", response_model=JoinLinkResponse)
+def get_join_link(
+    membership: tuple[League, LeagueMember] = Depends(require_commissioner),
+    settings: Settings = Depends(get_settings),
+) -> JoinLinkResponse:
+    league, _ = membership
+    return _join_link_response(league, settings)
+
+
+@router.post("/leagues/{league_id}/join-link", response_model=JoinLinkResponse)
+def update_join_link(
+    payload: JoinLinkUpdate,
+    membership: tuple[League, LeagueMember] = Depends(require_commissioner),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> JoinLinkResponse:
+    league, _ = membership
+    if payload.rotate:
+        league.join_token = secrets.token_urlsafe(24)
+        league.join_link_enabled = True
+    elif payload.enabled is True:
+        if not league.join_token:
+            league.join_token = secrets.token_urlsafe(24)
+        league.join_link_enabled = True
+    elif payload.enabled is False:
+        league.join_link_enabled = False
+        league.join_token = None
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail="Provide enabled=true, enabled=false, or rotate=true",
+        )
+    db.commit()
+    db.refresh(league)
+    return _join_link_response(league, settings)
+
+
+@router.get("/join-links/preview", response_model=JoinLinkPreviewResponse)
+def preview_join_link(
+    token: str,
+    db: Session = Depends(get_db),
+) -> JoinLinkPreviewResponse:
+    league = db.scalars(
+        select(League).where(
+            League.join_token == token,
+            League.join_link_enabled.is_(True),
+        )
+    ).first()
+    if league is None:
+        raise HTTPException(status_code=404, detail="Join link not found or disabled")
+    return JoinLinkPreviewResponse(
+        league_name=league.name,
+        league_id=league.public_id,
+        enabled=True,
+        season_label=league.season_label,
+    )
+
+
+@router.post("/join-links/claim", response_model=InviteAcceptResponse)
+def claim_join_link(
+    payload: JoinLinkClaimRequest,
+    profile: Profile = Depends(get_current_profile),
+    db: Session = Depends(get_db),
+) -> InviteAcceptResponse:
+    token = payload.token.strip()
+    if not token:
+        raise HTTPException(status_code=400, detail="Join token is required")
+    league = db.scalars(
+        select(League).where(
+            League.join_token == token,
+            League.join_link_enabled.is_(True),
+        )
+    ).first()
+    if league is None:
+        raise HTTPException(status_code=404, detail="Join link not found or disabled")
+    if league.status not in {"pre_draft", "drafting"}:
+        raise HTTPException(status_code=409, detail="League is not accepting new managers")
+
+    existing = db.scalars(
+        select(LeagueMember).where(
+            LeagueMember.league_id == league.id,
+            LeagueMember.profile_id == profile.id,
+        )
+    ).first()
+    if existing:
+        _ensure_accepted_invite_audit(db, league=league, profile=profile)
+        db.commit()
+        base = _member_response(existing, profile)
+        return InviteAcceptResponse(**base.model_dump(), league_id=league.public_id)
+
+    member_count = len(
+        list(db.scalars(select(LeagueMember).where(LeagueMember.league_id == league.id)).all())
+    )
+    max_members = required_manager_count(league)
+    if max_members is not None and member_count >= max_members:
+        raise HTTPException(
+            status_code=409,
+            detail=f"League is full ({max_members} managers)",
+        )
+
+    member = LeagueMember(
+        league_id=league.id,
+        profile_id=profile.id,
+        is_commissioner=False,
+        draft_slot=None,
+        team_name=default_team_name(profile.display_name),
+    )
+    db.add(member)
+    _ensure_accepted_invite_audit(db, league=league, profile=profile)
+    db.commit()
+    db.refresh(member)
+    base = _member_response(member, profile)
+    return InviteAcceptResponse(**base.model_dump(), league_id=league.public_id)
+
+
+def _ensure_accepted_invite_audit(
+    db: Session,
+    *,
+    league: League,
+    profile: Profile,
+) -> None:
+    """Record an accepted invite row for join-link joins (audit / email uniqueness)."""
+    email = profile.email.strip().lower()
+    invite = db.scalars(
+        select(Invite).where(Invite.league_id == league.id, Invite.email == email)
+    ).first()
+    if invite is None:
+        db.add(
+            Invite(
+                league_id=league.id,
+                email=email,
+                token=None,
+                is_commissioner=False,
+                draft_slot=None,
+                status="accepted",
+            )
+        )
+        return
+    invite.status = "accepted"
+    invite.is_commissioner = False

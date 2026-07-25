@@ -25,6 +25,7 @@ from app.models import (
     Team,
     TeamPool,
 )
+from app.routers.league_mappers import effective_roster_club_order
 from app.services import analytics as analytics_service
 from app.services import match_stats as match_stats_service
 from app.services.members import member_label
@@ -157,6 +158,7 @@ def list_rosters(
         points_by_team[event.team_id] = points_by_team.get(event.team_id, 0.0) + float(event.points)
     for bonus in bonuses:
         points_by_team[bonus.team_id] = points_by_team.get(bonus.team_id, 0.0) + float(bonus.points)
+    stage_points_by_team = match_stats_service.points_by_stage_by_team(events)
 
     matches = (
         list(
@@ -226,6 +228,7 @@ def list_rosters(
                         member_draws=int(wdl["draws"]),
                         member_losses=int(wdl["losses"]),
                         member_games_played=gp,
+                        points_by_stage=stage_points_by_team.get(team.id, {}) if team else {},
                     )
                 )
     return rows
@@ -464,14 +467,19 @@ def member_detail(
             )
         )
 
-    def _club_sort_key(c: MemberClubRow) -> tuple[int, int, str]:
+    order_mode = effective_roster_club_order(league)
+
+    def _club_sort_key(c: MemberClubRow) -> tuple[int, int, int, str]:
         if (c.acquired_via or "").lower() == "preassigned":
             draft_rank = 0
         elif c.draft_pick_number is not None:
             draft_rank = int(c.draft_pick_number)
         else:
             draft_rank = 10_000
-        return (draft_rank, int(c.pool_sort_order or 0), c.team_name)
+        pool_rank = int(c.pool_sort_order or 0)
+        if order_mode == "competition":
+            return (pool_rank, draft_rank, 0, c.team_name)
+        return (draft_rank, pool_rank, 0, c.team_name)
 
     clubs.sort(key=_club_sort_key)
 
@@ -558,6 +566,7 @@ def team_detail(
         event_points[event.event_type] = event_points.get(event.event_type, 0.0) + pts
         event_counts[event.event_type] = event_counts.get(event.event_type, 0) + 1
         points_by_match[event.match_id] = points_by_match.get(event.match_id, 0.0) + pts
+    points_by_stage = match_stats_service.points_by_stage_from_events(events)
 
     bonus_points = 0.0
     bonuses = list(
@@ -742,6 +751,7 @@ def team_detail(
             "event_points_by_type": event_points,
             "event_counts_by_type": event_counts,
             "bonus_points_by_type": bonus_by_type,
+            "points_by_stage": points_by_stage,
             "goals_for": goals["goals_for"],
             "goals_against": goals["goals_against"],
             "goal_difference": goals["goal_difference"],

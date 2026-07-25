@@ -1,7 +1,7 @@
 from pathlib import Path
 import re
 
-lockup = Path("frontend/public/brand/lockup-matchday.svg").read_text(encoding="utf-8")
+lockup = Path("brand/logos/product/svg/lockup-matchday.svg").read_text(encoding="utf-8")
 match = re.search(r"<style type=\"text/css\"><!\[CDATA\[(.*?)\]\]></style>", lockup, re.S)
 if not match:
     raise SystemExit("Could not find style block in lockup-matchday.svg")
@@ -29,7 +29,5 @@ def make(path: str, fill: str) -> None:
     print(f"wrote {out} ({out.stat().st_size} bytes)")
 
 
-make("frontend/public/brand/wordmark-matchday.svg", "#71717A")
-make("frontend/public/brand/wordmark-pitch-night.svg", "#2DD67B")
-make("brand/midtable-wordmark-matchday.svg", "#71717A")
-make("brand/midtable-wordmark-pitch-night.svg", "#2DD67B")
+make("brand/logos/product/svg/wordmark-matchday.svg", "#71717A")
+make("brand/logos/product/svg/wordmark-pitch-night.svg", "#2DD67B")

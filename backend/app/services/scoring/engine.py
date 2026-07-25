@@ -47,6 +47,7 @@ class UpsetThreshold:
     min_gap: int
     max_gap: int | None
     points: Decimal
+    name: str = ""
 
     def matches(self, result: Result, gap: int) -> bool:
         if self.result is not result or gap < self.min_gap:
@@ -71,9 +72,12 @@ class UpsetRules:
         min_played = int(eligibility.get("min_played", cfg.get("min_played", 8)))
         thresholds: list[UpsetThreshold] = []
         for item in cfg.get("thresholds") or []:
+            key = str(item["key"])
+            # Legacy configs omit name — treat key as the display name for now.
+            name = str(item.get("name") or item.get("label") or key)
             thresholds.append(
                 UpsetThreshold(
-                    key=str(item["key"]),
+                    key=key,
                     result=Result(str(item["result"])),
                     min_gap=int(item.get("min_gap", item.get("minimum_position_gap", 0))),
                     max_gap=(
@@ -82,6 +86,7 @@ class UpsetRules:
                         else int(item.get("max_gap", item.get("maximum_position_gap")))
                     ),
                     points=Decimal(str(item.get("points", item.get("bonus", 0)))),
+                    name=name,
                 )
             )
         return cls(
@@ -99,10 +104,25 @@ PL_DEFAULT_UPSET_RULES = UpsetRules.from_config(
         "rank_source": "league_table_at_kickoff",
         "eligibility": {"min_played": 8},
         "thresholds": [
-            {"key": "minor_upset", "min_gap": 5, "max_gap": 9, "result": "win", "points": 1},
-            {"key": "major_upset", "min_gap": 10, "max_gap": None, "result": "win", "points": 3},
+            {
+                "key": "minor_upset",
+                "name": "Minor upset",
+                "min_gap": 5,
+                "max_gap": 9,
+                "result": "win",
+                "points": 1,
+            },
+            {
+                "key": "major_upset",
+                "name": "Major upset",
+                "min_gap": 10,
+                "max_gap": None,
+                "result": "win",
+                "points": 3,
+            },
             {
                 "key": "major_upset_draw",
+                "name": "Major upset draw",
                 "min_gap": 10,
                 "max_gap": None,
                 "result": "draw",

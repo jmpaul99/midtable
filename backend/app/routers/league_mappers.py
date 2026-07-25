@@ -48,6 +48,20 @@ def _max_members(league: League) -> int | None:
         return None
 
 
+def _roster_club_order(league: League) -> str:
+    """Configured post-draft roster club order. Pre-draft UI always uses competition order."""
+    config = league.config or {}
+    value = config.get("roster_club_order") or "draft"
+    return value if value in {"draft", "competition"} else "draft"
+
+
+def effective_roster_club_order(league: League) -> str:
+    """Runtime order: competition while pre-draft; otherwise the configured preference."""
+    if league.status == "pre_draft":
+        return "competition"
+    return _roster_club_order(league)
+
+
 def _phases(league: League) -> list[PhaseResponse]:
     out: list[PhaseResponse] = []
     for phase in league.leaderboard_phases or []:
@@ -98,6 +112,7 @@ def _league_response(
         scheduled_end_date=league.scheduled_end_date,
         template_id=template_public,
         max_members=_max_members(league),
+        roster_club_order=_roster_club_order(league),
         role=role,
         my_rank=my_rank,
         member_count=member_count,
@@ -141,6 +156,7 @@ def _league_detail(
         scheduled_end_date=league.scheduled_end_date,
         template_id=template_id,
         max_members=max_members,
+        roster_club_order=_roster_club_order(league),
         current_member_id=current.public_id,
         role=_member_role(current),
         settings={
@@ -150,6 +166,7 @@ def _league_detail(
             "upset_rules": league.upset_rules,
             "format": league.draft_style,
             "max_members": max_members,
+            "roster_club_order": _roster_club_order(league),
         },
         members=member_rows,
         pools=[

@@ -9,6 +9,7 @@ import { Empty, ErrorState, Loading } from "@/components/ui/State";
 import { Button } from "@/components/ui/Button";
 import { Card, Eyebrow, Muted, RankBadge, Stack } from "@/components/ui/Card";
 import { cn } from "@/lib/cn";
+import { matchStageLabel } from "@/lib/matchStages";
 import { managerHref } from "./ManagerLink";
 
 const SEASON_KEY = "";
@@ -26,7 +27,7 @@ function formatMatchweekRange(range: number[] | null | undefined): string | null
 
 function formatStages(stages: string[] | null | undefined): string | null {
   if (!stages?.length) return null;
-  return `Stages: ${stages.map((s) => s.replaceAll("_", " ")).join(", ")}`;
+  return `Stages: ${stages.map(matchStageLabel).join(", ")}`;
 }
 
 function phaseBonusTypes(league: League, phaseKey: string): string[] {

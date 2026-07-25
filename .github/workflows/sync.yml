@@ -4,8 +4,9 @@ name: Sync and score
 
 on:
   workflow_dispatch:
-  # schedule:
-  #   - cron: "0 */3 * * *"
+  schedule:
+    # Every 2 hours at :55 UTC (00:55, 02:55, …, 22:55)
+    - cron: "55 */2 * * *"
 
 jobs:
   sync:

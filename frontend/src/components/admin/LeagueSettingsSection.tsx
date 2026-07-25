@@ -151,7 +151,7 @@ export function LeagueSettingsSection({
                   value={tiebreaks}
                   onChange={setTiebreaks}
                   eventTypeOptions={eventOptionsFromUpsetKeys(
-                    upsetRules.thresholds.map((t) => t.key),
+                    upsetRules.thresholds.map((t) => ({ key: t.key, name: t.name })),
                   )}
                   bonusTypeOptions={bonusTypes.map((b) => ({
                     value: b.key,

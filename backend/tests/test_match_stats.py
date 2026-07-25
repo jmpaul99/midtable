@@ -9,6 +9,8 @@ from uuid import uuid4
 from app.services.match_stats import (
     form_from_results,
     goals_from_results,
+    points_by_stage_by_team,
+    points_by_stage_from_events,
     team_results_from_matches,
     venue_split,
     wdl_from_results,
@@ -86,3 +88,22 @@ def test_goals_and_venue_split():
     assert splits["home"]["wins"] == 1
     assert splits["away"]["wins"] == 1
     assert splits["home"]["points"] == 3.0
+
+
+def test_points_by_stage_aggregates_and_skips_blank():
+    events = [
+        SimpleNamespace(team_id=1, stage="GROUP_STAGE", points=3),
+        SimpleNamespace(team_id=1, stage="GROUP_STAGE", points=1),
+        SimpleNamespace(team_id=1, stage="LAST_16", points=3),
+        SimpleNamespace(team_id=1, stage=None, points=5),
+        SimpleNamespace(team_id=1, stage="  ", points=2),
+        SimpleNamespace(team_id=2, stage="REGULAR_SEASON", points=3),
+    ]
+    by_team = points_by_stage_by_team(events)
+    assert by_team[1] == {"GROUP_STAGE": 4.0, "LAST_16": 3.0}
+    assert by_team[2] == {"REGULAR_SEASON": 3.0}
+    assert points_by_stage_from_events(events[:3]) == {
+        "GROUP_STAGE": 4.0,
+        "LAST_16": 3.0,
+    }
+    assert len(points_by_stage_from_events([events[5]])) == 1

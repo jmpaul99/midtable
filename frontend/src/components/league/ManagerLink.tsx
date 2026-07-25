@@ -40,8 +40,3 @@ export function ManagerLink({
     </Link>
   );
 }
-
-/** @deprecated Use managerHref */
-export const memberHref = managerHref;
-/** @deprecated Use ManagerLink */
-export const MemberLink = ManagerLink;

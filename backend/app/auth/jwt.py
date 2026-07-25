@@ -1,4 +1,4 @@
-"""Supabase JWT verification and invite-only gating helpers."""
+"""Supabase JWT verification and profile helpers."""
 
 from __future__ import annotations
 
@@ -131,6 +131,12 @@ def get_or_create_profile(
     display_name: str | None = None,
     skip_invite_gate: bool = False,
 ) -> Profile:
+    """Create or return a profile for any authenticated user.
+
+    League membership remains gated by personal invite accept or join-link claim.
+    ``skip_invite_gate`` is retained for call-site compatibility and ignored.
+    """
+    del skip_invite_gate  # accounts are open; leagues stay invite/link-gated
     normalized = email.strip().lower()
     profile = db.scalars(select(Profile).where(Profile.email == normalized)).first()
     if profile:
@@ -140,8 +146,6 @@ def get_or_create_profile(
         if chosen and profile.display_name == DEFAULT_DISPLAY_NAME:
             profile.display_name = chosen
         return profile
-    if not skip_invite_gate:
-        require_invited_email(db, normalized)
     chosen = normalize_display_name(display_name) or DEFAULT_DISPLAY_NAME
     profile = Profile(
         email=normalized,

@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { IconButton } from "@/components/ui/IconButton";
-import { PlusIcon, TrashIcon } from "@/components/ui/icons";
+import { ChevronDownIcon, ChevronUpIcon, PlusIcon, TrashIcon } from "@/components/ui/icons";
 import { Muted } from "@/components/ui/Card";
 import { cn } from "@/lib/cn";
 
@@ -39,12 +39,14 @@ export function RowItem({ children, className }: { children: ReactNode; classNam
 export function AddRowButton({
   label,
   onClick,
+  className,
 }: {
   label: string;
   onClick: () => void;
+  className?: string;
 }) {
   return (
-    <div className="flex justify-start">
+    <div className={cn("flex justify-start", className)}>
       <IconButton type="button" label={label} variant="secondary" onClick={onClick}>
         <PlusIcon />
       </IconButton>
@@ -70,6 +72,44 @@ export function RemoveButton({
     >
       <TrashIcon className="size-4" />
     </IconButton>
+  );
+}
+
+/** Up/down controls for list display order. */
+export function ReorderButtons({
+  index,
+  total,
+  onMove,
+  itemLabel = "item",
+}: {
+  index: number;
+  total: number;
+  onMove: (from: number, to: number) => void;
+  itemLabel?: string;
+}) {
+  return (
+    <div className="flex shrink-0 flex-col gap-1">
+      <IconButton
+        type="button"
+        variant="secondary"
+        size="icon-sm"
+        label={`Move ${itemLabel} ${index + 1} up`}
+        disabled={index === 0}
+        onClick={() => onMove(index, index - 1)}
+      >
+        <ChevronUpIcon className="size-4" />
+      </IconButton>
+      <IconButton
+        type="button"
+        variant="secondary"
+        size="icon-sm"
+        label={`Move ${itemLabel} ${index + 1} down`}
+        disabled={index >= total - 1}
+        onClick={() => onMove(index, index + 1)}
+      >
+        <ChevronDownIcon className="size-4" />
+      </IconButton>
+    </div>
   );
 }
 

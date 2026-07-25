@@ -3,7 +3,10 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "sync-brand": "python ../scripts/sync-brand-public.py",
+    "predev": "npm run sync-brand",
     "dev": "next dev",
+    "prebuild": "npm run sync-brand",
     "build": "next build",
     "start": "next start",
     "lint": "eslint ."

@@ -21,6 +21,8 @@ export interface LeagueSummary {
   role?: string;
   visibility?: string;
   max_members?: number | null;
+  /** Post-draft roster club order preference. Pre-draft always uses competition order. */
+  roster_club_order?: "draft" | "competition";
   slug?: string;
   my_rank?: number | null;
   member_count?: number | null;
@@ -104,6 +106,7 @@ export interface League extends LeagueSummary {
   preassign_mode?: string;
   season: string;
   max_members?: number | null;
+  roster_club_order?: "draft" | "competition";
   visibility: string;
 }
 
@@ -234,6 +237,17 @@ export interface RosterRow {
   member_draws?: number | null;
   member_losses?: number | null;
   member_games_played?: number | null;
+  points_by_stage?: Record<string, number>;
+}
+
+export interface InviteEmailDelivery {
+  id: UUID;
+  status: "sent" | "failed" | "skipped" | string;
+  trigger: "create" | "resend" | string;
+  error?: string | null;
+  provider_message_id?: string | null;
+  http_attempts: number;
+  created_at: string;
 }
 
 export interface Invite {
@@ -245,6 +259,16 @@ export interface Invite {
   draft_slot?: number | null;
   expires_at?: string;
   token: string | null;
+  accept_url?: string | null;
+  email_sent?: boolean | null;
+  email_error?: string | null;
+  email_deliveries?: InviteEmailDelivery[];
+}
+
+export interface JoinLink {
+  enabled: boolean;
+  token: string | null;
+  join_url: string | null;
 }
 
 export interface Bonus {
@@ -379,6 +403,7 @@ export interface TeamDetail {
     event_points_by_type?: Record<string, number>;
     event_counts_by_type?: Record<string, number>;
     bonus_points_by_type?: Record<string, number>;
+    points_by_stage?: Record<string, number>;
     goals_for?: number;
     goals_against?: number;
     goal_difference?: number;
@@ -545,11 +570,16 @@ export function normalizeLeague(raw: League): League {
   const max =
     raw.max_members ??
     (typeof raw.settings?.max_members === "number" ? raw.settings.max_members : null);
+  const rosterOrder =
+    raw.roster_club_order === "competition" || raw.settings?.roster_club_order === "competition"
+      ? "competition"
+      : "draft";
   return {
     ...raw,
     season_label: raw.season_label || raw.season || "",
     season: raw.season_label || raw.season || "",
     max_members: max,
+    roster_club_order: rosterOrder,
     visibility: raw.visibility || "private",
     role: raw.role || (raw.members?.find((m) => m.id === raw.current_member_id)?.role) || "member",
     pools,

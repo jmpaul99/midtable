@@ -1,25 +1,71 @@
-# Midtable brand assets
+# Midtable brand
 
-Canonical logo presentation files for Midtable.
+Canonical brand assets, guide, fonts, and email templates.
 
-| File | Use |
+```
+brand/
+  README.md
+  midtable-brand-guide.md      # Brand guide (markdown)
+  midtable-brand-guide.html    # Printable visual companion
+  logos/
+    presentation/              # Marketing / guide lockups + variants sheet
+    product/
+      svg/                     # App lockups, marks, wordmarks (SVG)
+      png/                     # Same assets as PNG
+      icons/                   # Favicons, apple touch, icon source SVGs
+  emails/
+    league-invite.html         # League seat invite (Mailjet via backend)
+  fonts/                       # Outfit embeds for logo SVGs / OG image
+```
+
+## Logos
+
+| Path | Use |
 |------|-----|
-| `midtable-logo-matchday.svg` | Matchday (light) presentation lockup |
-| `midtable-logo-pitch-night.svg` | Pitch Night (dark) presentation lockup |
-| `midtable-logo-variants.svg` | Side-by-side sheet with color swatches |
-| `midtable-wordmark-matchday.svg` | Matchday staggered wordmark only |
-| `midtable-wordmark-pitch-night.svg` | Pitch Night staggered wordmark only |
+| `logos/presentation/midtable-logo-matchday.svg` | Matchday (light) presentation lockup |
+| `logos/presentation/midtable-logo-pitch-night.svg` | Pitch Night (dark) presentation lockup |
+| `logos/presentation/midtable-logo-variants.svg` | Side-by-side sheet with color swatches |
+| `logos/product/svg/lockup-*.svg` | Transparent app lockups |
+| `logos/product/svg/mark-*.svg` | Rank mark only |
+| `logos/product/svg/wordmark-*.svg` | Staggered Midtable text only |
+| `logos/product/png/` | Raster exports of the same lockups / marks / wordmarks |
+| `logos/product/icons/` | Favicons, apple-touch icon, and `_*-wordmark` sources |
 
-Wordmark SVGs embed a subset of **Outfit ExtraBold** as a base64 `@font-face` (glyphs for the lockup + variants labels), so they render correctly when opened directly or used as images — no Google Fonts network request.
+Product SVGs embed a subset of **Outfit ExtraBold** as a base64 `@font-face` so they render when opened directly or used as images.
 
-Regenerate the embed with:
+In-app logo uses inline SVG via `MidtableLogo` so it shares the site’s `next/font` Outfit.
+
+### Sync to Next.js public
+
+`frontend/public/brand/` mirrors `logos/product/` (`svg/`, `png/`, `icons/`). Sync with:
+
+```bash
+python scripts/sync-brand-public.py
+```
+
+Frontend `predev` / `prebuild` run this automatically.
+
+### Regenerate font embeds
+
+After refreshing `fonts/outfit-extrabold-logo.b64` from the Outfit variable font:
 
 ```bash
 python scripts/embed-logo-font.py
+python scripts/make-wordmark-svgs.py   # optional wordmark regen
+python scripts/sync-brand-public.py
 ```
 
-(after refreshing `docs/brand/_fonts/outfit-extrabold-logo.b64` from the Outfit variable font).
+## Emails
 
-Product-served lockups, marks, and favicons live in `frontend/public/brand/`.
-In-app logo uses inline SVG via `MidtableLogo` so it shares the site’s `next/font` Outfit.
-Brand documentation: `docs/brand/midtable-brand-guide.md`.
+| File | Use |
+|------|-----|
+| `emails/league-invite.html` | League seat invite HTML; placeholders filled by `backend/app/services/invite_email.py` |
+
+Centered Matchday layout. Logo uses absolute PNG `PUBLIC_APP_URL/brand/png/lockup-matchday.png` (synced from `logos/product/png/`).
+
+Supabase templates: `supabase/templates/auth/` and `supabase/templates/security/` (dashboard paste / `content_path`). They use `{{ .SiteURL }}/brand/png/lockup-matchday.png` — set Site URL in Auth → URL configuration.
+
+## Guide
+
+- [midtable-brand-guide.md](./midtable-brand-guide.md)
+- [midtable-brand-guide.html](./midtable-brand-guide.html)

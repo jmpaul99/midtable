@@ -90,8 +90,22 @@ const blank: FormState = {
     ranking_list_key: null,
     min_played: 8,
     thresholds: [
-      { key: "minor_upset", result: "win", min_gap: 5, max_gap: 9, points: 1 },
-      { key: "major_upset", result: "win", min_gap: 10, max_gap: null, points: 3 },
+      {
+        key: "minor_upset",
+        name: "Minor upset",
+        result: "win",
+        min_gap: 5,
+        max_gap: 9,
+        points: 1,
+      },
+      {
+        key: "major_upset",
+        name: "Major upset",
+        result: "win",
+        min_gap: 10,
+        max_gap: null,
+        points: 3,
+      },
     ],
   },
   leaderboard_phases: [],
@@ -348,6 +362,10 @@ export function TemplateEditor({
           <RosterSlotsEditor
             value={form.roster_slots}
             onChange={(roster_slots) => setForm((f) => ({ ...f, roster_slots }))}
+            poolOptions={form.pool_definitions.map((p) => ({
+              value: p.key,
+              label: p.label || p.key,
+            }))}
           />
         )}
         {tab === "phases" && (
@@ -365,7 +383,7 @@ export function TemplateEditor({
             value={form.leaderboard_tiebreaks}
             onChange={(leaderboard_tiebreaks) => setForm((f) => ({ ...f, leaderboard_tiebreaks }))}
             eventTypeOptions={eventOptionsFromUpsetKeys(
-              form.upset_rules.thresholds.map((t) => t.key),
+              form.upset_rules.thresholds.map((t) => ({ key: t.key, name: t.name })),
             )}
             bonusTypeOptions={form.bonus_types.map((b) => ({
               value: b.key,
@@ -383,6 +401,10 @@ export function TemplateEditor({
           <PayoutsEditor
             value={form.payouts}
             onChange={(payouts) => setForm((f) => ({ ...f, payouts }))}
+            phaseOptions={form.leaderboard_phases.map((p) => ({
+              value: p.key,
+              label: p.label || p.key,
+            }))}
           />
         )}
       </div>

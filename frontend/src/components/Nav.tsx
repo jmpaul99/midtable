@@ -19,7 +19,7 @@ export function Nav() {
   async function handleSignOut() {
     await signOut();
     setOpen(false);
-    router.replace("/login");
+    router.replace("/");
     router.refresh();
   }
 

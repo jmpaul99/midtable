@@ -7,14 +7,21 @@ import { Checkbox, Input, Label, Select } from "@/components/ui/Field";
 import { Muted } from "@/components/ui/Card";
 import { cn } from "@/lib/cn";
 import { AddRowButton, EditorSection, RemoveButton, RowItem, RowList } from "./chrome";
-import { joinCommaList, parseCommaList, type LeaderboardPhase } from "./types";
+import { StageMultiSelect } from "./StageMultiSelect";
+import {
+  slugifyKey,
+  uniqueKey,
+  type LeaderboardPhase,
+} from "./types";
 
-const blankPhase = (): LeaderboardPhase => ({
-  key: "",
-  label: "",
-  match_filter: { type: "matchweek_range", from: 1, to: 19 },
-  include_bonus_types: [],
-});
+function blankPhase(existingKeys: string[]): LeaderboardPhase {
+  return {
+    key: uniqueKey("phase", existingKeys, undefined, "phase"),
+    label: "",
+    match_filter: { type: "matchweek_range", from: 1, to: 19 },
+    include_bonus_types: [],
+  };
+}
 
 function humanize(key: string): string {
   return key
@@ -60,25 +67,33 @@ function BonusTypePicker({
 
   if (!items.length) {
     return (
-      <Muted className="rounded-lg border border-dashed border-line px-3 py-2 text-xs">
-        No bonus types defined yet. Add them under Bonuses first.
-      </Muted>
+      <div className="flex flex-col gap-2">
+        <Muted className="text-xs font-bold uppercase tracking-wide">
+          Included bonuses in scoring
+        </Muted>
+        <Muted className="rounded-lg border border-dashed border-line px-3 py-2 text-xs">
+          No bonus types defined yet. Add them under Bonuses first.
+        </Muted>
+      </div>
     );
   }
 
   return (
     <div className="flex flex-col gap-2">
       <div className="flex flex-wrap items-center gap-2">
+        <Muted className="text-xs font-bold uppercase tracking-wide">
+          Included bonuses in scoring
+        </Muted>
         {items.length > 8 && (
           <Input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Filter bonuses…"
-            className="min-h-11 flex-1 basis-40 text-sm"
+            className="min-h-11 min-w-0 flex-1 basis-40 text-sm"
             aria-label="Filter bonus types"
           />
         )}
-        <div className="ml-auto flex gap-1">
+        <div className="ml-auto flex shrink-0 gap-1">
           <IconButton
             type="button"
             variant="ghost"
@@ -116,10 +131,7 @@ function BonusTypePicker({
                       checked ? "bg-brand/10 text-ink" : "text-muted hover:bg-surface-2 hover:text-ink",
                     )}
                   >
-                    <Checkbox
-                      checked={checked}
-                      onChange={() => toggle(opt.value)}
-                    />
+                    <Checkbox checked={checked} onChange={() => toggle(opt.value)} />
                     <span className="min-w-0 truncate font-medium" title={opt.label}>
                       {opt.label}
                     </span>
@@ -152,6 +164,24 @@ export function PhasesEditor({
     onChange(value.map((p, i) => (i === index ? { ...p, ...patch } : p)));
   }
 
+  function updateName(index: number, label: string) {
+    const current = value[index];
+    if (!current) return;
+    const patch: Partial<LeaderboardPhase> = { label };
+    const hadName = Boolean((current.label ?? "").trim());
+    const key = (current.key ?? "").trim();
+    const placeholderKey = !key || /^phase(_\d+)?$/.test(key);
+    if (!hadName && label.trim() && placeholderKey) {
+      patch.key = uniqueKey(
+        slugifyKey(label) || "phase",
+        value.map((p) => p.key),
+        index,
+        "phase",
+      );
+    }
+    update(index, patch);
+  }
+
   const bonuses = bonusTypeOptions || [];
 
   return (
@@ -164,128 +194,119 @@ export function PhasesEditor({
           {value.map((p, index) => {
             const filterType = p.match_filter.type;
             return (
-              <RowItem key={index}>
+              <RowItem key={p.key || index}>
                 <div className="flex flex-col gap-2">
-                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                    <Label>
-                      Key
+                  <div className="grid gap-1.5">
+                    <span className="text-sm font-semibold text-muted">Name</span>
+                    <div className="flex items-center gap-2">
                       <Input
-                        value={p.key}
-                        onChange={(e) => update(index, { key: e.target.value })}
-                        placeholder="mw1_19"
+                        value={p.label ?? ""}
+                        onChange={(e) => updateName(index, e.target.value)}
+                        required
+                        className="min-w-0 flex-1"
                       />
-                    </Label>
-                    <Label>
-                      Label
-                      <Input
-                        value={p.label}
-                        onChange={(e) => update(index, { label: e.target.value })}
-                        placeholder="Matchweeks 1–19"
-                      />
-                    </Label>
-                  </div>
-                  <Label>
-                    Match filter
-                    <Select
-                      value={filterType}
-                      onChange={(e) => {
-                        const type = e.target.value;
-                        update(index, {
-                          match_filter:
-                            type === "stage_in"
-                              ? { type: "stage_in", stages: [] }
-                              : { type: "matchweek_range", from: 1, to: 19 },
-                        });
-                      }}
-                    >
-                      <option value="matchweek_range">Matchweek range</option>
-                      <option value="stage_in">Stages</option>
-                    </Select>
-                  </Label>
-                  {filterType === "matchweek_range" ? (
-                    <div className="grid grid-cols-2 gap-2">
-                      <Label>
-                        From MW
-                        <Input
-                          type="number"
-                          min={1}
-                          value={p.match_filter.type === "matchweek_range" ? p.match_filter.from : 1}
-                          onChange={(e) =>
-                            update(index, {
-                              match_filter: {
-                                type: "matchweek_range",
-                                from: Number(e.target.value),
-                                to:
-                                  p.match_filter.type === "matchweek_range"
-                                    ? p.match_filter.to
-                                    : 19,
-                              },
-                            })
-                          }
-                        />
-                      </Label>
-                      <Label>
-                        To MW
-                        <Input
-                          type="number"
-                          min={1}
-                          value={p.match_filter.type === "matchweek_range" ? p.match_filter.to : 19}
-                          onChange={(e) =>
-                            update(index, {
-                              match_filter: {
-                                type: "matchweek_range",
-                                from:
-                                  p.match_filter.type === "matchweek_range"
-                                    ? p.match_filter.from
-                                    : 1,
-                                to: Number(e.target.value),
-                              },
-                            })
-                          }
-                        />
-                      </Label>
+                      <RemoveButton onClick={() => onChange(value.filter((_, i) => i !== index))} />
                     </div>
-                  ) : (
-                    <Label>
-                      Stages (comma-separated)
-                      <Input
-                        value={
-                          p.match_filter.type === "stage_in"
-                            ? joinCommaList(p.match_filter.stages)
-                            : ""
-                        }
-                        onChange={(e) =>
+                  </div>
+                  <div className="flex flex-wrap items-end gap-2">
+                    <Label className="min-w-[10rem] flex-1">
+                      Match filter
+                      <Select
+                        value={filterType}
+                        onChange={(e) => {
+                          const type = e.target.value;
                           update(index, {
-                            match_filter: {
-                              type: "stage_in",
-                              stages: parseCommaList(e.target.value),
-                            },
-                          })
-                        }
-                        placeholder="GROUP_STAGE, LAST_16"
-                      />
+                            match_filter:
+                              type === "stage_in"
+                                ? { type: "stage_in", stages: [] }
+                                : { type: "matchweek_range", from: 1, to: 19 },
+                          });
+                        }}
+                      >
+                        <option value="matchweek_range">Matchweek range</option>
+                        <option value="stage_in">Stages</option>
+                      </Select>
                     </Label>
-                  )}
-                  <div>
-                    <Muted className="mb-1.5 text-xs font-bold uppercase tracking-wide">
-                      Include bonus types
-                    </Muted>
-                    <BonusTypePicker
-                      selected={p.include_bonus_types}
-                      options={bonuses}
-                      onChange={(include_bonus_types) => update(index, { include_bonus_types })}
-                    />
+                    {filterType === "matchweek_range" ? (
+                      <>
+                        <Label className="w-[5.5rem]">
+                          From MW
+                          <Input
+                            type="number"
+                            min={1}
+                            value={
+                              p.match_filter.type === "matchweek_range" ? p.match_filter.from : 1
+                            }
+                            onChange={(e) =>
+                              update(index, {
+                                match_filter: {
+                                  type: "matchweek_range",
+                                  from: Number(e.target.value),
+                                  to:
+                                    p.match_filter.type === "matchweek_range"
+                                      ? p.match_filter.to
+                                      : 19,
+                                },
+                              })
+                            }
+                          />
+                        </Label>
+                        <Label className="w-[5.5rem]">
+                          To MW
+                          <Input
+                            type="number"
+                            min={1}
+                            value={
+                              p.match_filter.type === "matchweek_range" ? p.match_filter.to : 19
+                            }
+                            onChange={(e) =>
+                              update(index, {
+                                match_filter: {
+                                  type: "matchweek_range",
+                                  from:
+                                    p.match_filter.type === "matchweek_range"
+                                      ? p.match_filter.from
+                                      : 1,
+                                  to: Number(e.target.value),
+                                },
+                              })
+                            }
+                          />
+                        </Label>
+                      </>
+                    ) : (
+                      <Label className="min-w-[14rem] flex-[2]">
+                        Stages
+                        <StageMultiSelect
+                          value={
+                            p.match_filter.type === "stage_in" ? p.match_filter.stages : []
+                          }
+                          onChange={(stages) =>
+                            update(index, {
+                              match_filter: { type: "stage_in", stages },
+                            })
+                          }
+                        />
+                      </Label>
+                    )}
                   </div>
-                  <div className="flex justify-end">
-                    <RemoveButton onClick={() => onChange(value.filter((_, i) => i !== index))} />
-                  </div>
+                  <BonusTypePicker
+                    selected={p.include_bonus_types}
+                    options={bonuses}
+                    onChange={(include_bonus_types) => update(index, { include_bonus_types })}
+                  />
                 </div>
               </RowItem>
             );
           })}
         </RowList>
       )}
-      <AddRowButton label="Add phase" onClick={() => onChange([...value, blankPhase()])} />
+      <AddRowButton
+        label="Add phase"
+        onClick={() =>
+          onChange([...value, blankPhase(value.map((p) => p.key))])
+        }
+      />
     </EditorSection>
   );
 }

@@ -14,10 +14,25 @@ PL_UPSET_RULES = {
     "rank_source": "league_table_at_kickoff",
     "eligibility": {"min_played": 8},
     "thresholds": [
-        {"key": "minor_upset", "min_gap": 5, "max_gap": 9, "result": "win", "points": 1},
-        {"key": "major_upset", "min_gap": 10, "max_gap": None, "result": "win", "points": 3},
+        {
+            "key": "minor_upset",
+            "name": "Minor upset",
+            "min_gap": 5,
+            "max_gap": 9,
+            "result": "win",
+            "points": 1,
+        },
+        {
+            "key": "major_upset",
+            "name": "Major upset",
+            "min_gap": 10,
+            "max_gap": None,
+            "result": "win",
+            "points": 3,
+        },
         {
             "key": "major_upset_draw",
+            "name": "Major upset draw",
             "min_gap": 10,
             "max_gap": None,
             "result": "draw",

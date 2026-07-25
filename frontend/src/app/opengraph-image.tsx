@@ -16,7 +16,7 @@ const BG = "#F4F4F5";
 
 export default async function Image() {
   const fontData = await readFile(
-    join(process.cwd(), "../docs/brand/_fonts/Outfit-ExtraBold.ttf"),
+    join(process.cwd(), "../brand/fonts/Outfit-ExtraBold.ttf"),
   );
 
   const tile = 56;

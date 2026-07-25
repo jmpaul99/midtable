@@ -1,14 +1,21 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
-import { RequireAuth, useAuth } from "@/lib/auth";
+import { Suspense, useCallback, useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useAuth } from "@/lib/auth";
 import { api, errorMessage } from "@/lib/api";
 import { formatNumber } from "@/lib/format";
 import type { LeagueSummary } from "@/lib/types";
 import { Empty, ErrorState, Loading, Status } from "@/components/ui/State";
 import { Muted, Stack } from "@/components/ui/Card";
 import { MidtableLogo } from "@/components/MidtableLogo";
+import { LandingPage } from "@/components/LandingPage";
+
+function safeNext(value: string | null): string | null {
+  if (!value?.startsWith("/") || value.startsWith("//")) return null;
+  return value;
+}
 
 function ordinal(n: number): string {
   const abs = Math.abs(n);
@@ -57,10 +64,36 @@ function leagueMetaLabel(league: LeagueSummary): string {
 
 export default function HomePage() {
   return (
-    <RequireAuth>
-      <LeagueList />
-    </RequireAuth>
+    <Suspense fallback={<Loading label="Checking your session" />}>
+      <HomeContent />
+    </Suspense>
   );
+}
+
+function HomeContent() {
+  const { session, loading } = useAuth();
+  const router = useRouter();
+  const search = useSearchParams();
+  const next = safeNext(search.get("next"));
+
+  useEffect(() => {
+    if (loading || !session || !next) return;
+    router.replace(next);
+  }, [loading, session, next, router]);
+
+  if (loading) {
+    return <Loading label="Checking your session" />;
+  }
+
+  if (!session) {
+    return <LandingPage />;
+  }
+
+  if (next) {
+    return <Loading label="Opening your page" />;
+  }
+
+  return <LeagueList />;
 }
 
 function LeagueList() {
@@ -96,8 +129,8 @@ function LeagueList() {
           <Empty title="No leagues yet">
             <p>
               {isAdmin
-                ? "Use Create a league in the nav to start from a template, or accept an invite link."
-                : "Accept an invite link to join a league."}
+                ? "Use Create a league in the nav to start from a template, or join via an invite or shareable link."
+                : "Accept an invite or open a shareable join link to enter a league."}
             </p>
           </Empty>
         ) : (

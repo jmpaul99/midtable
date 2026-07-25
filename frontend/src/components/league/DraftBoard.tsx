@@ -219,7 +219,7 @@ export function DraftBoard({
                         </StatusBanner>
                       ) : joinedManagers < requiredManagers ? (
                         <StatusBanner tone="error">
-                          {joinedManagers} of {requiredManagers} managers joined. Invite the rest
+                          {joinedManagers} of {requiredManagers} managers joined. Invite or share a join link for the rest
                           before opening the draft.
                         </StatusBanner>
                       ) : joinedManagers > requiredManagers ? (

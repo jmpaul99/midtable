@@ -1,6 +1,6 @@
 # Midtable
 
-Invite-only platform for running multi-pool football draft leagues: create a league from a competition template, invite managers, draft clubs, sync fixtures, and score standings with upsets, bonuses, and phase-based payouts.
+Platform for running multi-pool football draft leagues: create a league from a competition template, invite managers (email or shareable join link), draft clubs, sync fixtures, and score standings with upsets, bonuses, and phase-based payouts.
 
 ## Stack
 
@@ -16,7 +16,7 @@ Python **3.12+**, Node **20+**.
 ## What’s in the box
 
 - **Competition templates** — reusable rules (draft style, roster slots, pools, result points, upset rules, leaderboard phases/tiebreaks, buy-in, payouts, bonus types)
-- **Leagues** — invite-only membership, commissioner settings, readiness checks, team bootstrap from the provider
+- **Leagues** — invite- or join-link membership, commissioner settings, readiness checks, team bootstrap from the provider
 - **Draft** — linear/snake order, preassigns, picks, undo last pick, roster tweaks (draft reset only when `APP_ENV=development`)
 - **Sync & scoring** — pull fixtures/results, recompute standings, match events, sync status
 - **Analytics** — standings, points-per-game, matchweeks, upsets, form, splits, highlights
@@ -28,16 +28,18 @@ Interactive API docs: `http://localhost:8000/docs`
 ## Repo layout
 
 ```
-backend/          FastAPI app (`app/`), tests, seed script
+backend/          FastAPI app (`app/`), tests, seed script, Dockerfile
 frontend/         Next.js app
 supabase/         Postgres migrations (`migrations/001`–`008`)
+compose.yaml      Backend container (local override adds --reload)
 .env.example      Shared backend + frontend env template
 ```
 
 ## Prerequisites
 
-- Python 3.12+
+- Python 3.12+ (or Docker for the API)
 - Node 20+
+- [Docker](https://docs.docker.com/get-docker/) (optional; for running the API in a container)
 - [Supabase CLI](https://supabase.com/docs/guides/cli) (local) **or** a hosted Supabase project
 - A football-data.org API token (for bootstrap/sync)
 
@@ -61,7 +63,10 @@ Fill in values. Root `.env` is loaded by the backend; frontend reads `frontend/.
 | `FOOTBALL_DATA_API_TOKEN` | Provider token |
 | `CRON_SECRET` | Protects `/internal/*` (required non-default in production) |
 | `CORS_ORIGINS` | Comma-separated origins (e.g. `http://localhost:3000`) |
-| `AUTH_BYPASS_EMAIL` | Dev-only: skip JWT and act as this invited email (forbidden in production) |
+| `AUTH_BYPASS_EMAIL` | Dev-only: skip JWT and act as this email (forbidden in production) |
+| `PUBLIC_APP_URL` | Frontend origin for invite accept + join links (required in production) |
+| `MAILJET_API_KEY_PUBLIC` / `MAILJET_API_KEY_PRIVATE` | Mailjet Send API credentials (required in production) |
+| `MAILJET_FROM_EMAIL` / `MAILJET_FROM_NAME` | Verified sender for invite emails (inline HTML; no template ID) |
 | `NEXT_PUBLIC_API_URL` | Backend base URL |
 | `NEXT_PUBLIC_SUPABASE_URL` | Same project URL the browser uses |
 | `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Publishable key (legacy: `NEXT_PUBLIC_SUPABASE_ANON_KEY`) |
@@ -73,6 +78,26 @@ Apply migrations from `supabase/migrations/` (e.g. `supabase db push` against yo
 Local Supabase defaults match `.env.example` (`54321` API, `54322` DB).
 
 ### 3. Backend
+
+**Option A — Docker (recommended for day-to-day API work)**
+
+Compose loads root `.env` into the container and merges `compose.override.yaml` (bind-mount + `uvicorn --reload`). Production hosts should use the image `CMD` (no reload).
+
+When the API runs in Docker and Supabase stays on the host, point backend URLs at `host.docker.internal` in `.env` (see comments in `.env.example`). Keep `NEXT_PUBLIC_*` on `127.0.0.1` / `localhost` — the browser talks to the host, not the container network.
+
+```bash
+docker compose up --build
+```
+
+Optional seed inside the container:
+
+```bash
+docker compose exec api python -m app.scripts.seed_pl_template
+```
+
+Dependency changes (`backend/pyproject.toml`) need `docker compose up --build` again.
+
+**Option B — local venv**
 
 ```bash
 cd backend
@@ -104,7 +129,8 @@ App: `http://localhost:3000`
 
 - Users sign in via Supabase (password, signup, or magic link).
 - API requests send the Supabase JWT; the backend verifies it via JWKS.
-- League access is **invite-only**: a profile is created/used only when the email has a pending or accepted invite (unless using `AUTH_BYPASS_EMAIL` in development).
+- Accounts are open: any authenticated user can create a profile.
+- League access is gated by a **personal email invite** or a commissioner **join link**.
 
 ## Typical local flow
 
@@ -133,4 +159,4 @@ npx tsc --noEmit
 npm run build
 ```
 
-GitHub Actions (`.github/workflows/ci.yml`) runs backend pytest and a frontend typecheck + production build on push/PR.
+GitHub Actions (`.github/workflows/ci.yml`) runs backend pytest, a frontend typecheck + production build, and a Docker image build for the API on push/PR.

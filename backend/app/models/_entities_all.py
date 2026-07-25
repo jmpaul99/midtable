@@ -81,6 +81,8 @@ class League(Base):
     config: Mapped[dict] = mapped_column(JSONB, default=dict)
     scheduled_start_date: Mapped[date | None] = mapped_column(Date)
     scheduled_end_date: Mapped[date | None] = mapped_column(Date)
+    join_token: Mapped[str | None] = mapped_column(Text, unique=True)
+    join_link_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
@@ -101,6 +103,27 @@ class Invite(Base):
     status: Mapped[str] = mapped_column(Text, default="pending")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    email_deliveries: Mapped[list["InviteEmailDelivery"]] = relationship(
+        back_populates="invite",
+        order_by="InviteEmailDelivery.created_at.desc()",
+    )
+
+
+class InviteEmailDelivery(Base):
+    __tablename__ = "invite_email_deliveries"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    public_id: Mapped[UUID] = _public_id_column()
+    invite_id: Mapped[int] = mapped_column(ForeignKey("invites.id", ondelete="CASCADE"))
+    status: Mapped[str] = mapped_column(Text)
+    trigger: Mapped[str] = mapped_column(Text)
+    error: Mapped[str | None] = mapped_column(Text)
+    provider: Mapped[str] = mapped_column(Text, default="mailjet")
+    provider_message_id: Mapped[str | None] = mapped_column(Text)
+    http_attempts: Mapped[int] = mapped_column(Integer, default=1)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    invite: Mapped["Invite"] = relationship(back_populates="email_deliveries")
 
 
 class LeagueMember(Base):

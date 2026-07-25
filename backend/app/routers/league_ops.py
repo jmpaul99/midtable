@@ -182,7 +182,7 @@ def readiness(
                 key="pools",
                 label="Competitions configured",
                 status="error",
-                detail="Create competitions from a template or in league settings",
+                detail="Add competitions in League settings → Competitions before the draft opens",
             )
         )
 

@@ -126,7 +126,11 @@ export function RequireAuth({ children }: { children: ReactNode }) {
     if (loading) return;
     if (!session) {
       const next = `${pathname}${typeof window !== "undefined" ? window.location.search : ""}`;
-      router.replace(`/login?next=${encodeURIComponent(next)}`);
+      if (next === "/" || next === "") {
+        router.replace("/");
+        return;
+      }
+      router.replace(`/?next=${encodeURIComponent(next)}`);
     }
   }, [loading, session, router, pathname]);
 

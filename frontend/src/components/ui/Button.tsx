@@ -1,4 +1,4 @@
-import type { ButtonHTMLAttributes, ReactNode } from "react";
+import { forwardRef, type ButtonHTMLAttributes, type ReactNode } from "react";
 import { cn } from "@/lib/cn";
 
 const variants = {
@@ -18,21 +18,21 @@ const sizes = {
 type Variant = keyof typeof variants;
 type Size = keyof typeof sizes;
 
-export function Button({
-  variant = "primary",
-  size = "md",
-  full,
-  className,
-  children,
-  ...props
-}: Omit<ButtonHTMLAttributes<HTMLButtonElement>, "size"> & {
-  variant?: Variant;
-  size?: Size;
-  full?: boolean;
-  children?: ReactNode;
-}) {
+export const Button = forwardRef<
+  HTMLButtonElement,
+  Omit<ButtonHTMLAttributes<HTMLButtonElement>, "size"> & {
+    variant?: Variant;
+    size?: Size;
+    full?: boolean;
+    children?: ReactNode;
+  }
+>(function Button(
+  { variant = "primary", size = "md", full, className, children, ...props },
+  ref,
+) {
   return (
     <button
+      ref={ref}
       className={cn(
         "inline-flex items-center justify-center gap-2 rounded-xl font-bold transition enabled:active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50",
         variants[variant],
@@ -45,4 +45,4 @@ export function Button({
       {children}
     </button>
   );
-}
+});

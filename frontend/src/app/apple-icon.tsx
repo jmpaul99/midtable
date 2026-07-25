@@ -8,7 +8,7 @@ export const contentType = "image/png";
 /** Pitch Night wordmark apple touch icon. */
 export default async function AppleIcon() {
   const outfit = await readFile(
-    join(process.cwd(), "..", "docs", "brand", "_fonts", "Outfit-ExtraBold.ttf"),
+    join(process.cwd(), "..", "brand", "fonts", "Outfit-ExtraBold.ttf"),
   );
 
   return new ImageResponse(

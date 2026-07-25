@@ -2,7 +2,16 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { api, errorMessage, json } from "@/lib/api";
-import type { Bonus, Invite, League, PoolTeam, Readiness, SyncStatus, UUID } from "@/lib/types";
+import type {
+  Bonus,
+  Invite,
+  JoinLink,
+  League,
+  PoolTeam,
+  Readiness,
+  SyncStatus,
+  UUID,
+} from "@/lib/types";
 
 export interface BonusTypeRow {
   id: UUID;
@@ -15,6 +24,7 @@ export interface BonusTypeRow {
 
 export function useAdminLeagueData(league: League, onLeagueChange?: () => void) {
   const [invites, setInvites] = useState<Invite[]>();
+  const [joinLink, setJoinLink] = useState<JoinLink>();
   const [bonuses, setBonuses] = useState<Bonus[]>();
   const [bonusTypes, setBonusTypes] = useState<BonusTypeRow[]>([]);
   const [sync, setSync] = useState<SyncStatus[]>();
@@ -28,6 +38,11 @@ export function useAdminLeagueData(league: League, onLeagueChange?: () => void) 
     const safe = <T,>(p: Promise<T>, fallback: T) => p.catch(() => fallback);
     Promise.all([
       safe(api<Invite[]>(`/leagues/${league.id}/invites`), []),
+      safe(api<JoinLink>(`/leagues/${league.id}/join-link`), {
+        enabled: false,
+        token: null,
+        join_url: null,
+      }),
       safe(api<Bonus[]>(`/leagues/${league.id}/manual-bonuses`), []),
       safe(api<BonusTypeRow[]>(`/leagues/${league.id}/bonus-types`), []),
       safe(api<SyncStatus[]>(`/leagues/${league.id}/sync-status`), []),
@@ -53,8 +68,9 @@ export function useAdminLeagueData(league: League, onLeagueChange?: () => void) 
         ),
       ),
     ])
-      .then(([a, b, types, c, d, teams]) => {
+      .then(([a, link, b, types, c, d, teams]) => {
         setInvites(a);
+        setJoinLink(link);
         setBonuses(b);
         setBonusTypes(types);
         setSync(c);
@@ -84,6 +100,7 @@ export function useAdminLeagueData(league: League, onLeagueChange?: () => void) 
 
   return {
     invites,
+    joinLink,
     bonuses,
     bonusTypes,
     sync,
@@ -101,6 +118,20 @@ export function useAdminLeagueData(league: League, onLeagueChange?: () => void) 
 function summarizeAction(out: Record<string, unknown> | undefined): string {
   if (!out) return "Saved.";
   if (typeof out.detail === "string") return out.detail;
+  if (typeof out.email === "string" && typeof out.email_sent === "boolean") {
+    if (out.email_sent) return `Invite emailed to ${out.email}.`;
+    const err = typeof out.email_error === "string" ? out.email_error : "email not sent";
+    const url = typeof out.accept_url === "string" ? out.accept_url : "";
+    return url
+      ? `Invite created but email failed (${err}). Link: ${url}`
+      : `Invite created but email failed (${err}).`;
+  }
+  if (typeof out.join_url === "string" || typeof out.enabled === "boolean") {
+    if (out.enabled && typeof out.join_url === "string") {
+      return `Join link ready: ${out.join_url}`;
+    }
+    if (out.enabled === false) return "Join link disabled.";
+  }
   const parts: string[] = [];
   if (out.linked != null) parts.push(`${out.linked} linked`);
   if (out.created_teams != null) parts.push(`${out.created_teams} created`);

@@ -258,13 +258,47 @@ def update_settings(
     league, member = membership
     data = payload.model_dump(exclude_unset=True)
     max_members = data.pop("max_members", None)
+    roster_club_order = data.pop("roster_club_order", None)
     pools_patch = data.pop("pools", None)
+    remove_pool_ids = data.pop("remove_pool_ids", None)
     for key, value in data.items():
         setattr(league, key, value)
-    if max_members is not None:
+    if max_members is not None or roster_club_order is not None:
         config = dict(league.config or {})
-        config["max_members"] = max_members
+        if max_members is not None:
+            config["max_members"] = max_members
+        if roster_club_order is not None:
+            config["roster_club_order"] = roster_club_order
         league.config = config
+
+    creating = bool(
+        pools_patch
+        and any(item.get("id") is None for item in pools_patch)
+    )
+    removing = bool(remove_pool_ids)
+    if creating or removing:
+        if league.status != "pre_draft":
+            raise HTTPException(
+                status_code=409,
+                detail="Competitions can only be added or removed before the draft opens.",
+            )
+
+    if remove_pool_ids:
+        for pool_public_id in remove_pool_ids:
+            pool = db.scalars(
+                select(TeamPool).where(
+                    TeamPool.public_id == pool_public_id,
+                    TeamPool.league_id == league.id,
+                )
+            ).first()
+            if pool is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Competition not found: {pool_public_id}",
+                )
+            db.delete(pool)
+        db.flush()
+
     if pools_patch is not None:
         member_count = len(
             list(db.scalars(select(LeagueMember).where(LeagueMember.league_id == league.id)).all())
@@ -276,21 +310,78 @@ def update_settings(
             configured_max = None
         manager_capacity = max(member_count, configured_max or 0, 1)
 
+        existing_pools = list(
+            db.scalars(select(TeamPool).where(TeamPool.league_id == league.id)).all()
+        )
+        keys_in_use = {p.key for p in existing_pools}
+        codes_in_use = {
+            (p.competition_code or "").upper()
+            for p in existing_pools
+            if p.competition_code
+        }
+
         for item in pools_patch:
+            pool_id = item.get("id")
+            if pool_id is None:
+                key = item["key"]
+                code = item["competition_code"]
+                if key in keys_in_use:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Competition key already in use: {key}",
+                    )
+                if code in codes_in_use:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Competition already added: {code}",
+                    )
+                pool = TeamPool(
+                    league_id=league.id,
+                    key=key,
+                    label=item["label"],
+                    scores_match_results=bool(item.get("scores_match_results", True)),
+                    slot_count=int(item["slot_count"]),
+                    sort_order=int(item.get("sort_order") or 0),
+                    tie_break_order=["points", "gd", "gf", "name"],
+                    provider=item.get("provider") or "football-data.org",
+                    competition_code=code,
+                    season_year=int(item["season_year"]),
+                )
+                db.add(pool)
+                keys_in_use.add(key)
+                codes_in_use.add(code)
+                continue
+
             pool = db.scalars(
                 select(TeamPool).where(
-                    TeamPool.public_id == item["id"],
+                    TeamPool.public_id == pool_id,
                     TeamPool.league_id == league.id,
                 )
             ).first()
             if pool is None:
-                raise HTTPException(status_code=404, detail=f"Competition not found: {item['id']}")
+                raise HTTPException(status_code=404, detail=f"Competition not found: {pool_id}")
             if "sort_order" in item and item["sort_order"] is not None:
                 pool.sort_order = int(item["sort_order"])
             if "label" in item and item["label"] is not None:
                 pool.label = item["label"]
             if "scores_match_results" in item and item["scores_match_results"] is not None:
                 pool.scores_match_results = bool(item["scores_match_results"])
+            if "provider" in item and item["provider"] is not None:
+                pool.provider = item["provider"]
+            if "competition_code" in item and item["competition_code"] is not None:
+                new_code = item["competition_code"]
+                old_code = (pool.competition_code or "").upper()
+                if new_code != old_code and new_code in codes_in_use:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Competition already added: {new_code}",
+                    )
+                if old_code:
+                    codes_in_use.discard(old_code)
+                pool.competition_code = new_code
+                codes_in_use.add(new_code)
+            if "season_year" in item and item["season_year"] is not None:
+                pool.season_year = int(item["season_year"])
             if "slot_count" in item and item["slot_count"] is not None:
                 new_slots = int(item["slot_count"])
                 team_count = len(
@@ -312,4 +403,33 @@ def update_settings(
     db.refresh(league)
     return _league_detail(db, league, member)
 
+
+@router.post("/leagues/{league_id}/complete", response_model=LeagueDetailResponse)
+def complete_league(
+    membership: tuple[League, LeagueMember] = Depends(require_commissioner),
+    db: Session = Depends(get_db),
+) -> LeagueDetailResponse:
+    """Mark a league season as complete (no longer open for scoring / prior-season gates)."""
+    league, member = membership
+    if league.status == "complete":
+        raise HTTPException(status_code=409, detail="League is already complete")
+    league.status = "complete"
+    db.commit()
+    db.refresh(league)
+    return _league_detail(db, league, member)
+
+
+@router.delete(
+    "/leagues/{league_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def delete_league(
+    membership: tuple[League, LeagueMember] = Depends(require_commissioner),
+    db: Session = Depends(get_db),
+) -> Response:
+    """Permanently delete a league and cascaded season data."""
+    league, _member = membership
+    db.delete(league)
+    db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 

@@ -1,7 +1,7 @@
 from pathlib import Path
 import re
 
-b64 = Path("docs/brand/_fonts/outfit-extrabold-logo.b64").read_text(encoding="ascii")
+b64 = Path("brand/fonts/outfit-extrabold-logo.b64").read_text(encoding="ascii")
 
 font_face = f"""@font-face {{
         font-family: 'Outfit';
@@ -53,10 +53,10 @@ style_re = re.compile(
 )
 
 files_simple = [
-    Path("brand/midtable-logo-matchday.svg"),
-    Path("brand/midtable-logo-pitch-night.svg"),
-    Path("frontend/public/brand/lockup-matchday.svg"),
-    Path("frontend/public/brand/lockup-pitch-night.svg"),
+    Path("brand/logos/presentation/midtable-logo-matchday.svg"),
+    Path("brand/logos/presentation/midtable-logo-pitch-night.svg"),
+    Path("brand/logos/product/svg/lockup-matchday.svg"),
+    Path("brand/logos/product/svg/lockup-pitch-night.svg"),
 ]
 
 for path in files_simple:
@@ -67,7 +67,7 @@ for path in files_simple:
     path.write_text(style_re.sub(new_style, text, count=1), encoding="utf-8", newline="\n")
     print(f"updated {path}")
 
-variants = Path("brand/midtable-logo-variants.svg")
+variants = Path("brand/logos/presentation/midtable-logo-variants.svg")
 variants_text = variants.read_text(encoding="utf-8")
 new_style_v = f'<style type="text/css"><![CDATA[\n      {font_face_variants}\n    ]]></style>'
 variants.write_text(

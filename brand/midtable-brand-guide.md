@@ -1,11 +1,11 @@
 # Midtable Brand Guide
 
-**Version 1.0 · July 2026**  
+**Version 1.1 · July 2026**  
 Visual identity & product system
 
-> Draft clubs, follow every result, and climb the table.
+> Every result moves the table.
 
-**Source of truth:** `frontend/src/app/globals.css` · `frontend/src/lib/theme.tsx` · `frontend/src/components/ui/` · `brand/` · `frontend/public/brand/`
+**Source of truth:** `frontend/src/app/globals.css` · `frontend/src/lib/theme.tsx` · `frontend/src/components/ui/` · [`brand/`](./) (logos, fonts, emails, this guide) · synced copy in `frontend/public/brand/`
 
 ---
 
@@ -13,13 +13,13 @@ Visual identity & product system
 
 ### Positioning
 
-Football-first. Invite-only. Operationally clear.
+Football-first. Draft-and-table. Operationally clear.
 
-Midtable is a multi-pool football draft platform for friends’ leagues. The brand feels like a modern matchday companion — confident greens on cool neutrals, bold compact type, and language commissioners actually use.
+Midtable is a multi-pool football draft platform. The brand sounds like a manager gearing up for a competition — confident greens on cool neutrals, bold compact type, and language players actually use.
 
 ### Brand promise
 
-Make private draft leagues feel official without the noise.
+Draft your clubs. Follow every matchday. Climb the table.
 
 Soft surfaces, mint borders, and pitch greens signal football without stadium clichés or purple-saas defaults.
 
@@ -28,9 +28,11 @@ Soft surfaces, mint borders, and pitch greens signal football without stadium cl
 | Trait | Meaning |
 |-------|---------|
 | **Direct** | Short CTAs, no hype filler |
-| **Fluent** | Table, draft, matchday vocabulary |
-| **Invite-only** | Private by default, never flashy |
+| **Fluent** | Table, draft, matchday, competition vocabulary |
+| **Managerial** | Ambition — your clubs, your table, your career |
+| **Kickoff** | Warm invitation into the game, not cold auth |
 | **Precise** | Ranks, scores, and status stay crisp |
+| **Matchday companion** *(minor)* | Present, watching-with-you — body copy texture only |
 
 ### Naming
 
@@ -49,12 +51,15 @@ Primary lockup: staggered **Midtable** wordmark (Outfit ExtraBold) over the rank
 
 | Asset | Path | Use |
 |-------|------|-----|
-| Matchday presentation | [`brand/midtable-logo-matchday.svg`](../../brand/midtable-logo-matchday.svg) | Spec / marketing on light |
-| Pitch Night presentation | [`brand/midtable-logo-pitch-night.svg`](../../brand/midtable-logo-pitch-night.svg) | Spec / marketing on dark |
-| Variants sheet | [`brand/midtable-logo-variants.svg`](../../brand/midtable-logo-variants.svg) | Side-by-side + swatches |
-| App lockups | `frontend/public/brand/lockup-*.svg` | Transparent lockups (Outfit ExtraBold embedded) |
-| App marks | `frontend/public/brand/mark-*.svg` | Rank mark only (nav, empty states) |
-| App wordmarks | `frontend/public/brand/wordmark-*.svg` | Staggered Midtable text only |
+| Matchday presentation | [`logos/presentation/midtable-logo-matchday.svg`](./logos/presentation/midtable-logo-matchday.svg) | Spec / marketing on light |
+| Pitch Night presentation | [`logos/presentation/midtable-logo-pitch-night.svg`](./logos/presentation/midtable-logo-pitch-night.svg) | Spec / marketing on dark |
+| Variants sheet | [`logos/presentation/midtable-logo-variants.svg`](./logos/presentation/midtable-logo-variants.svg) | Side-by-side + swatches |
+| App lockups (SVG) | `logos/product/svg/lockup-*.svg` | Transparent lockups (Outfit ExtraBold embedded) |
+| App marks (SVG) | `logos/product/svg/mark-*.svg` | Rank mark only (nav, empty states) |
+| App wordmarks (SVG) | `logos/product/svg/wordmark-*.svg` | Staggered Midtable text only |
+| App rasters (PNG) | `logos/product/png/` | PNG exports of lockups / marks / wordmarks |
+| Favicons / apple | `logos/product/icons/` | Favicon PNGs, apple-touch, icon source SVGs |
+| League invite email | [`emails/league-invite.html`](./emails/league-invite.html) | Mailjet HTML shell |
 
 Presentation and lockup/wordmark SVGs embed a subset of Outfit ExtraBold via `@font-face` data URI so the wordmark matches the product face even when the file is opened alone or used as an `<img>`.
 
@@ -77,9 +82,9 @@ Presentation and lockup/wordmark SVGs embed a subset of Outfit ExtraBold via `@f
 
 - Nav: horizontal lockup (`MidtableLogo` `variant="nav"`) — rank mark + wordmark with box bottoms on the `table` baseline
 - Home: full lockup via `MidtableLogo` (inline SVG using `--font-display` / Outfit — not `<img>`, so the face matches the app)
-- Standalone wordmark: `variant="wordmark"` or `frontend/public/brand/wordmark-*.svg` / `brand/midtable-wordmark-*.svg`
-- Standalone mark: `variant="mark"` or `frontend/public/brand/mark-*.svg`
-- Favicon / apple touch: Matchday rank mark (`frontend/src/app/icon.svg`, `frontend/public/brand/apple-touch-icon.png`)
+- Standalone wordmark: `variant="wordmark"` or `logos/product/svg/wordmark-*.svg`
+- Standalone mark: `variant="mark"` or `logos/product/svg/mark-*.svg`
+- Favicon / apple touch: Matchday rank mark (`frontend/src/app/icon.svg`, `logos/product/icons/apple-touch-icon.png`)
 - Always ship both themes; colors swap with `data-theme` via `--logo-*` tokens in `globals.css`
 
 ---
@@ -235,30 +240,77 @@ Custom 24×24 stroke icons (`strokeWidth={2}`, round caps). No icon library depe
 
 ## 8. Voice
 
-### Tone
+Midtable sounds like a manager gearing up for a competition, with a warm “come play” invitation — not a commissioner running ops, and not a hype fantasy app.
 
-Short. Functional. Football-fluent.
+### Tone — Managerial + Kickoff (primary)
 
-Write like a commissioner briefing the group chat — clear, invite-aware, zero fluff.
+**Managerial** means the reader is a manager building a career. Copy talks about *their* clubs, *their* table, ambition, climbing, owning the competition.
+
+| | |
+|--|--|
+| **Use for** | Identity/ambition headlines, closes, brand promise |
+| **Sounds like** | Start your managerial career. · Climb the table. · Draft your clubs. Own the competition. |
+| **Does not** | Run your league with templates and join links. · Unleash your fantasy squad. · Manage members and payouts. |
+
+**Kickoff** means a warm, direct invitation into the game. Short CTAs that feel like the start of a match — welcoming, not salesy.
+
+| | |
+|--|--|
+| **Use for** | CTAs, closing band, eyebrow/entry moments |
+| **Sounds like** | Ready for kickoff? · Sign in to play. · Come draft. Come climb. |
+| **Does not** | Get started in three easy steps. · Create an account to continue. · Join now — limited spots! |
+
+### Tone — Matchday companion (secondary, minor)
+
+Calm, present, watching-with-you. Texture for support/body copy — not the brand’s main personality. At most one beat per section. Never the primary CTA voice.
+
+| | |
+|--|--|
+| **Sounds like** | Follow your clubs every matchday. · Watch the table move. · Every result moves the table. |
+| **Does not** | Live alerts. Never miss a moment. · Your matchday companion app. |
+
+### Surface map (marketing)
+
+| Surface | Tone lead | Example |
+|---------|-----------|---------|
+| Hero headline | Companion / table motion OK | Every result moves the table. |
+| Hero support | Managerial + light companion | Draft real clubs, then score every matchday… |
+| CTAs | Kickoff | Sign in to play / Join a league |
+| How it works / pillars | Managerial verbs; companion in matchday beat | Draft / Play / Climb; “Follow your clubs…” |
+| Closing | Kickoff + Managerial | Ready for kickoff? Start your managerial career. |
+
+### Writing rules
+
+- Short sentences. Football vocabulary: draft, clubs, matchday, table, competition, kickoff, managerial
+- Prefer **you / your** (manager) over **we / the platform**
+- Imperative CTAs that invite play, not account paperwork
+- Prefer **competition** over **season** in marketing (covers league campaigns and tournaments)
+- No invite-only / private / commissioner framing in marketing
+- No emoji, no hype stacks, no FOMO
+- Never promise public social/discovery features Midtable doesn’t have
 
 ### Approved lines
 
 | Line | Use |
 |------|-----|
-| “Draft clubs, follow every result, and climb the table.” | Product meta / tagline |
-| “Magic link or password. Leagues remain invite-only.” | Auth framing |
-| “Accept an invite link to join a league.” | Empty state |
+| “Every result moves the table.” | Hero / primary marketing headline |
+| “Draft clubs, follow every result, and climb the table.” | Product meta / OG tagline |
+| “Ready for kickoff?” | Landing close |
+| “Start your managerial career.” | Landing close / ambition framing |
+| “Sign in to play.” | Primary marketing CTA |
+| “Magic link or password. Join a league with an invite or shareable link.” | Auth UI (product, not marketing) |
+| “Accept an invite link to join a league.” | Empty / join UI |
 | “Start from a template, build a new one, or create a blank league…” | Create flow |
 | “How you appear across leagues…” | Profile |
 | “Follow your device setting, or lock light or dark.” | Theme settings |
 
-### Principles
+### Explicitly out of tone
 
-- Imperative CTAs: Sign in, Create account, Send magic link
-- Prefer commissioner words: league, draft, standings, pool
-- Eyebrows stay sparse: Welcome, Account, Invite, Step 1
-- Never promise public social features Midtable doesn’t have
-- Don’t use emoji as brand voice
+- Commissioner briefing / invite-aware ops voice as brand marketing
+- On-the-clock urgency as the default brand mood
+- Scoreboard-only dryness with no invitation
+- Banter-heavy “group chat roast” as the lead
+- Fantasy-app hype
 
 ### Don’t
 
@@ -276,9 +328,11 @@ Hype, emoji stacks, and generic fantasy-app copy are off-brand.
 - Token colors only — no one-off hex in components
 - `rounded-xl` + `border-line` + soft shadow for panels
 - Support Matchday and Pitch Night
-- Use official logo lockup / mark assets from `brand/` and `frontend/public/brand/`
+- Use official logo lockup / mark assets from `brand/logos/`
 - 44px minimum interactive height
-- Invite-only framing when talking about access
+- Managerial + Kickoff voice on marketing; Matchday companion only as support texture
+- Prefer competition over season in marketing copy
+- Invite/join mechanics only where the product UI requires them — not as brand positioning
 
 ### Never
 
@@ -289,6 +343,7 @@ Hype, emoji stacks, and generic fantasy-app copy are off-brand.
 - Cards in a hero that aren’t interactive
 - Replacing Midtable with the repo name in UI
 - Rounding the rank-mark squares or dropping the center frame gap
+- Leading marketing with invite-only / private-by-default framing
 
 ---
 
@@ -297,8 +352,14 @@ Hype, emoji stacks, and generic fantasy-app copy are off-brand.
 | Path | What |
 |------|------|
 | [`midtable-brand-guide.html`](./midtable-brand-guide.html) | Printable visual companion |
-| [`brand/`](../../brand/) | Logo presentation SVGs (Matchday, Pitch Night, variants) |
-| `frontend/public/brand/` | App lockups, marks, favicons |
+| [`README.md`](./README.md) | Brand folder index + sync/regen commands |
+| [`logos/presentation/`](./logos/presentation/) | Marketing lockups + variants sheet |
+| [`logos/product/svg/`](./logos/product/svg/) | App lockups, marks, wordmarks (SVG) |
+| [`logos/product/png/`](./logos/product/png/) | Raster exports of the same assets |
+| [`logos/product/icons/`](./logos/product/icons/) | Favicons, apple-touch, icon source SVGs |
+| [`emails/league-invite.html`](./emails/league-invite.html) | League seat invite HTML |
+| [`fonts/`](./fonts/) | Outfit embeds for logo SVGs / OG |
+| `frontend/public/brand/` | Synced mirror of `logos/product/` for Next.js |
 | `frontend/src/components/MidtableLogo.tsx` | Theme-aware logo component |
 | `frontend/src/app/globals.css` | Color tokens, themes, base type |
 | `frontend/src/lib/theme.tsx` | Theme preference & persistence |

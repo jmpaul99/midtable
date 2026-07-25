@@ -14,8 +14,9 @@ import {
   TrashIcon,
   XIcon,
 } from "@/components/ui/icons";
+import { Autocomplete } from "@/components/ui/Autocomplete";
 import { Card, Muted, Stack } from "@/components/ui/Card";
-import { Input, Label, Select } from "@/components/ui/Field";
+import { Input, Label } from "@/components/ui/Field";
 import { cn } from "@/lib/cn";
 import type { BonusTypeRow } from "./useAdminLeagueData";
 
@@ -55,15 +56,32 @@ export function BonusesSection({
   );
 
   const [tab, setTab] = useState<Tab>("types");
+  const [awardTeamId, setAwardTeamId] = useState("");
   const [awardTypeId, setAwardTypeId] = useState("");
   const [editingId, setEditingId] = useState<UUID | null>(null);
   const [editLabel, setEditLabel] = useState("");
   const [editPoints, setEditPoints] = useState("");
   const [adding, setAdding] = useState(false);
   const [newLabel, setNewLabel] = useState("");
-  const [newKey, setNewKey] = useState("");
   const [newPoints, setNewPoints] = useState("");
-  const [keyTouched, setKeyTouched] = useState(false);
+
+  const teamOptions = useMemo(
+    () =>
+      allTeams.map(({ team, pool }) => ({
+        value: team.id,
+        label: `${team.name} · ${pool.name || pool.label}`,
+      })),
+    [allTeams],
+  );
+
+  const typeOptions = useMemo(
+    () =>
+      sortedTypes.map((t) => ({
+        value: t.id,
+        label: `${t.label} (${formatNumber(t.default_points)})`,
+      })),
+    [sortedTypes],
+  );
 
   const selectedType = sortedTypes.find((t) => t.id === awardTypeId);
   const awardedCount = bonuses?.length ?? 0;
@@ -93,8 +111,13 @@ export function BonusesSection({
   async function createType(e: FormEvent) {
     e.preventDefault();
     const label = newLabel.trim();
-    const key = (newKey.trim() || slugKey(label)).slice(0, 40);
-    if (!label || !key) return;
+    if (!label) return;
+    const existing = new Set(sortedTypes.map((t) => t.key));
+    let key = slugKey(label) || "bonus";
+    let n = 2;
+    while (existing.has(key)) {
+      key = `${slugKey(label)}_${n++}`;
+    }
     await onAction(`/leagues/${leagueId}/bonus-types`, "POST", {
       key,
       label,
@@ -102,23 +125,23 @@ export function BonusesSection({
       sort_order: sortedTypes.length + 1,
     });
     setNewLabel("");
-    setNewKey("");
     setNewPoints("");
-    setKeyTouched(false);
     setAdding(false);
   }
 
   async function award(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    if (!awardTeamId || !awardTypeId) return;
     if (!confirm("Award this bonus using the configured points?")) return;
     const f = new FormData(e.currentTarget);
     const notes = String(f.get("notes") || "").trim();
     await onAction(`/leagues/${leagueId}/manual-bonuses`, "POST", {
-      team_id: f.get("team"),
-      bonus_type_id: f.get("bonus_type_id"),
+      team_id: awardTeamId,
+      bonus_type_id: awardTypeId,
       notes: notes || null,
     });
     e.currentTarget.reset();
+    setAwardTeamId("");
     setAwardTypeId("");
     setTab("history");
   }
@@ -167,30 +190,25 @@ export function BonusesSection({
               <form className="flex flex-col gap-3" onSubmit={award}>
                 <Label>
                   Team
-                  <Select name="team" required>
-                    <option value="">Choose…</option>
-                    {allTeams.map(({ team, pool }) => (
-                      <option value={team.id} key={`${pool.id}-${team.id}`}>
-                        {team.name} · {pool.name || pool.label}
-                      </option>
-                    ))}
-                  </Select>
+                  <Autocomplete
+                    value={awardTeamId}
+                    onChange={setAwardTeamId}
+                    options={teamOptions}
+                    required
+                    placeholder="Search teams…"
+                    emptyMessage="No teams match."
+                  />
                 </Label>
                 <Label>
                   Bonus type
-                  <Select
-                    name="bonus_type_id"
-                    required
+                  <Autocomplete
                     value={awardTypeId}
-                    onChange={(e) => setAwardTypeId(e.target.value)}
-                  >
-                    <option value="">Choose…</option>
-                    {sortedTypes.map((t) => (
-                      <option value={t.id} key={t.id}>
-                        {t.label} ({formatNumber(t.default_points)})
-                      </option>
-                    ))}
-                  </Select>
+                    onChange={setAwardTypeId}
+                    options={typeOptions}
+                    required
+                    placeholder="Search bonus types…"
+                    emptyMessage="No bonus types match."
+                  />
                 </Label>
                 {selectedType && (
                   <Muted className="text-xs">
@@ -202,7 +220,12 @@ export function BonusesSection({
                   <Input name="notes" placeholder="e.g. finished 4th via GD" />
                 </Label>
                 <div className="flex justify-start">
-                  <IconButton type="submit" label="Award bonus" variant="primary">
+                  <IconButton
+                    type="submit"
+                    label="Award bonus"
+                    variant="primary"
+                    disabled={!awardTeamId || !awardTypeId}
+                  >
                     <AwardIcon />
                   </IconButton>
                 </div>
@@ -223,38 +246,35 @@ export function BonusesSection({
                   {sortedTypes.map((t) =>
                     editingId === t.id ? (
                       <li key={t.id} className="bg-surface-2/50 p-3">
-                        <form className="flex flex-col gap-2" onSubmit={saveEdit}>
-                          <div className="grid grid-cols-[1fr_5.5rem] gap-2">
-                            <Input
-                              value={editLabel}
-                              onChange={(e) => setEditLabel(e.target.value)}
-                              required
-                              aria-label="Label"
-                            />
-                            <Input
-                              type="number"
-                              step="0.5"
-                              value={editPoints}
-                              onChange={(e) => setEditPoints(e.target.value)}
-                              required
-                              aria-label="Points"
-                            />
-                          </div>
-                          <Muted className="text-xs">Key: {t.key}</Muted>
-                          <div className="flex gap-2">
-                            <IconButton type="submit" label="Save" variant="primary" size="icon-sm">
-                              <CheckIcon className="size-4" />
-                            </IconButton>
-                            <IconButton
-                              type="button"
-                              label="Cancel"
-                              variant="ghost"
-                              size="icon-sm"
-                              onClick={() => setEditingId(null)}
-                            >
-                              <XIcon className="size-4" />
-                            </IconButton>
-                          </div>
+                        <form className="flex items-center gap-2" onSubmit={saveEdit}>
+                          <Input
+                            value={editLabel}
+                            onChange={(e) => setEditLabel(e.target.value)}
+                            required
+                            aria-label="Label"
+                            className="min-w-0 flex-1"
+                          />
+                          <Input
+                            type="number"
+                            step="0.5"
+                            value={editPoints}
+                            onChange={(e) => setEditPoints(e.target.value)}
+                            required
+                            aria-label="Points"
+                            className="w-[5.5rem] shrink-0"
+                          />
+                          <IconButton type="submit" label="Save" variant="primary" size="icon-sm">
+                            <CheckIcon className="size-4" />
+                          </IconButton>
+                          <IconButton
+                            type="button"
+                            label="Cancel"
+                            variant="ghost"
+                            size="icon-sm"
+                            onClick={() => setEditingId(null)}
+                          >
+                            <XIcon className="size-4" />
+                          </IconButton>
                         </form>
                       </li>
                     ) : (
@@ -265,7 +285,7 @@ export function BonusesSection({
                         <div className="min-w-0 flex-1">
                           <strong className="block truncate text-sm">{t.label}</strong>
                           <Muted className="truncate text-xs">
-                            {formatNumber(t.default_points)} pts · {t.key}
+                            {formatNumber(t.default_points)} pts
                           </Muted>
                         </div>
                         <div className="flex gap-1">
@@ -301,55 +321,39 @@ export function BonusesSection({
 
               {adding ? (
                 <form
-                  className="flex flex-col gap-2 rounded-xl border border-dashed border-line p-3"
+                  className="flex items-center gap-2 rounded-xl border border-dashed border-line p-3"
                   onSubmit={createType}
                 >
-                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_5.5rem]">
-                    <Input
-                      value={newLabel}
-                      onChange={(e) => {
-                        const label = e.target.value;
-                        setNewLabel(label);
-                        if (!keyTouched) setNewKey(slugKey(label));
-                      }}
-                      placeholder="Label"
-                      required
-                      aria-label="Label"
-                    />
-                    <Input
-                      type="number"
-                      step="0.5"
-                      value={newPoints}
-                      onChange={(e) => setNewPoints(e.target.value)}
-                      placeholder="Pts"
-                      required
-                      aria-label="Points"
-                    />
-                  </div>
                   <Input
-                    value={newKey}
-                    onChange={(e) => {
-                      setKeyTouched(true);
-                      setNewKey(e.target.value);
-                    }}
-                    placeholder="Key (e.g. cl)"
+                    value={newLabel}
+                    onChange={(e) => setNewLabel(e.target.value)}
+                    placeholder="Name"
                     required
-                    aria-label="Key"
+                    aria-label="Name"
+                    className="min-w-0 flex-1"
                   />
-                  <div className="flex gap-2">
-                    <IconButton type="submit" label="Add type" variant="primary" size="icon-sm">
-                      <PlusIcon className="size-4" />
-                    </IconButton>
-                    <IconButton
-                      type="button"
-                      label="Cancel"
-                      variant="ghost"
-                      size="icon-sm"
-                      onClick={() => setAdding(false)}
-                    >
-                      <XIcon className="size-4" />
-                    </IconButton>
-                  </div>
+                  <Input
+                    type="number"
+                    step="0.5"
+                    value={newPoints}
+                    onChange={(e) => setNewPoints(e.target.value)}
+                    placeholder="Pts"
+                    required
+                    aria-label="Points"
+                    className="w-[5.5rem] shrink-0"
+                  />
+                  <IconButton type="submit" label="Add type" variant="primary" size="icon-sm">
+                    <PlusIcon className="size-4" />
+                  </IconButton>
+                  <IconButton
+                    type="button"
+                    label="Cancel"
+                    variant="ghost"
+                    size="icon-sm"
+                    onClick={() => setAdding(false)}
+                  >
+                    <XIcon className="size-4" />
+                  </IconButton>
                 </form>
               ) : (
                 <div className="flex justify-start">
