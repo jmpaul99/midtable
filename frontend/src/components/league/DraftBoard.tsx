@@ -172,7 +172,7 @@ export function DraftBoard({
           <Select value={poolId} onChange={(e) => setPoolId(e.target.value)}>
             {league.pools.map((p) => (
               <option value={p.id} key={p.id}>
-                {p.name || p.label}
+                {p.label}
               </option>
             ))}
           </Select>

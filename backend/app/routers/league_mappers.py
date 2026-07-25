@@ -66,12 +66,15 @@ def _phases(league: League) -> list[PhaseResponse]:
     out: list[PhaseResponse] = []
     for phase in league.leaderboard_phases or []:
         mf = phase.get("match_filter") or {}
-        matchweek_range = mf.get("matchweek_range") or phase.get("matchweek_range")
-        if not matchweek_range and mf.get("type") == "matchweek_range":
+        matchweek_range = None
+        stage_in = None
+        if mf.get("type") == "matchweek_range":
             fr, to = mf.get("from"), mf.get("to")
             if fr is not None and to is not None:
                 matchweek_range = [int(fr), int(to)]
-        stage_in = mf.get("stages") or mf.get("stage_in") or phase.get("stage_in")
+        elif mf.get("type") == "stage_in":
+            stages = mf.get("stages") or []
+            stage_in = [str(s) for s in stages]
         out.append(
             PhaseResponse(
                 key=str(phase.get("key", "")),

@@ -52,10 +52,10 @@ function poolsFromLeague(
     id: p.id,
     isNew: false,
     key: p.key,
-    label: p.label || p.name || p.key,
+    label: p.label || p.key,
     sort_order: p.sort_order ?? i + 1,
-    slot_count: p.slot_count ?? p.roster_size ?? 1,
-    scores_match_results: p.scores_match_results ?? p.scoring_enabled ?? true,
+    slot_count: p.slot_count ?? 1,
+    scores_match_results: p.scores_match_results ?? true,
     competition_code: p.competition_code || "",
     season_year: p.season_year ?? defaultFootballSeasonYear(),
     provider: p.provider || "football-data.org",
@@ -127,7 +127,7 @@ export function LeagueMetaSettingsSection({
 }) {
   const [tab, setTab] = useState<Tab>("basics");
   const [name, setName] = useState(league.name || "");
-  const [seasonLabel, setSeasonLabel] = useState(league.season_label || league.season || "");
+  const [seasonLabel, setSeasonLabel] = useState(league.season_label || "");
   const [buyIn, setBuyIn] = useState(String(league.buy_in ?? 50));
   const [maxMembersValue, setMaxMembersValue] = useState(() => {
     const existing =

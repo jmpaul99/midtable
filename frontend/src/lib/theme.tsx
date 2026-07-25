@@ -27,9 +27,8 @@ export function isThemePreference(value: string | null | undefined): value is Th
   return !!value && PREFERENCE_IDS.has(value);
 }
 
-/** Resolve stored value; legacy `signal` maps to pitch. Missing → system. */
+/** Resolve stored value. Missing or invalid → system. */
 export function resolvePreference(value: string | null | undefined): ThemePreference {
-  if (value === "signal") return "pitch";
   if (isThemePreference(value)) return value;
   return "system";
 }
@@ -71,9 +70,6 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     const resolved = resolvePreference(stored);
     setPreferenceState(resolved);
     syncApplied(resolved);
-    if (stored === "signal") {
-      window.localStorage.setItem(THEME_STORAGE_KEY, "pitch");
-    }
   }, [syncApplied]);
 
   useEffect(() => {
@@ -110,4 +106,4 @@ export function useTheme() {
 }
 
 /** Inline script to apply stored theme before paint (avoids FOUC). Default: system. */
-export const themeInitScript = `(function(){try{var k=${JSON.stringify(THEME_STORAGE_KEY)};var t=localStorage.getItem(k);if(t==="signal")t="pitch";var ok=${JSON.stringify([...PREFERENCE_IDS])};if(ok.indexOf(t)===-1)t="system";var applied=t==="system"?(window.matchMedia("(prefers-color-scheme: dark)").matches?"pitch":"matchday"):t;document.documentElement.setAttribute("data-theme",applied);}catch(e){document.documentElement.setAttribute("data-theme","matchday");}})();`;
+export const themeInitScript = `(function(){try{var k=${JSON.stringify(THEME_STORAGE_KEY)};var t=localStorage.getItem(k);var ok=${JSON.stringify([...PREFERENCE_IDS])};if(ok.indexOf(t)===-1)t="system";var applied=t==="system"?(window.matchMedia("(prefers-color-scheme: dark)").matches?"pitch":"matchday"):t;document.documentElement.setAttribute("data-theme",applied);}catch(e){document.documentElement.setAttribute("data-theme","matchday");}})();`;

@@ -16,8 +16,6 @@ export interface LeagueSummary {
   status: string;
   draft_style: string;
   template_id?: UUID | null;
-  /** @deprecated use season_label */
-  season?: string;
   role?: string;
   visibility?: string;
   max_members?: number | null;
@@ -44,9 +42,6 @@ export interface Manager {
   joined_at?: string;
 }
 
-/** @deprecated Use Manager */
-export type Member = Manager;
-
 /** Fantasy team name, then profile display name, then email / fallback. */
 export function managerLabel(
   m: Pick<Manager, "team_name" | "display_name" | "email"> | null | undefined,
@@ -55,9 +50,6 @@ export function managerLabel(
   if (!m) return fallback;
   return m.team_name?.trim() || m.display_name?.trim() || m.email || fallback;
 }
-
-/** @deprecated Use managerLabel */
-export const memberLabel = managerLabel;
 
 export interface Pool {
   id: UUID;
@@ -69,11 +61,6 @@ export interface Pool {
   provider: string;
   competition_code: string | null;
   season_year: number | null;
-  /** FE aliases */
-  name?: string;
-  definition_key?: string;
-  roster_size?: number;
-  scoring_enabled?: boolean;
 }
 
 export interface PhaseMetadata {
@@ -93,7 +80,7 @@ export interface League extends LeagueSummary {
   role: string;
   settings: Record<string, Json>;
   pools: Pool[];
-  members: Member[];
+  members: Manager[];
   phases: PhaseMetadata[];
   bonus_type_keys: string[];
   provider_params: Record<string, Json>;
@@ -104,7 +91,6 @@ export interface League extends LeagueSummary {
   buy_in?: number | string;
   payouts?: Json[];
   preassign_mode?: string;
-  season: string;
   max_members?: number | null;
   roster_club_order?: "draft" | "competition";
   visibility: string;
@@ -133,15 +119,6 @@ export interface CompetitionTemplate {
   roster_slots: Json[];
   pool_definitions: Json[];
   bonus_types: Json[];
-  /** legacy aliases used by older UI */
-  code?: string;
-  name?: string;
-  is_active?: boolean;
-  pools?: Json[];
-  scoring?: Record<string, Json>;
-  phases?: Record<string, Json>[];
-  bonuses?: Record<string, number>;
-  draft?: Record<string, Json>;
   created_at?: string;
   updated_at?: string;
 }
@@ -445,9 +422,6 @@ export interface ManagerClub {
   points_per_game: number;
 }
 
-/** @deprecated Use ManagerClub */
-export type MemberClub = ManagerClub;
-
 export interface ManagerDetail {
   id: UUID;
   team_name: string | null;
@@ -471,9 +445,6 @@ export interface ManagerDetail {
   bonuses?: BonusAward[];
 }
 
-/** @deprecated Use ManagerDetail */
-export type MemberDetail = ManagerDetail;
-
 export interface ManagerHighlights {
   member_id: UUID;
   display_name: string;
@@ -492,9 +463,6 @@ export interface ManagerHighlights {
   } | null;
   top_club: { team_id: UUID; team_name: string; points: number } | null;
 }
-
-/** @deprecated Use ManagerHighlights */
-export type MemberHighlights = ManagerHighlights;
 
 export interface VenueSplitRow {
   member_id: UUID;
@@ -550,23 +518,12 @@ export interface UpsetRow {
   by_type?: Record<string, number>;
 }
 
-/** @deprecated Prefer typed analytics row interfaces. */
-export type AnalyticsRow = Record<string, string | number | null | Record<string, Json>>;
-
 export interface Message {
   detail: string;
 }
 
 /** Normalize API league detail into the shape components expect. */
 export function normalizeLeague(raw: League): League {
-  const pools = (raw.pools || []).map((p) => ({
-    ...p,
-    // Prefer backend `label`/`key`/`slot_count`; keep thin aliases for older UI.
-    name: p.label || p.name || p.key,
-    definition_key: p.key || p.definition_key,
-    roster_size: p.slot_count ?? p.roster_size ?? 0,
-    scoring_enabled: p.scores_match_results ?? p.scoring_enabled ?? true,
-  }));
   const max =
     raw.max_members ??
     (typeof raw.settings?.max_members === "number" ? raw.settings.max_members : null);
@@ -576,13 +533,12 @@ export function normalizeLeague(raw: League): League {
       : "draft";
   return {
     ...raw,
-    season_label: raw.season_label || raw.season || "",
-    season: raw.season_label || raw.season || "",
+    season_label: raw.season_label || "",
     max_members: max,
     roster_club_order: rosterOrder,
     visibility: raw.visibility || "private",
     role: raw.role || (raw.members?.find((m) => m.id === raw.current_member_id)?.role) || "member",
-    pools,
+    pools: raw.pools || [],
     members: (raw.members || []).map((m) => ({
       ...m,
       display_name: m.display_name || m.email || "Manager",

@@ -34,7 +34,7 @@ function ordinal(n: number): string {
 }
 
 function leagueMetaLabel(league: LeagueSummary): string {
-  const season = league.season_label || league.season || "Season";
+  const season = league.season_label || "Season";
   const count = league.member_count ?? 0;
   const preScoring =
     !league.has_scored ||

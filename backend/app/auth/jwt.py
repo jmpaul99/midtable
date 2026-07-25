@@ -140,14 +140,11 @@ def get_or_create_profile(
     email: str,
     auth_user_id: UUID | None,
     display_name: str | None = None,
-    skip_invite_gate: bool = False,
 ) -> Profile:
     """Create or return a profile for any authenticated user.
 
     League membership remains gated by personal invite accept or join-link claim.
-    ``skip_invite_gate`` is retained for call-site compatibility and ignored.
     """
-    del skip_invite_gate  # accounts are open; leagues stay invite/link-gated
     normalized = email.strip().lower()
     profile = db.scalars(select(Profile).where(Profile.email == normalized)).first()
     if profile:
@@ -222,7 +219,6 @@ def get_current_profile(
         email=user.email,
         auth_user_id=user.auth_user_id,
         display_name=display_name_from_claims(user.claims),
-        skip_invite_gate=user.bypass,
     )
     db.commit()
     db.refresh(profile)

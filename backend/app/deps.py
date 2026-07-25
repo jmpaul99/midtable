@@ -125,8 +125,3 @@ def team_in_league(db: Session, league_id: int, team_public_id: UUID) -> Team:
     if team is None:
         raise HTTPException(status_code=404, detail="Team not found in this league")
     return team
-
-
-# Re-exports for routers
-CurrentUser = AuthenticatedUser
-SettingsDep = Settings

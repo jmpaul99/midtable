@@ -76,19 +76,14 @@ class UpsetRules:
         thresholds: list[UpsetThreshold] = []
         for item in cfg.get("thresholds") or []:
             key = str(item["key"])
-            # Legacy configs omit name — treat key as the display name for now.
-            name = str(item.get("name") or item.get("label") or key)
+            name = str(item.get("name") or key)
             thresholds.append(
                 UpsetThreshold(
                     key=key,
                     result=Result(str(item["result"])),
-                    min_gap=int(item.get("min_gap", item.get("minimum_position_gap", 0))),
-                    max_gap=(
-                        None
-                        if item.get("max_gap", item.get("maximum_position_gap")) is None
-                        else int(item.get("max_gap", item.get("maximum_position_gap")))
-                    ),
-                    points=Decimal(str(item.get("points", item.get("bonus", 0)))),
+                    min_gap=int(item.get("min_gap", 0)),
+                    max_gap=None if item.get("max_gap") is None else int(item["max_gap"]),
+                    points=Decimal(str(item.get("points", 0))),
                     name=name,
                 )
             )
@@ -206,19 +201,7 @@ class LeaderboardRung:
     bonus_type_keys: tuple[str, ...] = ()
 
     @classmethod
-    def from_config(cls, item: Mapping[str, Any] | str) -> LeaderboardRung:
-        if isinstance(item, str):
-            legacy = {
-                "total_points": cls("total_points"),
-                "upset_points": cls(
-                    "event_points",
-                    event_types=("minor_upset", "major_upset", "major_upset_draw"),
-                ),
-                "win_count": cls("event_count", event_types=("win",)),
-            }
-            if item not in legacy:
-                raise ValueError(f"unsupported leaderboard metric rung: {item}")
-            return legacy[item]
+    def from_config(cls, item: Mapping[str, Any]) -> LeaderboardRung:
         return cls(
             metric=str(item["metric"]),
             direction=str(item.get("direction", "desc")),
@@ -275,16 +258,9 @@ def points_for_result(result: Result, points: ResultPoints) -> Decimal:
 
 
 def normalize_tiebreaks(tiebreaks: Sequence[str] | None) -> tuple[str, ...]:
-    aliases = {
-        "points": "points",
-        "gd": "gd",
-        "goal_difference": "gd",
-        "gf": "gf",
-        "goals_for": "gf",
-        "name": "name",
-    }
-    ordered = tuple(aliases[item] for item in (tiebreaks or DEFAULT_TABLE_TIEBREAKS))
-    unknown = set(tiebreaks or ()) - set(aliases)
+    allowed = {"points", "gd", "gf", "name"}
+    ordered = tuple(tiebreaks or DEFAULT_TABLE_TIEBREAKS)
+    unknown = set(ordered) - allowed
     if unknown:
         raise ValueError(f"unsupported table tiebreaks: {sorted(unknown)}")
     return ordered or DEFAULT_TABLE_TIEBREAKS
@@ -618,7 +594,7 @@ def phase_points_from_events(
 
 def rank_leaderboard(
     members: Iterable[MemberPoints],
-    tiebreaks: Sequence[Mapping[str, Any] | str | LeaderboardRung],
+    tiebreaks: Sequence[Mapping[str, Any] | LeaderboardRung],
 ) -> tuple[RankedLeaderboardEntry, ...]:
     rungs = tuple(
         item if isinstance(item, LeaderboardRung) else LeaderboardRung.from_config(item)

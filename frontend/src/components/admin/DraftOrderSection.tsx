@@ -30,7 +30,7 @@ export function DraftOrderSection({
   const multiPool = league.pools.length > 1;
   const preassignsByMember = new Map<UUID, string[]>();
   for (const pool of league.pools) {
-    const poolLabel = pool.name || pool.label || pool.key;
+    const poolLabel = pool.label || pool.key;
     for (const team of poolTeams[pool.id] || []) {
       const owner = team.current_owner;
       if (!owner || owner.acquired_via !== "preassigned") continue;
@@ -97,7 +97,7 @@ export function DraftOrderSection({
             <Select name="pool" value={teamPool} onChange={(e) => onTeamPool(e.target.value)}>
               {league.pools.map((p) => (
                 <option value={p.id} key={p.id}>
-                  {p.name || p.label}
+                  {p.label}
                 </option>
               ))}
             </Select>

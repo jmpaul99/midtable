@@ -34,6 +34,7 @@ htmlcov/
 
 # Supabase
 .supabase/
+supabase/.temp/
 
 # Editors / OS
 .idea/

@@ -12,18 +12,15 @@ export function managerHref(leagueId: UUID, managerId: UUID | string | null | un
 export function ManagerLink({
   leagueId,
   managerId,
-  memberId,
   children,
   className,
 }: {
   leagueId: UUID;
   managerId?: UUID | string | null;
-  /** @deprecated Use managerId */
-  memberId?: UUID | string | null;
   children: ReactNode;
   className?: string;
 }) {
-  const href = managerHref(leagueId, managerId ?? memberId);
+  const href = managerHref(leagueId, managerId);
   if (!href) {
     return <span className={className}>{children}</span>;
   }

@@ -137,7 +137,7 @@ export function LeagueShell({
             {error && <ErrorState error={error} retry={reload} />}
             <header className="min-w-0">
               <Row className="gap-2">
-                <Eyebrow className="mb-0">{league.season_label || league.season}</Eyebrow>
+                <Eyebrow className="mb-0">{league.season_label}</Eyebrow>
                 <Status value={league.status} />
               </Row>
               <h1 className="mt-1 truncate">{league.name}</h1>

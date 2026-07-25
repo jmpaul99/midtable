@@ -69,7 +69,7 @@ export function BonusesSection({
     () =>
       allTeams.map(({ team, pool }) => ({
         value: team.id,
-        label: `${team.name} · ${pool.name || pool.label}`,
+        label: `${team.name} · ${pool.label}`,
       })),
     [allTeams],
   );

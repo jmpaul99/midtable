@@ -123,17 +123,6 @@ export function uniqueKey(
   return candidate;
 }
 
-/** @deprecated Prefer slugifyKey */
-export const slugifyUpsetKey = slugifyKey;
-/** @deprecated Prefer uniqueKey */
-export function uniqueUpsetKey(
-  base: string,
-  existingKeys: string[],
-  selfIndex?: number,
-): string {
-  return uniqueKey(base, existingKeys, selfIndex, "upset");
-}
-
 /** Map threshold key → display name. */
 export function upsetNameByKey(raw: unknown): Record<string, string> {
   return Object.fromEntries(
@@ -151,18 +140,14 @@ export function normalizeUpsetRules(raw: unknown): UpsetRules {
     const t = (item && typeof item === "object" ? item : {}) as Record<string, unknown>;
     const result = str(t.result, "win");
     const key = str(t.key, `threshold_${i + 1}`);
-    // Legacy rows have no name yet — use the key as the editable name (not humanized).
-    const name = str(t.name ?? t.label, "") || key;
+    const name = str(t.name, "") || key;
     return {
       key,
       name,
       result: (result === "draw" || result === "loss" ? result : "win") as UpsetThreshold["result"],
-      min_gap: num(t.min_gap ?? t.minimum_position_gap, 0),
-      max_gap:
-        t.max_gap == null && t.maximum_position_gap == null
-          ? null
-          : num(t.max_gap ?? t.maximum_position_gap, 0),
-      points: num(t.points ?? t.bonus, 0),
+      min_gap: num(t.min_gap, 0),
+      max_gap: t.max_gap == null ? null : num(t.max_gap, 0),
+      points: num(t.points, 0),
     };
   });
   return {
@@ -232,39 +217,14 @@ export function normalizePhases(raw: unknown): LeaderboardPhase[] {
 }
 
 export function normalizeTiebreaks(raw: unknown): TiebreakRung[] {
-  return arr(raw).map((item) => {
-    if (typeof item === "string") {
-      if (item === "upset_points") {
-        return {
-          metric: "event_points",
-          direction: "desc" as const,
-          event_types: ["minor_upset", "major_upset", "major_upset_draw"],
-          bonus_type_keys: [],
-        };
-      }
-      if (item === "win_count") {
-        return {
-          metric: "event_count",
-          direction: "desc" as const,
-          event_types: ["win"],
-          bonus_type_keys: [],
-        };
-      }
-      return {
-        metric: item,
-        direction: "desc" as const,
-        event_types: [],
-        bonus_type_keys: [],
-      };
-    }
-    const t = (item && typeof item === "object" ? item : {}) as Record<string, unknown>;
-    return {
+  return arr(raw)
+    .filter((item): item is Record<string, unknown> => !!item && typeof item === "object")
+    .map((t) => ({
       metric: str(t.metric, "total_points"),
       direction: str(t.direction, "desc") === "asc" ? ("asc" as const) : ("desc" as const),
       event_types: arr(t.event_types).map((s) => str(s)),
       bonus_type_keys: arr(t.bonus_type_keys).map((s) => str(s)),
-    };
-  });
+    }));
 }
 
 export function normalizePayouts(raw: unknown): PayoutRow[] {

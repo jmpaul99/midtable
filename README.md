@@ -58,7 +58,6 @@ Fill in values. Root `.env` is loaded by the backend; frontend reads `frontend/.
 | --- | --- |
 | `DATABASE_URL` | Postgres URL (`postgresql+psycopg://…`) |
 | `SUPABASE_URL` | Auth issuer base; JWKS at `{SUPABASE_URL}/auth/v1/.well-known/jwks.json` |
-| `SUPABASE_SECRET_KEY` | Server key (legacy alias: `SUPABASE_SERVICE_ROLE_KEY`) |
 | `SUPABASE_JWT_AUDIENCE` | Usually `authenticated` |
 | `FOOTBALL_DATA_API_TOKEN` | Provider token |
 | `CRON_SECRET` | Protects `/internal/*` (required non-default in production) |
@@ -69,7 +68,7 @@ Fill in values. Root `.env` is loaded by the backend; frontend reads `frontend/.
 | `MAILJET_FROM_EMAIL` / `MAILJET_FROM_NAME` | Verified sender for invite emails (inline HTML; no template ID) |
 | `NEXT_PUBLIC_API_URL` | Backend base URL |
 | `NEXT_PUBLIC_SUPABASE_URL` | Same project URL the browser uses |
-| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Publishable key (legacy: `NEXT_PUBLIC_SUPABASE_ANON_KEY`) |
+| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Publishable key |
 
 ### 2. Database
 

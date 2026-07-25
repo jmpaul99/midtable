@@ -170,7 +170,7 @@ export function CreateLeagueForm({
           <h2>League details</h2>
           <Muted className="mt-1">
             {template
-              ? `Using template “${template.label || template.name || template.key}”.`
+              ? `Using template “${template.label || template.key}”.`
               : "Creating without a template — configure competitions later in Commissioner settings."}
           </Muted>
         </div>

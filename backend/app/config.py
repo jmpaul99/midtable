@@ -17,9 +17,6 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+psycopg://postgres:postgres@127.0.0.1:54322/postgres"
     supabase_url: str = "http://127.0.0.1:54321"
     supabase_jwt_audience: str = "authenticated"
-    # New Supabase API key name; falls back to legacy service_role via alias below
-    supabase_secret_key: str = ""
-    supabase_service_role_key: str = ""
     football_data_api_token: str = ""
     football_data_base_url: str = "https://api.football-data.org/v4"
     cron_secret: str = _DEV_CRON
@@ -48,11 +45,6 @@ class Settings(BaseSettings):
     @property
     def jwt_issuer(self) -> str:
         return f"{self.supabase_url.rstrip('/')}/auth/v1"
-
-    @property
-    def resolved_supabase_secret_key(self) -> str:
-        """Prefer SUPABASE_SECRET_KEY; accept legacy SUPABASE_SERVICE_ROLE_KEY."""
-        return self.supabase_secret_key or self.supabase_service_role_key
 
     @property
     def mailjet_configured(self) -> bool:

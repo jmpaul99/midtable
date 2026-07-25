@@ -313,15 +313,6 @@ def test_leaderboard_tiebreaks_and_true_tie() -> None:
     assert [(r.rank, r.member_id) for r in ranked] == [(1, 2), (1, 3), (3, 1)]
 
 
-def test_leaderboard_legacy_string_rungs() -> None:
-    members = (
-        MemberPoints(1, Decimal(10), event_counts_by_type={"win": 5}),
-        MemberPoints(2, Decimal(10), event_counts_by_type={"win": 2}),
-    )
-    ranked = rank_leaderboard(members, ("total_points", "win_count"))
-    assert ranked[0].member_id == 1
-
-
 def test_member_attribution_via_roster_join() -> None:
     team_points = {10: Decimal(5), 11: Decimal(3), 12: Decimal(7)}
     roster = {10: 1, 11: 1, 12: 2}  # team -> member

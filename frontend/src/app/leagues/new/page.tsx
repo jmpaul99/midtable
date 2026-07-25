@@ -128,17 +128,17 @@ function CreateLeagueHub() {
                 className="flex h-full flex-col rounded-xl border border-line bg-surface p-4 shadow-soft"
               >
                 <div className="min-w-0 flex-1">
-                  <h2 className="text-lg">{t.label || t.name}</h2>
+                  <h2 className="text-lg">{t.label}</h2>
                   <Muted className="mt-1">
                     {t.draft_style} · {(t.pool_definitions || []).length} competitions
                   </Muted>
-                  <Muted className="mt-2 text-xs">{t.key || t.code}</Muted>
+                  <Muted className="mt-2 text-xs">{t.key}</Muted>
                 </div>
                 <div className="mt-4 flex flex-wrap gap-2">
                   <Link
                     href={`/leagues/new/setup/${t.id}`}
                     className={iconLinkPrimary}
-                    aria-label={`Use template ${t.label || t.name}`}
+                    aria-label={`Use template ${t.label}`}
                     title="Use template"
                   >
                     <PlayIcon />
@@ -146,7 +146,7 @@ function CreateLeagueHub() {
                   <Link
                     href={`/leagues/new/templates/${t.id}`}
                     className={iconLink}
-                    aria-label={`Edit ${t.label || t.name}`}
+                    aria-label={`Edit ${t.label}`}
                     title="Edit"
                   >
                     <PencilIcon />
