@@ -1,6 +1,6 @@
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Any, Literal
+from typing import Any, Literal, Self
 from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -228,7 +228,7 @@ class PoolSettingsPatch(BaseModel):
         return normalized
 
     @model_validator(mode="after")
-    def require_create_fields(self) -> PoolSettingsPatch:
+    def require_create_fields(self) -> Self:
         if self.id is not None:
             return self
         missing = [

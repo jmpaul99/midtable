@@ -1,3 +1,5 @@
+name: midtable
+
 services:
   midtable-api:
     image: midtable-api
