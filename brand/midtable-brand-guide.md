@@ -58,7 +58,7 @@ Primary lockup: staggered **Midtable** wordmark (Outfit ExtraBold) over the rank
 | App marks (SVG) | `logos/product/svg/mark-*.svg` | Rank mark only (nav, empty states) |
 | App wordmarks (SVG) | `logos/product/svg/wordmark-*.svg` | Staggered Midtable text only |
 | App rasters (PNG) | `logos/product/png/` | PNG exports of lockups / marks / wordmarks |
-| Favicons / apple | `logos/product/icons/` | Favicon PNGs, apple-touch, icon source SVGs |
+| Favicons / apple / PWA | `logos/product/icons/` | SVG/ICO/PNG favicons, apple-touch, web app manifest |
 | League invite email | [`emails/league-invite.html`](./emails/league-invite.html) | Mailjet HTML shell |
 
 Presentation and lockup/wordmark SVGs embed a subset of Outfit ExtraBold via `@font-face` data URI so the wordmark matches the product face even when the file is opened alone or used as an `<img>`.
@@ -84,7 +84,7 @@ Presentation and lockup/wordmark SVGs embed a subset of Outfit ExtraBold via `@f
 - Home: full lockup via `MidtableLogo` (inline SVG using `--font-display` / Outfit — not `<img>`, so the face matches the app)
 - Standalone wordmark: `variant="wordmark"` or `logos/product/svg/wordmark-*.svg`
 - Standalone mark: `variant="mark"` or `logos/product/svg/mark-*.svg`
-- Favicon / apple touch: Matchday rank mark (`frontend/src/app/icon.svg`, `logos/product/icons/apple-touch-icon.png`)
+- Favicon / apple touch / PWA: `logos/product/icons/` (served at `/brand/icons/` via sync)
 - Always ship both themes; colors swap with `data-theme` via `--logo-*` tokens in `globals.css`
 
 ---
@@ -356,7 +356,7 @@ Hype, emoji stacks, and generic fantasy-app copy are off-brand.
 | [`logos/presentation/`](./logos/presentation/) | Marketing lockups + variants sheet |
 | [`logos/product/svg/`](./logos/product/svg/) | App lockups, marks, wordmarks (SVG) |
 | [`logos/product/png/`](./logos/product/png/) | Raster exports of the same assets |
-| [`logos/product/icons/`](./logos/product/icons/) | Favicons, apple-touch, icon source SVGs |
+| [`logos/product/icons/`](./logos/product/icons/) | Favicons, apple-touch, PWA manifest icons |
 | [`emails/league-invite.html`](./emails/league-invite.html) | League seat invite HTML |
 | [`fonts/`](./fonts/) | Outfit embeds for logo SVGs / OG |
 | `frontend/public/brand/` | Synced mirror of `logos/product/` for Next.js |

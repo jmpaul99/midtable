@@ -29,7 +29,7 @@ brand/
 | `logos/product/svg/mark-*.svg` | Rank mark only |
 | `logos/product/svg/wordmark-*.svg` | Staggered Midtable text only |
 | `logos/product/png/` | Raster exports of the same lockups / marks / wordmarks |
-| `logos/product/icons/` | Favicons, apple-touch icon, and `_*-wordmark` sources |
+| `logos/product/icons/` | Favicons, apple-touch, PWA manifest icons (`site.webmanifest`) |
 
 Product SVGs embed a subset of **Outfit ExtraBold** as a base64 `@font-face` so they render when opened directly or used as images.
 

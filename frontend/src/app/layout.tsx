@@ -35,11 +35,13 @@ export const metadata: Metadata = {
   },
   icons: {
     icon: [
-      { url: "/brand/icons/favicon-32.png", sizes: "32x32", type: "image/png" },
-      { url: "/brand/svg/mark-matchday.svg", type: "image/svg+xml" },
+      { url: "/brand/icons/favicon.svg", type: "image/svg+xml" },
+      { url: "/brand/icons/favicon-96x96.png", sizes: "96x96", type: "image/png" },
     ],
+    shortcut: "/brand/icons/favicon.ico",
     apple: [{ url: "/brand/icons/apple-touch-icon.png", sizes: "180x180", type: "image/png" }],
   },
+  manifest: "/brand/icons/site.webmanifest",
 };
 
 export const viewport: Viewport = {
