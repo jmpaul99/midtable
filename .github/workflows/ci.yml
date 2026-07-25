@@ -42,4 +42,4 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Build API image
-        run: docker build -t football-draft-league-api ./backend
+        run: docker build -t midtable-api ./backend

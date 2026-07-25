@@ -92,7 +92,7 @@ docker compose up --build
 Optional seed inside the container:
 
 ```bash
-docker compose exec api python -m app.scripts.seed_pl_template
+docker compose exec midtable-api python -m app.scripts.seed_pl_template
 ```
 
 Dependency changes (`backend/pyproject.toml`) need `docker compose up --build` again.

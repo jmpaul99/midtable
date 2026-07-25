@@ -1,5 +1,7 @@
 services:
-  api:
+  midtable-api:
+    image: midtable-api
+    container_name: midtable-api
     build:
       context: ./backend
     ports:
