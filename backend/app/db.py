@@ -4,6 +4,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from app.config import get_settings
+from app.database_url import ensure_remote_ssl
 
 
 class Base(DeclarativeBase):
@@ -14,7 +15,7 @@ def _engine():
     # prepare_threshold=None disables psycopg prepared statements. Avoids
     # DuplicatePreparedStatement with poolers / long multi-statement requests.
     return create_engine(
-        get_settings().database_url,
+        ensure_remote_ssl(get_settings().database_url),
         pool_pre_ping=True,
         connect_args={"prepare_threshold": None},
     )

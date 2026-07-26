@@ -23,6 +23,8 @@ from pathlib import Path
 import psycopg
 from psycopg import ClientCursor
 
+from app.database_url import ensure_remote_ssl
+
 logger = logging.getLogger(__name__)
 
 TRACKING_TABLE_SQL = """
@@ -56,7 +58,8 @@ def _database_url() -> str:
         url = get_settings().database_url.strip()
     if not url:
         raise SystemExit("DATABASE_URL (or MIGRATION_DATABASE_URL) must be set")
-    return url.replace("postgresql+psycopg://", "postgresql://", 1)
+    url = url.replace("postgresql+psycopg://", "postgresql://", 1)
+    return ensure_remote_ssl(url)
 
 
 def list_migration_files(migrations_dir: Path) -> list[Path]:

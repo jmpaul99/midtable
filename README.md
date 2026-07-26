@@ -56,7 +56,7 @@ Fill in values. Root `.env` is loaded by the backend; frontend reads `frontend/.
 
 | Variable | Purpose |
 | --- | --- |
-| `DATABASE_URL` | Postgres URL (`postgresql+psycopg://…`) |
+| `DATABASE_URL` | Postgres URL (`postgresql+psycopg://…`); hosted Supabase should use `?sslmode=require` (also enforced for remote hosts in code) |
 | `SUPABASE_URL` | Auth issuer base; JWKS at `{SUPABASE_URL}/auth/v1/.well-known/jwks.json` |
 | `SUPABASE_JWT_AUDIENCE` | Usually `authenticated` |
 | `FOOTBALL_DATA_API_TOKEN` | Provider token |
@@ -164,7 +164,7 @@ Settings → Secrets and variables → Actions.
 | --- | --- | --- |
 | `GCP_PROJECT_ID` | Variable | GCP project id |
 | `GCP_SA_KEY` | Secret | Deploy service-account JSON |
-| `DATABASE_URL` | Secret | Hosted Supabase Postgres URL (also used to apply migrations on backend deploy) |
+| `DATABASE_URL` | Secret | Hosted Supabase Postgres URL with `?sslmode=require` (also used to apply migrations on backend deploy) |
 | `SUPABASE_URL` | Secret | Hosted Supabase project URL (`https://….supabase.co`) |
 | `FOOTBALL_DATA_API_TOKEN` | Secret | football-data.org API token |
 | `CRON_SECRET` | Secret | Long random string |
