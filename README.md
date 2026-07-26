@@ -61,14 +61,19 @@ Fill in values. Root `.env` is loaded by the backend; frontend reads `frontend/.
 | `SUPABASE_JWT_AUDIENCE` | Usually `authenticated` |
 | `FOOTBALL_DATA_API_TOKEN` | Provider token |
 | `CRON_SECRET` | Protects `/internal/*` (required non-default in production) |
+| `INTERNAL_API_SECRET` | Shared by API + Next.js BFF for `/auth/email-status` (required non-default in production) |
+| `TURNSTILE_SECRET` | Cloudflare Turnstile secret key (required in production) |
+| `TURNSTILE_HOSTNAMES` | Frontend hostnames allowed by siteverify (no scheme; comma/space/semicolon separated) |
 | `CORS_ORIGINS` | Comma-separated origins (e.g. `http://localhost:3000`) |
 | `AUTH_BYPASS_EMAIL` | Dev-only: skip JWT and act as this email (forbidden in production) |
 | `PUBLIC_APP_URL` | Frontend origin for invite accept + join links (required in production) |
 | `MAILJET_API_KEY_PUBLIC` / `MAILJET_API_KEY_PRIVATE` | Mailjet Send API credentials (required in production) |
 | `MAILJET_FROM_EMAIL` / `MAILJET_FROM_NAME` | Verified sender for invite emails (inline HTML; no template ID) |
-| `NEXT_PUBLIC_API_URL` | Backend base URL |
+| `API_URL` | Server-side API base for the Next.js BFF (Compose: service DNS; Cloud Run: public API origin) |
+| `NEXT_PUBLIC_API_URL` | Backend base URL (browser) |
 | `NEXT_PUBLIC_SUPABASE_URL` | Same project URL the browser uses |
 | `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Publishable key |
+| `NEXT_PUBLIC_TURNSTILE_SITEKEY` | Cloudflare Turnstile sitekey (public) |
 
 ### 2. Database
 
@@ -156,19 +161,24 @@ Settings → Secrets and variables → Actions.
 | `SUPABASE_URL` | Secret | Hosted Supabase project URL (`https://….supabase.co`) |
 | `FOOTBALL_DATA_API_TOKEN` | Secret | football-data.org API token |
 | `CRON_SECRET` | Secret | Long random string |
-| `PUBLIC_APP_URL` | Secret | Frontend origin (e.g. `https://….run.app`) |
+| `INTERNAL_API_SECRET` | Secret | Long random string (same value on API + frontend Cloud Run) |
+| `TURNSTILE_SECRET` | Secret | Cloudflare Turnstile secret key |
+| `TURNSTILE_HOSTNAMES` | Secret | Frontend hostnames for siteverify (no scheme), e.g. `mid-table.com,midtable-frontend-….run.app` |
+| `NEXT_PUBLIC_TURNSTILE_SITEKEY` | Secret | Cloudflare Turnstile sitekey (public; baked into frontend image) |
+| `PUBLIC_APP_URL` | Secret | Frontend origin (e.g. `https://….run.app` or `https://mid-table.com`) |
 | `MAILJET_API_KEY_PUBLIC` | Secret | Mailjet public key |
 | `MAILJET_API_KEY_PRIVATE` | Secret | Mailjet private key |
 | `MAILJET_FROM_EMAIL` | Secret | Verified sender email |
 | `API_URL` | Secret | API origin (e.g. `https://….run.app`, no path) |
 | `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Secret | Supabase publishable key |
 
-**1 variable + 11 secrets.** Shared mappings (do not create these as separate GitHub secrets):
+**1 variable + 15 secrets.** Shared mappings (do not create these as separate GitHub secrets):
 
-- `API_URL` → frontend `NEXT_PUBLIC_API_URL` + cron base URL
+- `API_URL` → frontend build `NEXT_PUBLIC_API_URL` + frontend runtime `API_URL` (BFF) + cron base URL
 - `PUBLIC_APP_URL` → backend `PUBLIC_APP_URL` + `CORS_ORIGINS` + frontend `NEXT_PUBLIC_SITE_URL`
 - `SUPABASE_URL` → backend + frontend `NEXT_PUBLIC_SUPABASE_URL`
 - `CRON_SECRET` → backend + cron
+- `INTERNAL_API_SECRET` → backend + frontend runtime (BFF → `/auth/email-status`)
 
 Use **hosted** Supabase URLs — not `127.0.0.1` or `host.docker.internal`. Backend workflow sets `APP_ENV=production` and `MAILJET_FROM_NAME=Midtable`.
 
@@ -177,9 +187,9 @@ Use **hosted** Supabase URLs — not `127.0.0.1` or `host.docker.internal`. Back
 1. Enable Cloud Run + Artifact Registry; create Artifact Registry Docker repo `midtable` in `us-central1`.
 2. Deploy SA JSON → secret `GCP_SA_KEY`; set variable `GCP_PROJECT_ID`.
 3. Apply `supabase/migrations/` to the hosted project.
-4. Set all secrets that do not need Cloud Run URLs yet (`DATABASE_URL`, `SUPABASE_URL`, Mailjet, `FOOTBALL_DATA_API_TOKEN`, `CRON_SECRET`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`).
+4. Set secrets that do not need Cloud Run URLs yet (`DATABASE_URL`, `SUPABASE_URL`, Mailjet, `FOOTBALL_DATA_API_TOKEN`, `CRON_SECRET`, `INTERNAL_API_SECRET`, Turnstile keys/hostnames, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`).
 5. Temporary `PUBLIC_APP_URL` (e.g. `https://example.com`) → deploy **backend** → copy API origin → set `API_URL`.
-6. Deploy **frontend** → copy frontend origin → set `PUBLIC_APP_URL` to that origin → redeploy backend and frontend.
+6. Deploy **frontend** → copy frontend origin → set `PUBLIC_APP_URL` to that origin → update `TURNSTILE_HOSTNAMES` to match → redeploy backend and frontend.
 7. Supabase Auth redirects: `{frontend-origin}`, `{frontend-origin}/auth/callback`.
 8. Confirm cron secrets (`API_URL` + `CRON_SECRET`); run Sync and score via `workflow_dispatch`.
 
@@ -194,8 +204,12 @@ docker build -f frontend/Dockerfile \
   --build-arg NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:54321 \
   --build-arg NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=test-publishable-key \
   --build-arg NEXT_PUBLIC_SITE_URL=http://localhost:3000 \
+  --build-arg NEXT_PUBLIC_TURNSTILE_SITEKEY=1x00000000000000000000AA \
   -t midtable-frontend .
-docker run --rm -p 3000:3000 midtable-frontend
+docker run --rm -p 3000:3000 \
+  -e API_URL=http://host.docker.internal:8000 \
+  -e INTERNAL_API_SECRET=dev-internal-secret \
+  midtable-frontend
 ```
 
 ## Auth model

@@ -45,6 +45,23 @@ jobs:
           docker build -t "$IMAGE" ./backend
           docker push "$IMAGE"
 
+      - name: Escape env values for deploy-cloudrun
+        id: escape
+        env:
+          TURNSTILE_HOSTNAMES: ${{ secrets.TURNSTILE_HOSTNAMES }}
+          CORS_ORIGINS: ${{ secrets.PUBLIC_APP_URL }}
+        run: |
+          # deploy-cloudrun splits on unescaped commas inside env_vars values
+          esc() { printf '%s' "$1" | sed 's/,/\\,/g'; }
+          {
+            echo "turnstile_hostnames<<EOF"
+            esc "$TURNSTILE_HOSTNAMES"
+            echo "EOF"
+            echo "cors_origins<<EOF"
+            esc "$CORS_ORIGINS"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Deploy to Cloud Run
         id: deploy
         uses: google-github-actions/deploy-cloudrun@v2
@@ -71,7 +88,10 @@ jobs:
             SUPABASE_URL=${{ secrets.SUPABASE_URL }}
             FOOTBALL_DATA_API_TOKEN=${{ secrets.FOOTBALL_DATA_API_TOKEN }}
             CRON_SECRET=${{ secrets.CRON_SECRET }}
-            CORS_ORIGINS=${{ secrets.PUBLIC_APP_URL }}
+            INTERNAL_API_SECRET=${{ secrets.INTERNAL_API_SECRET }}
+            TURNSTILE_SECRET=${{ secrets.TURNSTILE_SECRET }}
+            TURNSTILE_HOSTNAMES=${{ steps.escape.outputs.turnstile_hostnames }}
+            CORS_ORIGINS=${{ steps.escape.outputs.cors_origins }}
             PUBLIC_APP_URL=${{ secrets.PUBLIC_APP_URL }}
             MAILJET_API_KEY_PUBLIC=${{ secrets.MAILJET_API_KEY_PUBLIC }}
             MAILJET_API_KEY_PRIVATE=${{ secrets.MAILJET_API_KEY_PRIVATE }}

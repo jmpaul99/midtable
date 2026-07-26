@@ -1,4 +1,4 @@
-"""HTTP middleware for request correlation and access logging."""
+"""HTTP middleware for request correlation, access logging, and default-deny auth."""
 
 from __future__ import annotations
 
@@ -8,11 +8,15 @@ import uuid
 
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
-from starlette.responses import Response
+from starlette.responses import JSONResponse, Response
 
+from app.config import get_settings
 from app.logging_config import reset_request_id, set_request_id
 
 logger = logging.getLogger("app.access")
+
+_PUBLIC_GET_PATHS = frozenset({"/health", "/join-links/preview"})
+_DEV_DOCS_PATHS = frozenset({"/docs", "/redoc", "/openapi.json"})
 
 
 class RequestLoggingMiddleware(BaseHTTPMiddleware):
@@ -53,3 +57,55 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         )
         reset_request_id(token)
         return response
+
+
+class AuthGateMiddleware(BaseHTTPMiddleware):
+    """Default-deny: only allowlisted public/secret-gated paths skip Bearer JWT."""
+
+    async def dispatch(
+        self, request: Request, call_next: RequestResponseEndpoint
+    ) -> Response:
+        if request.method == "OPTIONS":
+            return await call_next(request)
+
+        path = request.url.path
+        settings = get_settings()
+
+        # Dev auth bypass authenticates without a Bearer token (see get_current_user).
+        if settings.auth_bypass_email.strip() and not settings.is_production:
+            return await call_next(request)
+
+        if request.method == "GET" and path in _PUBLIC_GET_PATHS:
+            return await call_next(request)
+
+        if (
+            settings.is_development
+            and request.method == "GET"
+            and (path in _DEV_DOCS_PATHS or path.startswith("/docs/"))
+        ):
+            return await call_next(request)
+
+        if request.method == "POST" and path.startswith("/internal/"):
+            if request.headers.get("x-cron-secret"):
+                return await call_next(request)
+            return JSONResponse(
+                status_code=401,
+                content={"detail": "Bearer token required"},
+            )
+
+        if request.method == "POST" and path == "/auth/email-status":
+            if request.headers.get("x-internal-secret"):
+                return await call_next(request)
+            return JSONResponse(
+                status_code=401,
+                content={"detail": "Bearer token required"},
+            )
+
+        auth = request.headers.get("authorization") or ""
+        if auth.lower().startswith("bearer ") and auth[7:].strip():
+            return await call_next(request)
+
+        return JSONResponse(
+            status_code=401,
+            content={"detail": "Bearer token required"},
+        )

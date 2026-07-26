@@ -32,6 +32,9 @@ services:
       - frontend/.env.local
     environment:
       NEXT_PUBLIC_SITE_URL: ${NEXT_PUBLIC_SITE_URL:-http://localhost:3000}
+      # From root .env (Compose substitution). Do not hardcode service DNS here.
+      API_URL: ${API_URL}
+      INTERNAL_API_SECRET: ${INTERNAL_API_SECRET}
       # Reliable file watching on Docker Desktop (Windows/macOS)
       WATCHPACK_POLLING: "true"
       CHOKIDAR_USEPOLLING: "true"

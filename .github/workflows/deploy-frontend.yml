@@ -46,12 +46,14 @@ jobs:
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY }}
           NEXT_PUBLIC_SITE_URL: ${{ secrets.PUBLIC_APP_URL }}
+          NEXT_PUBLIC_TURNSTILE_SITEKEY: ${{ secrets.NEXT_PUBLIC_TURNSTILE_SITEKEY }}
         run: |
           docker build -f frontend/Dockerfile \
             --build-arg NEXT_PUBLIC_API_URL="$NEXT_PUBLIC_API_URL" \
             --build-arg NEXT_PUBLIC_SUPABASE_URL="$NEXT_PUBLIC_SUPABASE_URL" \
             --build-arg NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY="$NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY" \
             --build-arg NEXT_PUBLIC_SITE_URL="$NEXT_PUBLIC_SITE_URL" \
+            --build-arg NEXT_PUBLIC_TURNSTILE_SITEKEY="$NEXT_PUBLIC_TURNSTILE_SITEKEY" \
             -t "$IMAGE" .
           docker push "$IMAGE"
 
@@ -70,6 +72,9 @@ jobs:
             --cpu=1
             --min-instances=0
             --max-instances=10
+          env_vars: |-
+            INTERNAL_API_SECRET=${{ secrets.INTERNAL_API_SECRET }}
+          env_vars_update_strategy: overwrite
 
       - name: Show service URL
         run: echo "Deployed to ${{ steps.deploy.outputs.url }}"

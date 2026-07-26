@@ -1,8 +1,10 @@
+import re
 from functools import lru_cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _DEV_CRON = "dev-cron-secret"
+_DEV_INTERNAL = "dev-internal-secret"
 
 
 class Settings(BaseSettings):
@@ -20,6 +22,11 @@ class Settings(BaseSettings):
     football_data_api_token: str = ""
     football_data_base_url: str = "https://api.football-data.org/v4"
     cron_secret: str = _DEV_CRON
+    internal_api_secret: str = _DEV_INTERNAL
+    # Frontend hostnames allowed by Turnstile siteverify (no scheme).
+    # Separators: comma, semicolon, or whitespace. Prod must not include localhost.
+    turnstile_secret: str = ""
+    turnstile_hostnames: str = "localhost,127.0.0.1"
     cors_origins: str = "http://localhost:3000"
     api_host: str = "0.0.0.0"
     api_port: int = 8000
@@ -54,11 +61,33 @@ class Settings(BaseSettings):
             and self.mailjet_from_email.strip()
         )
 
+    @property
+    def turnstile_hostname_set(self) -> set[str]:
+        # Comma, semicolon, or whitespace (Cloud Run env_vars treat unescaped commas specially).
+        return {
+            h.strip().lower()
+            for h in re.split(r"[,;\s]+", self.turnstile_hostnames)
+            if h.strip()
+        }
+
     def validate_runtime(self) -> None:
         if not self.is_production:
             return
         if not self.cron_secret or self.cron_secret == _DEV_CRON:
             raise RuntimeError("CRON_SECRET must be set to a non-default value in production")
+        if not self.internal_api_secret or self.internal_api_secret == _DEV_INTERNAL:
+            raise RuntimeError(
+                "INTERNAL_API_SECRET must be set to a non-default value in production"
+            )
+        if not self.turnstile_secret.strip():
+            raise RuntimeError("TURNSTILE_SECRET must be set in production")
+        hosts = self.turnstile_hostname_set
+        if not hosts:
+            raise RuntimeError("TURNSTILE_HOSTNAMES must be set in production")
+        if "localhost" in hosts or "127.0.0.1" in hosts:
+            raise RuntimeError(
+                "TURNSTILE_HOSTNAMES must not include localhost or 127.0.0.1 in production"
+            )
         if not self.supabase_url.strip():
             raise RuntimeError("SUPABASE_URL must be set in production (JWKS issuer)")
         if self.auth_bypass_email:

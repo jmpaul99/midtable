@@ -3,13 +3,14 @@
 import { FormEvent, Suspense, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
-import { errorMessage, json, publicApi } from "@/lib/api";
+import { ApiError, errorMessage } from "@/lib/api";
 import { MidtableLogo } from "@/components/MidtableLogo";
 import { Loading, StatusBanner } from "@/components/ui/State";
 import { Button } from "@/components/ui/Button";
 import { LogInIcon, SendIcon, UserPlusIcon, SpinnerIcon } from "@/components/ui/icons";
 import { Card, Eyebrow, Muted, Stack } from "@/components/ui/Card";
 import { Input, Label } from "@/components/ui/Field";
+import { TurnstileWidget, resetTurnstile } from "@/components/TurnstileWidget";
 
 export default function LoginPage() {
   return (
@@ -38,6 +39,8 @@ function LoginForm() {
   const [busy, setBusy] = useState(false);
   const [showPasswordSignIn, setShowPasswordSignIn] = useState(false);
   const [showPasswordRegister, setShowPasswordRegister] = useState(false);
+  const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
+  const [turnstileWidgetId, setTurnstileWidgetId] = useState<string | null>(null);
 
   function callbackUrl(path = next) {
     return `${window.location.origin}/auth/callback?next=${encodeURIComponent(path)}`;
@@ -65,15 +68,36 @@ function LoginForm() {
     setBusy(true);
     setMessage("");
     try {
+      if (!turnstileToken) {
+        setMessage("Please complete the verification challenge.");
+        return;
+      }
       const normalized = email.trim().toLowerCase();
-      const { exists } = await publicApi<{ exists: boolean }>(
-        "/auth/email-status",
-        json("POST", { email: normalized }),
-      );
+      const response = await fetch("/api/auth/email-status", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: normalized,
+          turnstile_token: turnstileToken,
+        }),
+        cache: "no-store",
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) {
+        const detail =
+          typeof payload?.detail === "string"
+            ? payload.detail
+            : `Request failed (${response.status})`;
+        throw new ApiError(response.status, detail, payload?.detail);
+      }
       setEmail(normalized);
-      goToStep(exists ? "existing" : "register");
+      setTurnstileToken(null);
+      resetTurnstile(turnstileWidgetId);
+      goToStep(payload.exists ? "existing" : "register");
     } catch (error) {
       setMessage(errorMessage(error));
+      setTurnstileToken(null);
+      resetTurnstile(turnstileWidgetId);
     } finally {
       setBusy(false);
     }
@@ -210,7 +234,12 @@ function LoginForm() {
                   onChange={(e) => setEmail(e.target.value)}
                 />
               </Label>
-              <Button type="submit" full disabled={busy}>
+              <TurnstileWidget
+                action="email-status"
+                onToken={setTurnstileToken}
+                onWidgetId={setTurnstileWidgetId}
+              />
+              <Button type="submit" full disabled={busy || !turnstileToken}>
                 {busy ? <SpinnerIcon /> : <LogInIcon />}
                 {busy ? "Please wait…" : "Continue"}
               </Button>

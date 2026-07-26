@@ -1,15 +1,16 @@
 import logging
 
-from fastapi import APIRouter, Depends
-from sqlalchemy import select, text
+from fastapi import APIRouter, Depends, Request
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.auth.jwt import AuthenticatedUser, get_current_profile, get_current_user
+from app.config import Settings, get_settings
 from app.db import get_db
-from app.deps import is_platform_admin
-from app.models import Invite, League, LeagueMember, Profile
+from app.deps import is_platform_admin, require_internal_secret
+from app.models import Profile
 from app.schemas.auth import EmailStatusRequest, EmailStatusResponse, MeResponse, MeUpdate
-from app.services.members import default_team_name
+from app.services.turnstile import EMAIL_STATUS_ACTION, verify_turnstile_token
 
 logger = logging.getLogger(__name__)
 
@@ -26,12 +27,35 @@ def _me_response(profile: Profile, *, platform_admin: bool = False) -> MeRespons
     )
 
 
-@router.post("/auth/email-status", response_model=EmailStatusResponse)
+def _client_ip(request: Request) -> str | None:
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        first = forwarded.split(",")[0].strip()
+        if first:
+            return first
+    if request.client:
+        return request.client.host
+    return None
+
+
+@router.post(
+    "/auth/email-status",
+    response_model=EmailStatusResponse,
+    dependencies=[Depends(require_internal_secret)],
+)
 def email_status(
     body: EmailStatusRequest,
+    request: Request,
     db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
 ) -> EmailStatusResponse:
-    """Return whether an auth account exists for the given email (unauthenticated)."""
+    """Return whether an auth account exists (BFF-only; requires Turnstile)."""
+    verify_turnstile_token(
+        token=body.turnstile_token,
+        settings=settings,
+        expected_action=EMAIL_STATUS_ACTION,
+        remote_ip=_client_ip(request),
+    )
     row = db.execute(
         text("SELECT 1 FROM auth.users WHERE lower(email) = :email LIMIT 1"),
         {"email": body.email},
@@ -43,48 +67,8 @@ def email_status(
 def auth_me(
     profile: Profile = Depends(get_current_profile),
     user: AuthenticatedUser = Depends(get_current_user),
-    db: Session = Depends(get_db),
 ) -> MeResponse:
-    """Return current profile; accept pending invites matching email on first login."""
-    pending = db.scalars(
-        select(Invite).where(
-            Invite.email == profile.email,
-            Invite.status == "pending",
-        )
-    ).all()
-    joined_league_ids: list[str] = []
-    for invite in pending:
-        existing = db.scalars(
-            select(LeagueMember).where(
-                LeagueMember.league_id == invite.league_id,
-                LeagueMember.profile_id == profile.id,
-            )
-        ).first()
-        if existing is None:
-            db.add(
-                LeagueMember(
-                    league_id=invite.league_id,
-                    profile_id=profile.id,
-                    is_commissioner=invite.is_commissioner,
-                    draft_slot=invite.draft_slot,
-                    team_name=default_team_name(profile.display_name),
-                )
-            )
-            league = db.get(League, invite.league_id)
-            if league is not None:
-                joined_league_ids.append(str(league.public_id))
-        invite.status = "accepted"
-    db.commit()
-    db.refresh(profile)
-    if pending:
-        logger.info(
-            "auth_me auto-accepted invites profile_id=%s accepted=%s new_memberships=%s "
-            "league_ids=%s",
-            profile.public_id,
-            len(pending),
-            len(joined_league_ids),
-            joined_league_ids,
-        )
+    """Return current profile."""
     return _me_response(profile, platform_admin=is_platform_admin(user))
 
 
@@ -100,5 +84,9 @@ def update_me(
     db.commit()
     db.refresh(profile)
     logger.info("profile display_name updated profile_id=%s", profile.public_id)
-    logger.debug("profile display_name updated profile_id=%s name=%s", profile.public_id, body.display_name)
+    logger.debug(
+        "profile display_name updated profile_id=%s name=%s",
+        profile.public_id,
+        body.display_name,
+    )
     return _me_response(profile, platform_admin=is_platform_admin(user))

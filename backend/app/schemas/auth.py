@@ -29,11 +29,20 @@ class MeUpdate(BaseModel):
 
 class EmailStatusRequest(BaseModel):
     email: EmailStr
+    turnstile_token: str = Field(min_length=1, max_length=2048)
 
     @field_validator("email")
     @classmethod
     def normalize_email(cls, value: EmailStr) -> str:
         return str(value).strip().lower()
+
+    @field_validator("turnstile_token")
+    @classmethod
+    def trim_token(cls, value: str) -> str:
+        token = value.strip()
+        if not token:
+            raise ValueError("Turnstile token is required")
+        return token
 
 
 class EmailStatusResponse(BaseModel):

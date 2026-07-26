@@ -7,7 +7,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.config import get_settings
 from app.logging_config import configure_logging
-from app.middleware import RequestLoggingMiddleware
+from app.middleware import AuthGateMiddleware, RequestLoggingMiddleware
 from app.routers import build_api_router
 from app.services.errors import DomainError
 
@@ -26,7 +26,17 @@ logger.info(
     bool(settings.auth_bypass_email.strip()),
 )
 
-app = FastAPI(title="Football Draft League API", version="0.1.0")
+_docs = "/docs" if settings.is_development else None
+_redoc = "/redoc" if settings.is_development else None
+_openapi = "/openapi.json" if settings.is_development else None
+
+app = FastAPI(
+    title="Football Draft League API",
+    version="0.1.0",
+    docs_url=_docs,
+    redoc_url=_redoc,
+    openapi_url=_openapi,
+)
 origins = settings.cors_origin_list
 if "*" in origins:
     raise RuntimeError("CORS_ORIGINS must not include '*' with allow_credentials=True")
@@ -38,6 +48,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.add_middleware(RequestLoggingMiddleware)
+app.add_middleware(AuthGateMiddleware)
 
 app.include_router(build_api_router())
 
@@ -66,8 +77,3 @@ async def integrity_error_handler(request: Request, exc: IntegrityError) -> JSON
 async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     logger.exception("Unhandled error path=%s", request.url.path)
     return JSONResponse(status_code=500, content={"detail": "Internal server error"})
-
-
-@app.get("/")
-def root():
-    return {"name": "football-draft-league", "docs": "/docs"}

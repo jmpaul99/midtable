@@ -40,8 +40,13 @@ services:
         NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL:-http://127.0.0.1:54321}
         NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ${NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY}
         NEXT_PUBLIC_SITE_URL: ${NEXT_PUBLIC_SITE_URL:-http://localhost:3000}
+        NEXT_PUBLIC_TURNSTILE_SITEKEY: ${NEXT_PUBLIC_TURNSTILE_SITEKEY}
     ports:
       - "3000:3000"
+    environment:
+      # Server-side BFF → API (from root .env). Browser uses NEXT_PUBLIC_API_URL.
+      API_URL: ${API_URL}
+      INTERNAL_API_SECRET: ${INTERNAL_API_SECRET}
     depends_on:
       midtable-api:
         condition: service_healthy

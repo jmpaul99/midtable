@@ -94,6 +94,21 @@ def require_cron_secret(
         )
 
 
+def require_internal_secret(
+    x_internal_secret: str | None = Header(default=None, alias="X-Internal-Secret"),
+    settings: Settings = Depends(get_settings),
+) -> None:
+    if (
+        not settings.internal_api_secret
+        or x_internal_secret != settings.internal_api_secret
+    ):
+        logger.warning("Rejected request with invalid internal API secret")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid internal API secret",
+        )
+
+
 def get_football_provider(
     settings: Settings = Depends(get_settings),
 ) -> Iterator[FootballDataProvider]:
