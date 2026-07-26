@@ -60,6 +60,38 @@ async function getAccessToken(refresh = false): Promise<string | null> {
   return session?.access_token ?? null;
 }
 
+async function parseResponse<T>(response: Response): Promise<T> {
+  if (response.status === 204) return undefined as T;
+
+  const payload = await response.json().catch(() => null);
+  if (!response.ok) {
+    const detail = payload?.detail;
+    const message = formatDetail(detail) || `Request failed (${response.status})`;
+    throw new ApiError(response.status, message, detail);
+  }
+  return payload as T;
+}
+
+function apiUrl(path: string): string {
+  return `${API_URL}${path.startsWith("/") ? path : `/${path}`}`;
+}
+
+/** Unauthenticated API call (no Bearer token). */
+export async function publicApi<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const headers = new Headers(init.headers);
+  if (init.body && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
+
+  const response = await fetch(apiUrl(path), {
+    ...init,
+    headers,
+    cache: "no-store",
+  });
+
+  return parseResponse<T>(response);
+}
+
 export async function api<T>(path: string, init: RequestInit = {}, retried = false): Promise<T> {
   const token = await getAccessToken(false);
   if (!token) throw new ApiError(401, "Please sign in to continue.");
@@ -70,7 +102,7 @@ export async function api<T>(path: string, init: RequestInit = {}, retried = fal
     headers.set("Content-Type", "application/json");
   }
 
-  const response = await fetch(`${API_URL}${path.startsWith("/") ? path : `/${path}`}`, {
+  const response = await fetch(apiUrl(path), {
     ...init,
     headers,
     cache: "no-store",
@@ -85,15 +117,7 @@ export async function api<T>(path: string, init: RequestInit = {}, retried = fal
     throw new ApiError(401, "Session expired. Please sign in again.");
   }
 
-  if (response.status === 204) return undefined as T;
-
-  const payload = await response.json().catch(() => null);
-  if (!response.ok) {
-    const detail = payload?.detail;
-    const message = formatDetail(detail) || `Request failed (${response.status})`;
-    throw new ApiError(response.status, message, detail);
-  }
-  return payload as T;
+  return parseResponse<T>(response);
 }
 
 export const json = (method: string, body?: unknown): RequestInit => ({

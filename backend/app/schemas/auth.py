@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, EmailStr, Field, field_validator
 
 from app.auth.jwt import MAX_DISPLAY_NAME_LEN
 
@@ -25,3 +25,16 @@ class MeUpdate(BaseModel):
         if len(name) > MAX_DISPLAY_NAME_LEN:
             raise ValueError(f"Display name must be at most {MAX_DISPLAY_NAME_LEN} characters")
         return name
+
+
+class EmailStatusRequest(BaseModel):
+    email: EmailStr
+
+    @field_validator("email")
+    @classmethod
+    def normalize_email(cls, value: EmailStr) -> str:
+        return str(value).strip().lower()
+
+
+class EmailStatusResponse(BaseModel):
+    exists: bool

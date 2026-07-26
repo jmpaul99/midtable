@@ -1,14 +1,14 @@
 import logging
 
 from fastapi import APIRouter, Depends
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from app.auth.jwt import AuthenticatedUser, get_current_profile, get_current_user
 from app.db import get_db
 from app.deps import is_platform_admin
 from app.models import Invite, League, LeagueMember, Profile
-from app.schemas.auth import MeResponse, MeUpdate
+from app.schemas.auth import EmailStatusRequest, EmailStatusResponse, MeResponse, MeUpdate
 from app.services.members import default_team_name
 
 logger = logging.getLogger(__name__)
@@ -24,6 +24,19 @@ def _me_response(profile: Profile, *, platform_admin: bool = False) -> MeRespons
         auth_user_id=profile.auth_user_id,
         is_platform_admin=platform_admin,
     )
+
+
+@router.post("/auth/email-status", response_model=EmailStatusResponse)
+def email_status(
+    body: EmailStatusRequest,
+    db: Session = Depends(get_db),
+) -> EmailStatusResponse:
+    """Return whether an auth account exists for the given email (unauthenticated)."""
+    row = db.execute(
+        text("SELECT 1 FROM auth.users WHERE lower(email) = :email LIMIT 1"),
+        {"email": body.email},
+    ).first()
+    return EmailStatusResponse(exists=row is not None)
 
 
 @router.get("/auth/me", response_model=MeResponse)
