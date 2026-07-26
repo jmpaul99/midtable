@@ -11,7 +11,13 @@ class Base(DeclarativeBase):
 
 
 def _engine():
-    return create_engine(get_settings().database_url, pool_pre_ping=True)
+    # prepare_threshold=None disables psycopg prepared statements. Avoids
+    # DuplicatePreparedStatement with poolers / long multi-statement requests.
+    return create_engine(
+        get_settings().database_url,
+        pool_pre_ping=True,
+        connect_args={"prepare_threshold": None},
+    )
 
 
 engine = _engine()

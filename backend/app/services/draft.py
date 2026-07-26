@@ -27,7 +27,7 @@ from app.services.errors import (
     NotFoundError,
 )
 from app.logging_config import log_id
-from app.services.members import required_manager_count
+from app.services.readiness import evaluate_readiness
 
 logger = logging.getLogger(__name__)
 
@@ -422,20 +422,11 @@ def reassign_roster_entry(
 def open_draft(db: Session, league: League) -> DraftState:
     if league.status not in {"pre_draft", "drafting"}:
         raise ConflictError(f"Cannot open draft from league status {league.status}")
+    readiness = evaluate_readiness(db, league)
+    if not readiness.ready:
+        raise ConflictError(readiness.errors[0] if readiness.errors else "League is not ready")
     members = list(db.scalars(select(LeagueMember).where(LeagueMember.league_id == league.id)).all())
-    required = required_manager_count(league)
-    if required is None:
-        raise ConflictError(
-            "Set the required number of managers in league settings before opening the draft"
-        )
-    if len(members) != required:
-        raise ConflictError(
-            f"Need exactly {required} managers to open the draft (have {len(members)})"
-        )
     ordered = ordered_members(members)
-    pools = list(db.scalars(select(TeamPool).where(TeamPool.league_id == league.id)).all())
-    if any(p.slot_count < 1 for p in pools):
-        raise ConflictError("All draftable pools need slot_count >= 1")
 
     mode = (league.preassign_mode or "none").lower()
     if mode in {"supported", "optional"}:

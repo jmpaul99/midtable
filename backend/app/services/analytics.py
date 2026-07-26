@@ -102,15 +102,25 @@ def leaderboard(
     if include_bonuses:
         from app.models import BonusType
 
-        bonuses = db.scalars(
-            select(ManualBonus).where(ManualBonus.league_id == league.id)
-        ).all()
+        bonuses = list(
+            db.scalars(select(ManualBonus).where(ManualBonus.league_id == league.id)).all()
+        )
         types = {
             bt.id: bt
             for bt in db.scalars(select(BonusType).where(BonusType.league_id == league.id)).all()
         }
+        match_ids = {b.match_id for b in bonuses if b.match_id is not None}
+        matches_by_id = {
+            m.id: m
+            for m in db.scalars(select(Match).where(Match.id.in_(match_ids or [0]))).all()
+        }
         for bonus in bonuses:
-            member_id = roster.get(bonus.team_id)
+            if bonus.member_id is not None:
+                member_id = bonus.member_id
+            elif bonus.team_id is not None:
+                member_id = roster.get(bonus.team_id)
+            else:
+                continue
             if member_id is None:
                 continue
             bt = types.get(bonus.bonus_type_id)
@@ -118,6 +128,16 @@ def leaderboard(
                 continue
             if "*" not in include_bonuses and bt.key not in include_bonuses:
                 continue
+            if bonus.match_id is not None:
+                match = matches_by_id.get(bonus.match_id)
+                if match is None:
+                    continue
+                if not match_passes_phase_filter(
+                    scheduled_matchweek=match.scheduled_matchweek,
+                    stage=match.stage,
+                    match_filter=match_filter,
+                ):
+                    continue
             pts = Decimal(bonus.points)
             totals[member_id] += pts
             bonus_points[member_id][bt.key] += pts

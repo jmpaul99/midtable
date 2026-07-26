@@ -12,7 +12,16 @@ from sqlalchemy.orm import Session
 from app.auth.jwt import get_current_profile
 from app.db import get_db
 from app.deps import require_commissioner, require_league_member
-from app.models import CompetitionTemplate, DraftState, League, LeagueMember, PoolTeam, Profile, TeamPool
+from app.models import (
+    CompetitionTemplate,
+    DraftState,
+    League,
+    LeagueMember,
+    PoolTeam,
+    Profile,
+    RosterEntry,
+    TeamPool,
+)
 from app.routers.league_mappers import (
     _league_detail,
     _league_response,
@@ -45,6 +54,19 @@ def _league_list_sort_key(league: League) -> tuple[bool, datetime]:
     """Active seasons first; within a group, newest created first (caller uses reverse=True)."""
     created = league.created_at or datetime.min.replace(tzinfo=UTC)
     return (league.status != "complete", created)
+
+
+def _league_config_from_template(
+    template: CompetitionTemplate | None,
+    *,
+    max_members: int | None,
+) -> dict:
+    config: dict = {"max_members": max_members}
+    if template is None:
+        return config
+    order = template.roster_club_order
+    config["roster_club_order"] = order if order in ("draft", "competition") else "draft"
+    return config
 
 
 def _my_standing(
@@ -137,7 +159,7 @@ def create_league(
         ),
         buy_in=(template.buy_in if template else 0),
         payouts=(template.payouts if template else []),
-        config={"max_members": payload.max_members},
+        config=_league_config_from_template(template, max_members=payload.max_members),
     )
     db.add(league)
     db.flush()
@@ -294,8 +316,31 @@ def update_settings(
     roster_club_order = data.pop("roster_club_order", None)
     pools_patch = data.pop("pools", None)
     remove_pool_ids = data.pop("remove_pool_ids", None)
+    draft_style = data.get("draft_style")
+    preassign_mode = data.get("preassign_mode")
+    if (draft_style is not None or preassign_mode is not None) and league.status != "pre_draft":
+        raise HTTPException(
+            status_code=409,
+            detail="Draft style and preassign mode can only be changed before the draft opens.",
+        )
+    clear_preassigns = (
+        preassign_mode is not None and str(preassign_mode).lower() == "none"
+    )
     for key, value in data.items():
         setattr(league, key, value)
+    if clear_preassigns:
+        for entry in db.scalars(
+            select(RosterEntry).where(
+                RosterEntry.league_id == league.id,
+                RosterEntry.source == "preassigned",
+            )
+        ).all():
+            db.delete(entry)
+        db.flush()
+        logger.info(
+            "preassigns cleared league_id=%s reason=preassign_mode_none",
+            log_id(league),
+        )
     if max_members is not None or roster_club_order is not None:
         config = dict(league.config or {})
         if max_members is not None:

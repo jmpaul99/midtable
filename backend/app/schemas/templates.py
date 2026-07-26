@@ -1,6 +1,6 @@
 from datetime import datetime
 from decimal import Decimal
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -23,6 +23,8 @@ class TemplateCreate(BaseModel):
     roster_slots: list[Any] = Field(default_factory=list)
     pool_definitions: list[Any] = Field(default_factory=list)
     bonus_types: list[Any] = Field(default_factory=list)
+    roster_club_order: Literal["draft", "competition"] = "draft"
+    max_members: int | None = Field(default=None, ge=2, le=100)
     featured: bool = False
     made_by_staff: bool = False
 
@@ -41,6 +43,8 @@ class TemplateResponse(IdSchema):
     roster_slots: list[Any]
     pool_definitions: list[Any]
     bonus_types: list[Any]
+    roster_club_order: Literal["draft", "competition"] = "draft"
+    max_members: int | None = None
     featured: bool = False
     made_by_staff: bool = False
     created_by_id: UUID | None = None
@@ -60,6 +64,8 @@ class TemplateUpdate(BaseModel):
     roster_slots: list[Any] | None = None
     pool_definitions: list[Any] | None = None
     bonus_types: list[Any] | None = None
+    roster_club_order: Literal["draft", "competition"] | None = None
+    max_members: int | None = Field(default=None, ge=2, le=100)
     featured: bool | None = None
     made_by_staff: bool | None = None
 

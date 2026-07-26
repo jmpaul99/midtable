@@ -4,8 +4,11 @@ import { FormEvent, useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { api, errorMessage, json } from "@/lib/api";
 import { Button } from "@/components/ui/Button";
-import { Input, Label, Textarea } from "@/components/ui/Field";
-import { ErrorState } from "@/components/ui/State";
+import { Input, Label } from "@/components/ui/Field";
+import { ErrorState, Loading } from "@/components/ui/State";
+import { Muted } from "@/components/ui/Card";
+import { TeamCrest } from "@/components/league/TeamCrest";
+import { ReorderButtons, RowItem, RowList } from "./chrome";
 
 export type RankingCatalogOption = {
   id: string;
@@ -16,27 +19,55 @@ export type RankingCatalogOption = {
   as_of?: string | null;
 };
 
+export type RankingCompetitionRef = {
+  competition_code: string;
+  season_year: number;
+};
+
+type CompetitionTeam = {
+  external_id: string;
+  name: string;
+  short_name?: string | null;
+  crest_url?: string | null;
+  competition_code: string;
+};
+
+type CompetitionTeamsResponse = {
+  teams: CompetitionTeam[];
+};
+
+function rankingsText(teams: CompetitionTeam[]): string {
+  return teams.map((t, i) => `${i + 1},${t.name}`).join("\n");
+}
+
 export function CustomRankingListModal({
   open,
   onClose,
   onCreated,
+  competitions,
 }: {
   open: boolean;
   onClose: () => void;
   onCreated: (catalog: RankingCatalogOption) => void;
+  competitions: RankingCompetitionRef[];
 }) {
   const titleId = useId();
   const labelRef = useRef<HTMLInputElement>(null);
   const [label, setLabel] = useState("");
-  const [text, setText] = useState("");
+  const [teams, setTeams] = useState<CompetitionTeam[]>([]);
+  const [loadError, setLoadError] = useState("");
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
+  const competitionsKey = competitions
+    .map((c) => `${c.competition_code.trim().toUpperCase()}:${c.season_year}`)
+    .filter((k) => !k.startsWith(":"))
+    .sort()
+    .join("|");
+
   useEffect(() => {
     if (!open) return;
-    setLabel("");
-    setText("");
-    setError("");
     const prev = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     labelRef.current?.focus();
@@ -50,14 +81,61 @@ export function CustomRankingListModal({
     };
   }, [open, onClose]);
 
+  useEffect(() => {
+    if (!open) return;
+    setLabel("");
+    setTeams([]);
+    setLoadError("");
+    setError("");
+    setLoading(true);
+
+    const payload = {
+      competitions: competitionsKey
+        ? competitionsKey.split("|").map((pair) => {
+            const [code, year] = pair.split(":");
+            return { code, season_year: Number(year) };
+          })
+        : [],
+    };
+
+    let cancelled = false;
+    api<CompetitionTeamsResponse>("/competitions/teams", json("POST", payload))
+      .then((res) => {
+        if (cancelled) return;
+        setTeams(res.teams ?? []);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setLoadError(errorMessage(err));
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [open, competitionsKey]);
+
+  function reorder(from: number, to: number) {
+    if (from === to || from < 0 || to < 0 || from >= teams.length || to >= teams.length) {
+      return;
+    }
+    const next = [...teams];
+    const [item] = next.splice(from, 1);
+    next.splice(to, 0, item);
+    setTeams(next);
+  }
+
   async function submit(e: FormEvent) {
     e.preventDefault();
+    if (!teams.length || loading || loadError) return;
     setBusy(true);
     setError("");
     try {
       const created = await api<RankingCatalogOption>(
         "/ranking-catalogs",
-        json("POST", { label: label.trim(), text }),
+        json("POST", { label: label.trim(), text: rankingsText(teams) }),
       );
       onCreated(created);
       onClose();
@@ -69,6 +147,8 @@ export function CustomRankingListModal({
   }
 
   if (!open || typeof document === "undefined") return null;
+
+  const canSave = !busy && !loading && !loadError && teams.length > 0 && label.trim().length > 0;
 
   return createPortal(
     <div className="fixed inset-0 z-50 flex items-end justify-center p-4 sm:items-center">
@@ -82,15 +162,14 @@ export function CustomRankingListModal({
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
-        className="relative z-10 flex w-full max-w-lg flex-col gap-3 rounded-2xl border border-line bg-surface p-5 shadow-lg"
+        className="relative z-10 flex max-h-[min(90vh,40rem)] w-full max-w-xl flex-col gap-3 rounded-2xl border border-line bg-surface p-5 shadow-lg"
         onSubmit={submit}
       >
         <h2 id={titleId} className="font-display text-lg font-extrabold text-ink">
           Custom ranking list
         </h2>
         <p className="text-sm text-muted">
-          Paste a ranked list (one team per line, or <code>1,Team</code>). Only you can reuse this
-          list.
+          Rank teams from your selected competitions with the arrows. Only you can reuse this list.
         </p>
         {error && <ErrorState error={error} />}
         <Label>
@@ -103,22 +182,45 @@ export function CustomRankingListModal({
             placeholder="My tournament rankings"
           />
         </Label>
-        <Label>
-          Rankings
-          <Textarea
-            required
-            rows={10}
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            placeholder={"1,Argentina\n2,France\n3,England"}
-            className="font-mono text-sm"
-          />
-        </Label>
+        <div className="flex min-h-0 flex-1 flex-col gap-2">
+          <span className="text-sm font-semibold text-muted">Rankings</span>
+          {loading ? (
+            <Loading label="Loading teams" />
+          ) : loadError ? (
+            <ErrorState error={loadError} />
+          ) : teams.length === 0 ? (
+            <Muted className="text-sm">No teams found for the selected competitions.</Muted>
+          ) : (
+            <div className="min-h-0 flex-1 overflow-y-auto rounded-xl">
+              <RowList>
+                {teams.map((team, index) => (
+                  <RowItem key={team.external_id} className="p-2 sm:p-2.5">
+                    <div className="flex items-center gap-2">
+                      <ReorderButtons
+                        index={index}
+                        total={teams.length}
+                        onMove={reorder}
+                        itemLabel="team"
+                      />
+                      <Muted className="w-8 shrink-0 text-xs font-bold tabular-nums">
+                        #{index + 1}
+                      </Muted>
+                      <TeamCrest name={team.name} crestUrl={team.crest_url} size="sm" />
+                      <span className="min-w-0 flex-1 truncate text-sm font-semibold text-ink">
+                        {team.name}
+                      </span>
+                    </div>
+                  </RowItem>
+                ))}
+              </RowList>
+            </div>
+          )}
+        </div>
         <div className="mt-2 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
           <Button type="button" variant="secondary" onClick={onClose} disabled={busy}>
             Cancel
           </Button>
-          <Button type="submit" variant="primary" disabled={busy}>
+          <Button type="submit" variant="primary" disabled={!canSave}>
             {busy ? "Saving…" : "Save list"}
           </Button>
         </div>

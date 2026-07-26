@@ -184,6 +184,7 @@ def sync_league_fixtures(
                         status=pm.status,
                         home_goals=pm.home_goals,
                         away_goals=pm.away_goals,
+                        duration=pm.duration or "REGULAR",
                         scheduled_matchweek=pm.matchday,
                         stage=pm.stage,
                         last_synced_at=datetime.now(UTC),
@@ -197,6 +198,7 @@ def sync_league_fixtures(
                         existing.status,
                         existing.home_goals,
                         existing.away_goals,
+                        existing.duration,
                         existing.kickoff_at,
                     )
                     if existing.scheduled_matchweek is None and pm.matchday is not None:
@@ -205,6 +207,7 @@ def sync_league_fixtures(
                     existing.status = pm.status
                     existing.home_goals = pm.home_goals
                     existing.away_goals = pm.away_goals
+                    existing.duration = pm.duration or "REGULAR"
                     if pm.stage:
                         existing.stage = pm.stage
                     existing.last_synced_at = datetime.now(UTC)
@@ -212,6 +215,7 @@ def sync_league_fixtures(
                         existing.status,
                         existing.home_goals,
                         existing.away_goals,
+                        existing.duration,
                         existing.kickoff_at,
                     )
                     if before != after:

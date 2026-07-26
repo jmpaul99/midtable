@@ -1,9 +1,58 @@
 /** Shared scoring / template config shapes + normalize helpers. */
 
+export type ResultPointKey =
+  | "win"
+  | "draw"
+  | "loss"
+  | "win_et"
+  | "loss_et"
+  | "win_pk"
+  | "loss_pk";
+
+export const RESULT_POINT_KEYS: ResultPointKey[] = [
+  "win",
+  "draw",
+  "loss",
+  "win_et",
+  "loss_et",
+  "win_pk",
+  "loss_pk",
+];
+
+export const BASE_RESULT_KEYS = ["win", "draw", "loss"] as const;
+export const OVERTIME_RESULT_KEYS = ["win_et", "loss_et", "win_pk", "loss_pk"] as const;
+
+/** Sparse per-stage overrides; null means inherit. */
+export type StageResultPoints = {
+  win: number | null;
+  draw: number | null;
+  loss: number | null;
+  win_et: number | null;
+  loss_et: number | null;
+  win_pk: number | null;
+  loss_pk: number | null;
+};
+
+/** Optional ET/PK fields: null means inherit win / loss. */
 export type ResultPoints = {
   win: number;
   draw: number;
   loss: number;
+  win_et: number | null;
+  loss_et: number | null;
+  win_pk: number | null;
+  loss_pk: number | null;
+  by_stage: Record<string, StageResultPoints>;
+};
+
+export const EMPTY_STAGE_RESULT_POINTS: StageResultPoints = {
+  win: null,
+  draw: null,
+  loss: null,
+  win_et: null,
+  loss_et: null,
+  win_pk: null,
+  loss_pk: null,
 };
 
 export type UpsetThreshold = {
@@ -88,12 +137,150 @@ function arr(v: unknown): unknown[] {
   return Array.isArray(v) ? v : [];
 }
 
+function optionalNum(o: Record<string, unknown>, key: string): number | null {
+  if (!(key in o) || o[key] == null || o[key] === "") return null;
+  const n = Number(o[key]);
+  return Number.isFinite(n) ? n : null;
+}
+
+function normalizeStageResultPoints(raw: unknown): StageResultPoints {
+  const o = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+  return {
+    win: optionalNum(o, "win"),
+    draw: optionalNum(o, "draw"),
+    loss: optionalNum(o, "loss"),
+    win_et: optionalNum(o, "win_et"),
+    loss_et: optionalNum(o, "loss_et"),
+    win_pk: optionalNum(o, "win_pk"),
+    loss_pk: optionalNum(o, "loss_pk"),
+  };
+}
+
+function serializeStageResultPoints(value: StageResultPoints): Record<string, number> | null {
+  const out: Record<string, number> = {};
+  for (const key of RESULT_POINT_KEYS) {
+    const v = value[key];
+    if (v != null) out[key] = v;
+  }
+  return Object.keys(out).length ? out : null;
+}
+
 export function normalizeResultPoints(raw: unknown): ResultPoints {
   const o = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+  const byStageRaw =
+    o.by_stage && typeof o.by_stage === "object" && !Array.isArray(o.by_stage)
+      ? (o.by_stage as Record<string, unknown>)
+      : {};
+  const by_stage: Record<string, StageResultPoints> = {};
+  for (const [code, stageCfg] of Object.entries(byStageRaw)) {
+    const key = code.trim();
+    if (!key) continue;
+    const stage = normalizeStageResultPoints(stageCfg);
+    if (RESULT_POINT_KEYS.some((k) => stage[k] != null)) {
+      by_stage[key] = stage;
+    }
+  }
   return {
     win: num(o.win, 3),
     draw: num(o.draw, 1),
     loss: num(o.loss, 0),
+    win_et: optionalNum(o, "win_et"),
+    loss_et: optionalNum(o, "loss_et"),
+    win_pk: optionalNum(o, "win_pk"),
+    loss_pk: optionalNum(o, "loss_pk"),
+    by_stage,
+  };
+}
+
+export type SerializedResultPoints = {
+  win: number;
+  draw: number;
+  loss: number;
+  win_et?: number;
+  loss_et?: number;
+  win_pk?: number;
+  loss_pk?: number;
+  by_stage?: Record<string, Record<string, number>>;
+};
+
+/** Persist only set ET/PK / stage overrides; omit null so the engine inherits. */
+export function serializeResultPoints(value: ResultPoints): SerializedResultPoints {
+  const out: SerializedResultPoints = {
+    win: value.win,
+    draw: value.draw,
+    loss: value.loss,
+  };
+  if (value.win_et != null) out.win_et = value.win_et;
+  if (value.loss_et != null) out.loss_et = value.loss_et;
+  if (value.win_pk != null) out.win_pk = value.win_pk;
+  if (value.loss_pk != null) out.loss_pk = value.loss_pk;
+  const byStage: Record<string, Record<string, number>> = {};
+  for (const [code, stage] of Object.entries(value.by_stage || {})) {
+    const serialized = serializeStageResultPoints(stage);
+    if (serialized) byStage[code] = serialized;
+  }
+  if (Object.keys(byStage).length) out.by_stage = byStage;
+  return out;
+}
+
+export function hasOvertimeOverrides(value: ResultPoints): boolean {
+  return (
+    value.win_et != null ||
+    value.loss_et != null ||
+    value.win_pk != null ||
+    value.loss_pk != null
+  );
+}
+
+export function hasStageOverrides(value: ResultPoints): boolean {
+  return Object.values(value.by_stage || {}).some((s) => stageOverrideKeys(s).length > 0);
+}
+
+export function stageOverrideCount(value: ResultPoints): number {
+  return Object.values(value.by_stage || {}).filter((s) => stageOverrideKeys(s).length > 0)
+    .length;
+}
+
+export function stageHasOvertimeOverrides(stage: StageResultPoints): boolean {
+  return OVERTIME_RESULT_KEYS.some((k) => stage[k] != null);
+}
+
+export function stageOverrideKeys(stage: StageResultPoints | undefined): ResultPointKey[] {
+  if (!stage) return [];
+  return RESULT_POINT_KEYS.filter((k) => stage[k] != null);
+}
+
+/** Default-block resolved values (ET/PK inherit Default win/loss when unset). */
+export function defaultResolvedPoints(
+  value: ResultPoints,
+): Record<ResultPointKey, number> {
+  return {
+    win: value.win,
+    draw: value.draw,
+    loss: value.loss,
+    win_et: value.win_et ?? value.win,
+    loss_et: value.loss_et ?? value.loss,
+    win_pk: value.win_pk ?? value.win,
+    loss_pk: value.loss_pk ?? value.loss,
+  };
+}
+
+/** Resolved points for a stage; empty stage fields always use Default. */
+export function resolveResultPoints(
+  value: ResultPoints,
+  stage?: string | null,
+): Record<ResultPointKey, number> {
+  const defaults = defaultResolvedPoints(value);
+  const stagePts = stage ? value.by_stage[stage] : undefined;
+  if (!stagePts) return defaults;
+  return {
+    win: stagePts.win ?? defaults.win,
+    draw: stagePts.draw ?? defaults.draw,
+    loss: stagePts.loss ?? defaults.loss,
+    win_et: stagePts.win_et ?? defaults.win_et,
+    loss_et: stagePts.loss_et ?? defaults.loss_et,
+    win_pk: stagePts.win_pk ?? defaults.win_pk,
+    loss_pk: stagePts.loss_pk ?? defaults.loss_pk,
   };
 }
 
@@ -154,7 +341,7 @@ export function normalizeUpsetRules(raw: unknown): UpsetRules {
     enabled: o.enabled !== false,
     rank_source: str(o.rank_source, "league_table_at_kickoff"),
     ranking_list_key: o.ranking_list_key == null ? null : str(o.ranking_list_key),
-    min_played: num(eligibility.min_played ?? o.min_played, 8),
+    min_played: num(eligibility.min_played ?? o.min_played, 0),
     thresholds,
   };
 }

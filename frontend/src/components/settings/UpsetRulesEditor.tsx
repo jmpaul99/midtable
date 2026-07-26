@@ -8,6 +8,7 @@ import { AddRowButton, EditorSection, RemoveButton, RowItem, RowList } from "./c
 import {
   CustomRankingListModal,
   type RankingCatalogOption,
+  type RankingCompetitionRef,
 } from "./CustomRankingListModal";
 import {
   slugifyKey,
@@ -34,11 +35,14 @@ export function UpsetRulesEditor({
   value,
   onChange,
   allowCustomLists = false,
+  competitions = [],
 }: {
   value: UpsetRules;
   onChange: (next: UpsetRules) => void;
   /** Custom lists require competitions to be defined first. */
   allowCustomLists?: boolean;
+  /** Competitions whose teams can be ranked in a custom list. */
+  competitions?: RankingCompetitionRef[];
 }) {
   const fixed = value.rank_source === "fixed_ranking_at_event_start";
   const [catalogs, setCatalogs] = useState<RankingCatalogOption[]>([]);
@@ -132,8 +136,14 @@ export function UpsetRulesEditor({
           <Input
             type="number"
             min={0}
-            value={value.min_played}
-            onChange={(e) => onChange({ ...value, min_played: Number(e.target.value) })}
+            value={value.min_played || ""}
+            placeholder="0"
+            onChange={(e) =>
+              onChange({
+                ...value,
+                min_played: e.target.value === "" ? 0 : Number(e.target.value),
+              })
+            }
             className={cn(compactInput, "w-[5.5rem]")}
             title="Both clubs need this many league games played before an upset can score"
           />
@@ -277,6 +287,7 @@ export function UpsetRulesEditor({
       <CustomRankingListModal
         open={modalOpen}
         onClose={() => setModalOpen(false)}
+        competitions={competitions}
         onCreated={(catalog) => {
           setCatalogs((prev) =>
             prev.some((c) => c.id === catalog.id) ? prev : [...prev, catalog],

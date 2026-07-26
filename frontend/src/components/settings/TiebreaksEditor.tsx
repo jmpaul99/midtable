@@ -17,8 +17,12 @@ type Option = { id: string; label: string; group: string };
 
 const DEFAULT_EVENTS = [
   { value: "win", label: "Win" },
+  { value: "win_et", label: "Win (extra time)" },
+  { value: "win_pk", label: "Win (penalties)" },
   { value: "draw", label: "Draw" },
   { value: "loss", label: "Loss" },
+  { value: "loss_et", label: "Loss (extra time)" },
+  { value: "loss_pk", label: "Loss (penalties)" },
   { value: "minor_upset", label: "Minor upset" },
   { value: "major_upset", label: "Major upset" },
   { value: "major_upset_draw", label: "Major upset draw" },

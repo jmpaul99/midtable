@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useId, useState } from "react";
 import { formatDate, formatNumber } from "@/lib/format";
 import type { BonusAward, UUID } from "@/lib/types";
@@ -77,13 +78,15 @@ export function BonusAwardsPanel({
           ) : (
             <Stack gap="sm">
               <ul className="flex flex-col gap-2">
-                {bonuses.map((b) => (
+                {bonuses.map((b) => {
+                  const isManager = b.target === "manager" || (!b.team_id && !b.match_id);
+                  return (
                   <li
                     key={b.id}
                     className="min-w-0 rounded-xl border border-line bg-surface-2/50 p-3"
                   >
                     <div className="flex items-start gap-2.5 sm:gap-3">
-                      {showTeam && (
+                      {showTeam && !isManager && (
                         <TeamCrest
                           name={b.team_name}
                           crestUrl={b.crest_url}
@@ -91,17 +94,44 @@ export function BonusAwardsPanel({
                           className="mt-0.5 shrink-0"
                         />
                       )}
+                      {showTeam && isManager && (
+                        <div
+                          className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-full bg-surface text-[10px] font-bold uppercase tracking-wide text-muted"
+                          aria-hidden
+                        >
+                          Mgr
+                        </div>
+                      )}
                       <div className="min-w-0 flex-1">
                         <div className="flex items-start justify-between gap-2">
                           <div className="min-w-0">
                             <strong className="block truncate text-sm sm:text-base">
                               {b.bonus_type_label || b.bonus_type}
                             </strong>
-                            {showTeam && b.team_id && b.team_name && (
+                            {showTeam && isManager && (
+                              <Muted className="mt-0.5 truncate text-xs sm:text-sm">
+                                Manager award
+                              </Muted>
+                            )}
+                            {showTeam && !isManager && b.team_id && b.team_name && (
                               <Muted className="mt-0.5 truncate text-xs sm:text-sm">
                                 <TeamLink leagueId={leagueId} teamId={b.team_id}>
                                   {b.team_name}
                                 </TeamLink>
+                              </Muted>
+                            )}
+                            {b.match_label && (
+                              <Muted className="mt-0.5 truncate text-xs sm:text-sm">
+                                {b.match_id ? (
+                                  <Link
+                                    href={`/leagues/${leagueId}/matches/${b.match_id}`}
+                                    className="underline-offset-2 hover:underline"
+                                  >
+                                    {b.match_label}
+                                  </Link>
+                                ) : (
+                                  b.match_label
+                                )}
                               </Muted>
                             )}
                           </div>
@@ -123,7 +153,8 @@ export function BonusAwardsPanel({
                       </div>
                     </div>
                   </li>
-                ))}
+                  );
+                })}
               </ul>
             </Stack>
           )}

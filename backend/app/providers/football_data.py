@@ -153,6 +153,7 @@ class FootballDataProvider:
         for item in payload.get("matches", []):
             score = item.get("score") or {}
             full = score.get("fullTime") or {}
+            duration = str(score.get("duration") or "REGULAR")
             utc_date = item.get("utcDate")
             if not utc_date:
                 skipped_parse += 1
@@ -174,6 +175,7 @@ class FootballDataProvider:
                     away_goals=full.get("away"),
                     matchday=item.get("matchday"),
                     stage=item.get("stage"),
+                    duration=duration,
                 )
             )
         if skipped_parse:
@@ -185,6 +187,59 @@ class FootballDataProvider:
                 len(matches),
             )
         return matches, rate
+
+    @staticmethod
+    def _parse_provider_date(value: str | None) -> datetime | None:
+        if not value:
+            return None
+        return datetime.fromisoformat(value).replace(tzinfo=UTC)
+
+    @staticmethod
+    def _season_start_year(season: dict[str, Any]) -> int | None:
+        start = str(season.get("startDate") or "")
+        if len(start) >= 4 and start[:4].isdigit():
+            return int(start[:4])
+        return None
+
+    def _pick_season(
+        self,
+        payload: dict[str, Any],
+        *,
+        preferred_season_year: int | None = None,
+        allow_latest_fallback: bool = False,
+    ) -> tuple[dict[str, Any] | None, int | None]:
+        raw_seasons = [s for s in (payload.get("seasons") or []) if isinstance(s, dict)]
+        current = payload.get("currentSeason")
+        candidates: list[dict[str, Any]] = []
+        seen: set[object] = set()
+        for season in (
+            [current, *raw_seasons] if isinstance(current, dict) else raw_seasons
+        ):
+            key = season.get("id") or season.get("startDate")
+            if key is not None and key in seen:
+                continue
+            if key is not None:
+                seen.add(key)
+            candidates.append(season)
+
+        if preferred_season_year is not None:
+            for season in candidates:
+                if self._season_start_year(season) == preferred_season_year:
+                    return season, preferred_season_year
+
+        if not allow_latest_fallback:
+            return None, preferred_season_year
+
+        dated = [
+            (self._season_start_year(s), s)
+            for s in candidates
+            if self._season_start_year(s) is not None
+        ]
+        if not dated:
+            return None, preferred_season_year
+        dated.sort(key=lambda item: item[0] or 0, reverse=True)
+        year, season = dated[0]
+        return season, year
 
     def resolve_competition_season(
         self, competition_code: str, season_year: int
@@ -203,14 +258,10 @@ class FootballDataProvider:
                 ),
                 exc.rate_limit,
             )
-        seasons = payload.get("seasons") or []
-        match = next((s for s in seasons if s.get("startDate", "").startswith(str(season_year))), None)
-        if match is None:
-            # football-data often uses start year; also try currentSeason
-            current = payload.get("currentSeason") or {}
-            if str(current.get("startDate", "")).startswith(str(season_year)):
-                match = current
-        if match is None:
+        match, resolved_year = self._pick_season(
+            payload, preferred_season_year=season_year, allow_latest_fallback=False
+        )
+        if match is None or resolved_year is None:
             return (
                 CompetitionSeasonInfo(
                     code=competition_code,
@@ -223,18 +274,69 @@ class FootballDataProvider:
                 rate,
             )
 
-        def parse_date(value: str | None) -> datetime | None:
-            if not value:
-                return None
-            return datetime.fromisoformat(value).replace(tzinfo=UTC)
-
         return (
             CompetitionSeasonInfo(
                 code=competition_code,
-                season_year=season_year,
-                start_date=parse_date(match.get("startDate")),
-                end_date=parse_date(match.get("endDate")),
+                season_year=resolved_year,
+                start_date=self._parse_provider_date(match.get("startDate")),
+                end_date=self._parse_provider_date(match.get("endDate")),
                 available=True,
+            ),
+            rate,
+        )
+
+    def resolve_competition_season_or_latest(
+        self, competition_code: str, preferred_season_year: int
+    ) -> tuple[CompetitionSeasonInfo, RateLimitInfo]:
+        """Prefer ``preferred_season_year``; otherwise use the newest published season.
+
+        Useful for tournaments that are not annual (World Cup, Euros).
+        """
+        try:
+            payload, rate = self._get(f"/competitions/{competition_code}")
+        except FootballDataError as exc:
+            return (
+                CompetitionSeasonInfo(
+                    code=competition_code,
+                    season_year=preferred_season_year,
+                    start_date=None,
+                    end_date=None,
+                    available=False,
+                    message=str(exc),
+                ),
+                exc.rate_limit,
+            )
+        match, resolved_year = self._pick_season(
+            payload,
+            preferred_season_year=preferred_season_year,
+            allow_latest_fallback=True,
+        )
+        if match is None or resolved_year is None:
+            return (
+                CompetitionSeasonInfo(
+                    code=competition_code,
+                    season_year=preferred_season_year,
+                    start_date=None,
+                    end_date=None,
+                    available=False,
+                    message="no seasons published by provider",
+                ),
+                rate,
+            )
+        message = None
+        if resolved_year != preferred_season_year:
+            message = (
+                f"using latest available season {resolved_year} "
+                f"(requested {preferred_season_year})"
+            )
+        return (
+            CompetitionSeasonInfo(
+                code=competition_code,
+                season_year=resolved_year,
+                start_date=self._parse_provider_date(match.get("startDate")),
+                end_date=self._parse_provider_date(match.get("endDate")),
+                available=True,
+                message=message,
             ),
             rate,
         )

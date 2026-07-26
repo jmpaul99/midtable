@@ -241,6 +241,8 @@ def duplicate_template(
         roster_slots=list(source.roster_slots),
         pool_definitions=list(source.pool_definitions),
         bonus_types=list(source.bonus_types),
+        roster_club_order=source.roster_club_order or "draft",
+        max_members=source.max_members,
         featured=False,
         made_by_staff=False,
         created_by_profile_id=profile.id,

@@ -2,7 +2,7 @@
 
 import { FormEvent, useState } from "react";
 import { api, errorMessage, json } from "@/lib/api";
-import type { Bonus, League, PoolTeam } from "@/lib/types";
+import type { Bonus, League, Manager, PoolTeam } from "@/lib/types";
 import { StatusBanner } from "@/components/ui/State";
 import { IconButton } from "@/components/ui/IconButton";
 import { SaveIcon } from "@/components/ui/icons";
@@ -16,6 +16,7 @@ import {
   normalizeTiebreaks,
   normalizeUpsetRules,
   ResultPointsEditor,
+  serializeResultPoints,
   serializeUpsetRules,
   TiebreaksEditor,
   UpsetRulesEditor,
@@ -38,6 +39,7 @@ export function LeagueSettingsSection({
   bonusTypes = [],
   bonuses,
   allTeams = [],
+  members = [],
   onAction,
   onSaved,
 }: {
@@ -45,6 +47,7 @@ export function LeagueSettingsSection({
   bonusTypes?: BonusTypeRow[];
   bonuses?: Bonus[];
   allTeams?: Array<{ team: PoolTeam; pool: League["pools"][number] }>;
+  members?: Manager[];
   onAction?: (path: string, method: string, body?: unknown) => Promise<unknown>;
   onSaved?: () => void;
 }) {
@@ -71,7 +74,7 @@ export function LeagueSettingsSection({
       await api(
         `/leagues/${league.id}/settings`,
         json("PATCH", {
-          result_points: resultPoints,
+          result_points: serializeResultPoints(resultPoints),
           upset_rules: serializeUpsetRules(upsetRules),
           leaderboard_tiebreaks: tiebreaks.map((t) => ({
             metric: t.metric,
@@ -130,6 +133,7 @@ export function LeagueSettingsSection({
                 bonusTypes={bonusTypes}
                 bonuses={bonuses}
                 allTeams={allTeams}
+                members={members}
                 onAction={onAction}
                 embedded
               />
@@ -148,6 +152,12 @@ export function LeagueSettingsSection({
                   value={upsetRules}
                   onChange={setUpsetRules}
                   allowCustomLists={(league.pools?.length ?? 0) > 0}
+                  competitions={(league.pools ?? [])
+                    .filter((p) => p.competition_code)
+                    .map((p) => ({
+                      competition_code: p.competition_code as string,
+                      season_year: p.season_year ?? new Date().getFullYear(),
+                    }))}
                 />
               )}
               {tab === "tiebreaks" && (

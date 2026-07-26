@@ -6,7 +6,7 @@ import { Suspense, use } from "react";
 import { RequireAuth } from "@/lib/auth";
 import { TemplateEditor } from "@/components/TemplateEditor";
 import type { CompetitionTemplate } from "@/lib/types";
-import { Muted, PageHeader, Stack } from "@/components/ui/Card";
+import { PageHeader, Stack } from "@/components/ui/Card";
 import { Loading } from "@/components/ui/State";
 
 function CreateFlowTemplateBody({ id }: { id: string }) {
@@ -14,17 +14,25 @@ function CreateFlowTemplateBody({ id }: { id: string }) {
   const searchParams = useSearchParams();
   const isNew = id === "new";
   const leagueFlow = searchParams.get("flow") === "league";
+  const initialEditing = searchParams.get("edit") === "1";
 
   function onSaved(item: CompetitionTemplate) {
     if (!item.id) {
       router.replace("/leagues/new");
       return;
     }
+    // New template in league flow → continue to setup
     if (leagueFlow && (isNew || item.id !== id)) {
       router.replace(`/leagues/new/setup/${item.id}`);
       return;
     }
+    // Copied template → open the copy ready to edit
     if (isNew || item.id !== id) {
+      router.replace(`/leagues/new/templates/${item.id}?edit=1`);
+      return;
+    }
+    // Saved in place — drop ?edit=1 so we return to view mode
+    if (searchParams.get("edit") === "1") {
       router.replace(`/leagues/new/templates/${item.id}`);
     }
   }
@@ -33,11 +41,19 @@ function CreateFlowTemplateBody({ id }: { id: string }) {
     <Stack gap="md" className="animate-in">
       <PageHeader
         eyebrow={leagueFlow ? "Step 1 · Your template" : isNew ? "New template" : "Template"}
-        title={leagueFlow ? "Build your template" : isNew ? "Create template" : "Template"}
+        title={
+          leagueFlow
+            ? "Build your template"
+            : isNew
+              ? "Create template"
+              : "Template settings"
+        }
         description={
           leagueFlow
             ? "Set competitions, scoring, phases, and payouts. When you save, you’ll continue to league setup."
-            : "Competitions, scoring, phases, and payouts for leagues created from this template. Only the creator can edit; others can use it or copy it."
+            : isNew
+              ? "Competitions, scoring, phases, and payouts for leagues created from this template."
+              : "Review the full settings below, then use this template, edit it if you own it, or copy it."
         }
         actions={
           <Link
@@ -48,18 +64,12 @@ function CreateFlowTemplateBody({ id }: { id: string }) {
           </Link>
         }
       />
-      {!isNew && !leagueFlow && (
-        <Muted className="text-sm">
-          Ready to launch?{" "}
-          <Link
-            href={`/leagues/new/setup/${id}`}
-            className="font-bold text-brand hover:underline"
-          >
-            Use this template
-          </Link>
-        </Muted>
-      )}
-      <TemplateEditor templateId={id} onSaved={onSaved} />
+      <TemplateEditor
+        templateId={id}
+        onSaved={onSaved}
+        useHref={isNew ? undefined : `/leagues/new/setup/${id}`}
+        initialEditing={initialEditing}
+      />
     </Stack>
   );
 }

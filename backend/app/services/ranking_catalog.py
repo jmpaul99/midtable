@@ -397,9 +397,50 @@ def upsert_override(
     return row
 
 
-def unmatched_for_catalog(
+def _entry_has_override(
+    entry: RankingCatalogEntry,
+    *,
+    overrides_by_code: dict[str, str],
+    overrides_by_name: dict[str, str],
+) -> bool:
+    if entry.country_code and entry.country_code.strip().upper() in overrides_by_code:
+        return True
+    if entry.team_name.strip().lower() in overrides_by_name:
+        return True
+    return False
+
+
+def _best_suggestion(
+    entry: RankingCatalogEntry, teams: list[Team]
+) -> tuple[Team | None, float]:
+    scored = sorted(
+        (
+            (
+                max(
+                    fuzzy_match_score(entry.team_name, t.name),
+                    fuzzy_match_score(entry.team_name, t.short_name or ""),
+                    1.0
+                    if entry.country_code
+                    and (t.tla or "").upper() == entry.country_code.upper()
+                    else 0.0,
+                ),
+                t,
+            )
+            for t in teams
+        ),
+        key=lambda x: x[0],
+        reverse=True,
+    )
+    best = scored[0] if scored else None
+    if best and best[0] >= 0.34:
+        return best[1], best[0]
+    return None, best[0] if best else 0.0
+
+
+def matches_for_catalog(
     db: Session, catalog: RankingCatalog, *, sample_league: League | None = None
 ) -> list[dict]:
+    """Resolve every catalog entry to a team (or unmatched), for admin review."""
     entries = list(
         db.scalars(
             select(RankingCatalogEntry)
@@ -420,9 +461,7 @@ def unmatched_for_catalog(
         teams = league_pool_teams(db, sample_league)
     else:
         teams = list(
-            db.scalars(
-                select(Team).where(Team.provider == PROVIDER_KEY).limit(500)
-            ).all()
+            db.scalars(select(Team).where(Team.provider == PROVIDER_KEY)).all()
         )
 
     out: list[dict] = []
@@ -433,42 +472,51 @@ def unmatched_for_catalog(
             overrides_by_code=by_code,
             overrides_by_name=by_name,
         )
+        suggestion, score = (None, 0.0)
+        if team is None:
+            suggestion, score = _best_suggestion(entry, teams)
+        source = None
         if team is not None:
-            continue
-        scored = sorted(
-            (
-                (
-                    max(
-                        fuzzy_match_score(entry.team_name, t.name),
-                        fuzzy_match_score(entry.team_name, t.short_name or ""),
-                        1.0
-                        if entry.country_code
-                        and (t.tla or "").upper() == entry.country_code.upper()
-                        else 0.0,
-                    ),
-                    t,
+            source = (
+                "override"
+                if _entry_has_override(
+                    entry, overrides_by_code=by_code, overrides_by_name=by_name
                 )
-                for t in teams
-            ),
-            key=lambda x: x[0],
-            reverse=True,
-        )
-        best = scored[0] if scored else None
+                else "auto"
+            )
         out.append(
             {
                 "rank": entry.rank,
                 "team_name": entry.team_name,
                 "country_code": entry.country_code,
+                "matched_external_team_id": team.external_id if team else None,
+                "matched_team_name": team.name if team else None,
+                "match_source": source,
                 "suggested_external_team_id": (
-                    best[1].external_id if best and best[0] >= 0.34 else None
+                    suggestion.external_id if suggestion else None
                 ),
-                "suggested_team_name": (
-                    best[1].name if best and best[0] >= 0.34 else None
-                ),
-                "score": best[0] if best else 0.0,
+                "suggested_team_name": suggestion.name if suggestion else None,
+                "score": score if team is None else 1.0,
             }
         )
     return out
+
+
+def unmatched_for_catalog(
+    db: Session, catalog: RankingCatalog, *, sample_league: League | None = None
+) -> list[dict]:
+    return [
+        {
+            "rank": row["rank"],
+            "team_name": row["team_name"],
+            "country_code": row["country_code"],
+            "suggested_external_team_id": row["suggested_external_team_id"],
+            "suggested_team_name": row["suggested_team_name"],
+            "score": row["score"],
+        }
+        for row in matches_for_catalog(db, catalog, sample_league=sample_league)
+        if row["matched_external_team_id"] is None
+    ]
 
 
 def league_ranking_status(db: Session, league: League) -> list[dict]:

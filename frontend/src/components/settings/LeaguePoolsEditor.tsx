@@ -69,23 +69,27 @@ export function LeaguePoolsEditor({
   value,
   onChange,
   managerCapacity,
-  structureEditable,
+  structureEditable = true,
   trailingAction,
   rosterClubOrder = "draft",
   onRosterClubOrderChange,
+  showHeading = true,
 }: {
   value: LeaguePoolEdit[];
   onChange: (next: LeaguePoolEdit[]) => void;
-  /** Required manager count used for club capacity checks. */
-  managerCapacity: number;
-  /** When true, allow add/remove and competition selection (pre-draft only). */
-  structureEditable: boolean;
+  /** Manager count for club capacity checks. When omitted, capacity hints are hidden. */
+  managerCapacity?: number;
+  /** When true, allow add/remove and competition selection. Defaults to true. */
+  structureEditable?: boolean;
   /** Shown on the right of the footer row (e.g. Save), opposite Add. */
   trailingAction?: ReactNode;
   rosterClubOrder?: RosterClubOrder;
   onRosterClubOrderChange?: (next: RosterClubOrder) => void;
+  /** When false, omit the section title (e.g. wizard already shows the step name). */
+  showHeading?: boolean;
 }) {
   const ordered = sortPools(value);
+  const showCapacity = managerCapacity != null;
 
   function updateById(id: string, patch: Partial<LeaguePoolEdit>) {
     onChange(value.map((p) => (p.id === id ? { ...p, ...patch } : p)));
@@ -118,19 +122,24 @@ export function LeaguePoolsEditor({
   const usedCodes = new Set(
     value.map((p) => p.competition_code?.trim().toUpperCase()).filter(Boolean),
   );
+  const showRosterOrder = Boolean(onRosterClubOrderChange) && value.length > 1;
 
   return (
     <EditorSection
-      title="Competitions"
-      description="These are the real-world leagues managers draft clubs from (e.g. Premier League, Championship). The arrows set the pre-draft order shown on rosters. After the draft, rosters default to draft order — change that below if you want."
+      title={showHeading ? "Competitions" : undefined}
+      description={
+        showRosterOrder
+          ? "These are the real-world leagues managers draft clubs from (e.g. Premier League, Championship). The arrows set the pre-draft order shown on rosters. After the draft, rosters default to draft order — change that below if you want."
+          : "Real-world competitions managers draft from (e.g. Premier League + Championship). The arrows set the pre-draft order shown on rosters (first in the list appears first)."
+      }
     >
-      {!structureEditable && (
+      {!structureEditable && showCapacity && (
         <p className="text-sm text-muted">
           Competitions can only be added or removed before the draft opens.
         </p>
       )}
 
-      {onRosterClubOrderChange && (
+      {showRosterOrder && (
         <div className="flex max-w-lg flex-col gap-1 sm:flex-row sm:items-center sm:gap-3">
           <p className="shrink-0 text-xs font-semibold text-muted sm:w-36">
             Roster order after draft
@@ -154,7 +163,7 @@ export function LeaguePoolsEditor({
                     type="button"
                     role="radio"
                     aria-checked={selected}
-                    onClick={() => onRosterClubOrderChange(opt.id)}
+                    onClick={() => onRosterClubOrderChange?.(opt.id)}
                     className={cn(
                       "min-h-8 flex-1 rounded-md px-2.5 py-1 text-xs font-bold transition sm:flex-none",
                       selected ? "bg-surface text-ink shadow-sm" : "text-muted hover:text-ink",
@@ -175,7 +184,9 @@ export function LeaguePoolsEditor({
       {ordered.length === 0 ? (
         <p className="text-sm text-muted">
           {structureEditable
-            ? "No competitions yet. Add at least one before the draft opens."
+            ? showCapacity
+              ? "No competitions yet. Add at least one before the draft opens."
+              : "No competitions yet. Add at least one."
             : "No competitions configured for this league."}
         </p>
       ) : (
@@ -184,9 +195,11 @@ export function LeaguePoolsEditor({
             const slots = Number(p.slot_count) || 0;
             const teams = p.team_count ?? 0;
             const needed = slots * capacity;
-            const overCapacity = teams > 0 && needed > teams;
+            const overCapacity = showCapacity && teams > 0 && needed > teams;
             const maxSlots =
-              teams > 0 ? Math.max(1, Math.floor(teams / capacity)) : undefined;
+              showCapacity && teams > 0
+                ? Math.max(1, Math.floor(teams / capacity))
+                : undefined;
             const options = AVAILABLE_COMPETITIONS.filter(
               (c) =>
                 c.code === p.competition_code?.toUpperCase() || !usedCodes.has(c.code),
@@ -242,17 +255,19 @@ export function LeaguePoolsEditor({
                           }
                           className="min-h-10 rounded-lg px-2.5 py-2 text-sm"
                         />
-                        <span
-                          className={cn(
-                            "text-[0.65rem] font-normal leading-snug",
-                            overCapacity ? "font-semibold text-danger" : "text-muted",
-                          )}
-                        >
-                          {teams > 0
-                            ? `${teams} teams${maxSlots != null ? ` · max ${maxSlots}` : ""}`
-                            : "No teams yet"}
-                          {overCapacity ? " — too many slots" : ""}
-                        </span>
+                        {showCapacity && (
+                          <span
+                            className={cn(
+                              "text-[0.65rem] font-normal leading-snug",
+                              overCapacity ? "font-semibold text-danger" : "text-muted",
+                            )}
+                          >
+                            {teams > 0
+                              ? `${teams} teams${maxSlots != null ? ` · max ${maxSlots}` : ""}`
+                              : "No teams yet"}
+                            {overCapacity ? " — too many slots" : ""}
+                          </span>
+                        )}
                       </Label>
                       <SeasonYearField
                         value={p.season_year}
@@ -285,7 +300,7 @@ export function LeaguePoolsEditor({
                         }
                       />
                       <span>
-                        Score week-to-week match results
+                        Score match results
                         <span className="mt-0.5 block text-[0.7rem] font-normal leading-snug">
                           When on, fixtures sync and W/D/L points count toward the leaderboard. When
                           off, clubs stay on rosters for season bonuses only.

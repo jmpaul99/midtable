@@ -16,6 +16,7 @@ def match_to_input(match: Match) -> MatchInput:
         home_goals=match.home_goals,
         away_goals=match.away_goals,
         status=match.status,
+        duration=getattr(match, "duration", None) or "REGULAR",
         scheduled_matchweek=match.scheduled_matchweek,
         stage=match.stage,
     )

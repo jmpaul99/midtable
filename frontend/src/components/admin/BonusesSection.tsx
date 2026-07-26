@@ -1,34 +1,50 @@
 "use client";
 
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
+import { api } from "@/lib/api";
 import { formatNumber } from "@/lib/format";
-import type { Bonus, League, PoolTeam, UUID } from "@/lib/types";
+import type { Bonus, BonusTarget, League, Manager, MatchLogRow, PoolTeam, UUID } from "@/lib/types";
+import { managerLabel } from "@/lib/types";
 import { Empty, StatusBanner } from "@/components/ui/State";
 import { IconButton } from "@/components/ui/IconButton";
-import {
-  AwardIcon,
-  BanIcon,
-  CheckIcon,
-  PencilIcon,
-  PlusIcon,
-  TrashIcon,
-  XIcon,
-} from "@/components/ui/icons";
+import { AwardIcon, BanIcon } from "@/components/ui/icons";
 import { Autocomplete } from "@/components/ui/Autocomplete";
 import { Card, Muted, Stack } from "@/components/ui/Card";
 import { Input, Label } from "@/components/ui/Field";
 import { cn } from "@/lib/cn";
+import { BonusTypesListEditor } from "@/components/settings";
 import type { BonusTypeRow } from "./useAdminLeagueData";
 
 type Tab = "award" | "types" | "history";
 
-function slugKey(label: string): string {
-  return label
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "_")
-    .replace(/^_|_$/g, "")
-    .slice(0, 40);
+const TARGETS: Array<{ id: BonusTarget; label: string }> = [
+  { id: "team", label: "Team" },
+  { id: "match", label: "Match" },
+  { id: "manager", label: "Manager" },
+];
+
+function matchOptionLabel(m: MatchLogRow): string {
+  const score =
+    m.home_goals != null && m.away_goals != null
+      ? ` ${m.home_goals}-${m.away_goals}`
+      : "";
+  const mw = m.scheduled_matchweek != null ? ` · MW${m.scheduled_matchweek}` : "";
+  return `${m.home_team_name} vs ${m.away_team_name}${score}${mw}`;
+}
+
+function historyTargetLabel(b: Bonus): string {
+  if (b.target === "manager" || (!b.team_id && b.display_name)) {
+    return b.display_name || "Manager";
+  }
+  if (b.target === "match" || b.match_id) {
+    const match = b.match_label || "Match";
+    const team = b.team_name ? ` · ${b.team_name}` : "";
+    const owner = b.display_name ? ` · ${b.display_name}` : "";
+    return `${match}${team}${owner}`;
+  }
+  const team = b.team_name || b.team_id || "Team";
+  const owner = b.display_name ? ` · ${b.display_name}` : "";
+  return `${team}${owner}`;
 }
 
 export function BonusesSection({
@@ -36,6 +52,7 @@ export function BonusesSection({
   bonusTypes,
   bonuses,
   allTeams,
+  members = [],
   onAction,
   embedded = false,
 }: {
@@ -43,6 +60,7 @@ export function BonusesSection({
   bonusTypes: BonusTypeRow[];
   bonuses?: Bonus[];
   allTeams: Array<{ team: PoolTeam; pool: League["pools"][number] }>;
+  members?: Manager[];
   onAction: (path: string, method: string, body?: unknown) => Promise<unknown>;
   /** When true, omit outer Card/h2 so this can nest under Scoring settings. */
   embedded?: boolean;
@@ -55,15 +73,45 @@ export function BonusesSection({
     [bonusTypes],
   );
 
+  const listItems = useMemo(
+    () =>
+      sortedTypes.map((t) => ({
+        id: t.id,
+        key: t.key,
+        label: t.label,
+        default_points: t.default_points,
+        sort_order: t.sort_order,
+      })),
+    [sortedTypes],
+  );
+
   const [tab, setTab] = useState<Tab>("types");
+  const [target, setTarget] = useState<BonusTarget>("team");
   const [awardTeamId, setAwardTeamId] = useState("");
+  const [awardMatchId, setAwardMatchId] = useState("");
+  const [awardMemberId, setAwardMemberId] = useState("");
   const [awardTypeId, setAwardTypeId] = useState("");
-  const [editingId, setEditingId] = useState<UUID | null>(null);
-  const [editLabel, setEditLabel] = useState("");
-  const [editPoints, setEditPoints] = useState("");
-  const [adding, setAdding] = useState(false);
-  const [newLabel, setNewLabel] = useState("");
-  const [newPoints, setNewPoints] = useState("");
+  const [matches, setMatches] = useState<MatchLogRow[]>([]);
+  const [matchesLoading, setMatchesLoading] = useState(false);
+
+  useEffect(() => {
+    if (tab !== "award" || target !== "match") return;
+    let cancelled = false;
+    setMatchesLoading(true);
+    api<MatchLogRow[]>(`/leagues/${leagueId}/match-log`)
+      .then((rows) => {
+        if (!cancelled) setMatches(rows);
+      })
+      .catch(() => {
+        if (!cancelled) setMatches([]);
+      })
+      .finally(() => {
+        if (!cancelled) setMatchesLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [tab, target, leagueId]);
 
   const teamOptions = useMemo(
     () =>
@@ -72,6 +120,42 @@ export function BonusesSection({
         label: `${team.name} · ${pool.label}`,
       })),
     [allTeams],
+  );
+
+  const matchOptions = useMemo(
+    () =>
+      matches.map((m) => ({
+        value: m.id,
+        label: matchOptionLabel(m),
+      })),
+    [matches],
+  );
+
+  const selectedMatch = matches.find((m) => m.id === awardMatchId);
+
+  const matchTeamOptions = useMemo(() => {
+    if (!selectedMatch) return [];
+    return [
+      {
+        value: selectedMatch.home_team_id,
+        label: `${selectedMatch.home_team_name} (Home)`,
+      },
+      {
+        value: selectedMatch.away_team_id,
+        label: `${selectedMatch.away_team_name} (Away)`,
+      },
+    ];
+  }, [selectedMatch]);
+
+  const memberOptions = useMemo(
+    () =>
+      [...members]
+        .sort((a, b) => managerLabel(a).localeCompare(managerLabel(b)))
+        .map((m) => ({
+          value: m.id,
+          label: managerLabel(m),
+        })),
+    [members],
   );
 
   const typeOptions = useMemo(
@@ -86,108 +170,129 @@ export function BonusesSection({
   const selectedType = sortedTypes.find((t) => t.id === awardTypeId);
   const awardedCount = bonuses?.length ?? 0;
 
+  const awardReady =
+    !!awardTypeId &&
+    ((target === "team" && !!awardTeamId) ||
+      (target === "match" && !!awardMatchId && !!awardTeamId) ||
+      (target === "manager" && !!awardMemberId));
+
   const tabs: Array<{ id: Tab; label: string }> = [
     { id: "types", label: `Types (${sortedTypes.length})` },
     { id: "award", label: "Award" },
     { id: "history", label: `Awarded (${awardedCount})` },
   ];
 
-  function startEdit(t: BonusTypeRow) {
-    setEditingId(t.id);
-    setEditLabel(t.label);
-    setEditPoints(String(t.default_points));
+  function resetAwardForm(form?: HTMLFormElement) {
+    form?.reset();
+    setAwardTeamId("");
+    setAwardMatchId("");
+    setAwardMemberId("");
+    setAwardTypeId("");
   }
 
-  async function saveEdit(e: FormEvent) {
-    e.preventDefault();
-    if (!editingId) return;
-    await onAction(`/leagues/${leagueId}/bonus-types/${editingId}`, "PATCH", {
-      label: editLabel.trim(),
-      default_points: Number(editPoints),
-    });
-    setEditingId(null);
-  }
-
-  async function createType(e: FormEvent) {
-    e.preventDefault();
-    const label = newLabel.trim();
-    if (!label) return;
-    const existing = new Set(sortedTypes.map((t) => t.key));
-    let key = slugKey(label) || "bonus";
-    let n = 2;
-    while (existing.has(key)) {
-      key = `${slugKey(label)}_${n++}`;
-    }
-    await onAction(`/leagues/${leagueId}/bonus-types`, "POST", {
-      key,
-      label,
-      default_points: Number(newPoints),
-      sort_order: sortedTypes.length + 1,
-    });
-    setNewLabel("");
-    setNewPoints("");
-    setAdding(false);
+  function onTargetChange(next: BonusTarget) {
+    setTarget(next);
+    setAwardTeamId("");
+    setAwardMatchId("");
+    setAwardMemberId("");
   }
 
   async function award(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    if (!awardTeamId || !awardTypeId) return;
+    if (!awardReady) return;
     if (!confirm("Award this bonus using the configured points?")) return;
     const f = new FormData(e.currentTarget);
     const notes = String(f.get("notes") || "").trim();
-    await onAction(`/leagues/${leagueId}/manual-bonuses`, "POST", {
-      team_id: awardTeamId,
+    const body: Record<string, unknown> = {
+      target,
       bonus_type_id: awardTypeId,
       notes: notes || null,
-    });
-    e.currentTarget.reset();
-    setAwardTeamId("");
-    setAwardTypeId("");
+    };
+    if (target === "team") {
+      body.team_id = awardTeamId;
+    } else if (target === "match") {
+      body.match_id = awardMatchId;
+      body.team_id = awardTeamId;
+    } else {
+      body.member_id = awardMemberId;
+    }
+    await onAction(`/leagues/${leagueId}/manual-bonuses`, "POST", body);
+    resetAwardForm(e.currentTarget);
     setTab("history");
   }
 
   const body = (
-      <Stack gap="sm">
-        {!embedded && <h2>Bonuses</h2>}
+    <Stack gap="sm">
+      {!embedded && <h2>Bonuses</h2>}
 
-        <div
-          className="flex gap-1 rounded-lg bg-surface-2 p-0.5"
-          role="tablist"
-          aria-label="Bonus sections"
-        >
-          {tabs.map((t) => (
-            <button
-              key={t.id}
-              type="button"
-              role="tab"
-              aria-selected={tab === t.id}
-              onClick={() => setTab(t.id)}
-              className={cn(
-                "min-h-8 flex-1 rounded-md px-2 py-1 text-[0.7rem] font-bold transition sm:text-xs",
-                tab === t.id ? "bg-surface text-ink shadow-sm" : "text-muted hover:text-ink",
-              )}
-            >
-              {t.label}
-            </button>
-          ))}
-        </div>
+      <div
+        className="flex gap-1 rounded-lg bg-surface-2 p-0.5"
+        role="tablist"
+        aria-label="Bonus sections"
+      >
+        {tabs.map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            role="tab"
+            aria-selected={tab === t.id}
+            onClick={() => setTab(t.id)}
+            className={cn(
+              "min-h-8 flex-1 rounded-md px-2 py-1 text-[0.7rem] font-bold transition sm:text-xs",
+              tab === t.id ? "bg-surface text-ink shadow-sm" : "text-muted hover:text-ink",
+            )}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
 
-        {tab === "award" && (
-          <div role="tabpanel">
-            {!sortedTypes.length ? (
-              <StatusBanner>
-                No bonus types yet.{" "}
-                <button
-                  type="button"
-                  className="font-bold underline"
-                  onClick={() => setTab("types")}
+      {tab === "award" && (
+        <div role="tabpanel">
+          {!sortedTypes.length ? (
+            <StatusBanner>
+              No bonus types yet.{" "}
+              <button
+                type="button"
+                className="font-bold underline"
+                onClick={() => setTab("types")}
+              >
+                Add types
+              </button>{" "}
+              first.
+            </StatusBanner>
+          ) : (
+            <form className="flex flex-col gap-3" onSubmit={award}>
+              <div>
+                <Muted className="mb-1 block text-[11px] font-bold uppercase tracking-wide">
+                  Award to
+                </Muted>
+                <div
+                  className="inline-flex w-fit max-w-full gap-0.5 rounded-md bg-surface-2 p-0.5"
+                  role="radiogroup"
+                  aria-label="Bonus target"
                 >
-                  Add types
-                </button>{" "}
-                first.
-              </StatusBanner>
-            ) : (
-              <form className="flex flex-col gap-3" onSubmit={award}>
+                  {TARGETS.map((t) => (
+                    <button
+                      key={t.id}
+                      type="button"
+                      role="radio"
+                      aria-checked={target === t.id}
+                      onClick={() => onTargetChange(t.id)}
+                      className={cn(
+                        "rounded px-2 py-1 text-[11px] font-bold transition sm:text-xs",
+                        target === t.id
+                          ? "bg-surface text-ink shadow-sm"
+                          : "text-muted hover:text-ink",
+                      )}
+                    >
+                      {t.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {target === "team" && (
                 <Label>
                   Team
                   <Autocomplete
@@ -199,223 +304,166 @@ export function BonusesSection({
                     emptyMessage="No teams match."
                   />
                 </Label>
-                <Label>
-                  Bonus type
-                  <Autocomplete
-                    value={awardTypeId}
-                    onChange={setAwardTypeId}
-                    options={typeOptions}
-                    required
-                    placeholder="Search bonus types…"
-                    emptyMessage="No bonus types match."
-                  />
-                </Label>
-                {selectedType && (
-                  <Muted className="text-xs">
-                    Awards {formatNumber(selectedType.default_points)} pts from type config.
-                  </Muted>
-                )}
-                <Label>
-                  Notes <span className="font-normal">(optional)</span>
-                  <Input name="notes" placeholder="e.g. finished 4th via GD" />
-                </Label>
-                <div className="flex justify-start">
-                  <IconButton
-                    type="submit"
-                    label="Award bonus"
-                    variant="primary"
-                    disabled={!awardTeamId || !awardTypeId}
-                  >
-                    <AwardIcon />
-                  </IconButton>
-                </div>
-              </form>
-            )}
-          </div>
-        )}
+              )}
 
-        {tab === "types" && (
-          <div role="tabpanel">
-            <Stack gap="sm">
-              {!sortedTypes.length ? (
-                <Empty title="No bonus types yet">
-                  Add types below, or use a template that includes them.
-                </Empty>
-              ) : (
-                <ul className="divide-y divide-line overflow-hidden rounded-xl border border-line">
-                  {sortedTypes.map((t) =>
-                    editingId === t.id ? (
-                      <li key={t.id} className="bg-surface-2/50 p-3">
-                        <form className="flex items-center gap-2" onSubmit={saveEdit}>
-                          <Input
-                            value={editLabel}
-                            onChange={(e) => setEditLabel(e.target.value)}
-                            required
-                            aria-label="Label"
-                            className="min-w-0 flex-1"
-                          />
-                          <Input
-                            type="number"
-                            step="0.5"
-                            value={editPoints}
-                            onChange={(e) => setEditPoints(e.target.value)}
-                            required
-                            aria-label="Points"
-                            className="w-[5.5rem] shrink-0"
-                          />
-                          <IconButton type="submit" label="Save" variant="primary" size="icon-sm">
-                            <CheckIcon className="size-4" />
-                          </IconButton>
-                          <IconButton
-                            type="button"
-                            label="Cancel"
-                            variant="ghost"
-                            size="icon-sm"
-                            onClick={() => setEditingId(null)}
-                          >
-                            <XIcon className="size-4" />
-                          </IconButton>
-                        </form>
-                      </li>
-                    ) : (
-                      <li
-                        key={t.id}
-                        className="flex flex-col gap-2 bg-surface-2/30 px-3 py-2.5 sm:flex-row sm:items-center"
-                      >
-                        <div className="min-w-0 flex-1">
-                          <strong className="block truncate text-sm">{t.label}</strong>
-                          <Muted className="truncate text-xs">
-                            {formatNumber(t.default_points)} pts
-                          </Muted>
-                        </div>
-                        <div className="flex gap-1">
-                          <IconButton
-                            type="button"
-                            variant="ghost"
-                            size="icon-sm"
-                            label={`Edit ${t.label}`}
-                            onClick={() => startEdit(t)}
-                          >
-                            <PencilIcon className="size-4" />
-                          </IconButton>
-                          <IconButton
-                            type="button"
-                            variant="ghost"
-                            size="icon-sm"
-                            label={`Delete ${t.label}`}
-                            className="text-danger hover:bg-danger/10 hover:text-danger"
-                            onClick={() => {
-                              if (confirm(`Delete bonus type “${t.label}”?`)) {
-                                onAction(`/leagues/${leagueId}/bonus-types/${t.id}`, "DELETE");
-                              }
-                            }}
-                          >
-                            <TrashIcon className="size-4" />
-                          </IconButton>
-                        </div>
-                      </li>
-                    ),
+              {target === "match" && (
+                <>
+                  <Label>
+                    Match
+                    <Autocomplete
+                      value={awardMatchId}
+                      onChange={(id) => {
+                        setAwardMatchId(id);
+                        setAwardTeamId("");
+                      }}
+                      options={matchOptions}
+                      required
+                      placeholder={matchesLoading ? "Loading matches…" : "Search matches…"}
+                      emptyMessage={
+                        matchesLoading ? "Loading matches…" : "No matches match."
+                      }
+                    />
+                  </Label>
+                  <Label>
+                    Team in match
+                    <Autocomplete
+                      value={awardTeamId}
+                      onChange={setAwardTeamId}
+                      options={matchTeamOptions}
+                      required
+                      disabled={!awardMatchId}
+                      placeholder={
+                        awardMatchId ? "Select home or away…" : "Pick a match first…"
+                      }
+                      emptyMessage="No teams available."
+                    />
+                  </Label>
+                </>
+              )}
+
+              {target === "manager" && (
+                <Label>
+                  Manager
+                  {memberOptions.length === 0 ? (
+                    <Muted className="mt-1 block text-xs">
+                      No managers in this league yet.
+                    </Muted>
+                  ) : (
+                    <Autocomplete
+                      value={awardMemberId}
+                      onChange={setAwardMemberId}
+                      options={memberOptions}
+                      required
+                      placeholder="Search managers…"
+                      emptyMessage="No managers match."
+                    />
                   )}
-                </ul>
+                </Label>
               )}
 
-              {adding ? (
-                <form
-                  className="flex items-center gap-2 rounded-xl border border-dashed border-line p-3"
-                  onSubmit={createType}
+              <Label>
+                Bonus type
+                <Autocomplete
+                  value={awardTypeId}
+                  onChange={setAwardTypeId}
+                  options={typeOptions}
+                  required
+                  placeholder="Search bonus types…"
+                  emptyMessage="No bonus types match."
+                />
+              </Label>
+              {selectedType && (
+                <Muted className="text-xs">
+                  Awards {formatNumber(selectedType.default_points)} pts from type config.
+                </Muted>
+              )}
+              <Label>
+                Notes <span className="font-normal">(optional)</span>
+                <Input name="notes" placeholder="e.g. finished 4th via GD" />
+              </Label>
+              <div className="flex justify-start">
+                <IconButton
+                  type="submit"
+                  label="Award bonus"
+                  variant="primary"
+                  disabled={!awardReady}
                 >
-                  <Input
-                    value={newLabel}
-                    onChange={(e) => setNewLabel(e.target.value)}
-                    placeholder="Name"
-                    required
-                    aria-label="Name"
-                    className="min-w-0 flex-1"
-                  />
-                  <Input
-                    type="number"
-                    step="0.5"
-                    value={newPoints}
-                    onChange={(e) => setNewPoints(e.target.value)}
-                    placeholder="Pts"
-                    required
-                    aria-label="Points"
-                    className="w-[5.5rem] shrink-0"
-                  />
-                  <IconButton type="submit" label="Add type" variant="primary" size="icon-sm">
-                    <PlusIcon className="size-4" />
-                  </IconButton>
-                  <IconButton
-                    type="button"
-                    label="Cancel"
-                    variant="ghost"
-                    size="icon-sm"
-                    onClick={() => setAdding(false)}
-                  >
-                    <XIcon className="size-4" />
-                  </IconButton>
-                </form>
-              ) : (
-                <div className="flex justify-start">
-                  <IconButton
-                    type="button"
-                    variant="secondary"
-                    label="Add bonus type"
-                    onClick={() => setAdding(true)}
-                  >
-                    <PlusIcon />
-                  </IconButton>
-                </div>
-              )}
-            </Stack>
-          </div>
-        )}
+                  <AwardIcon />
+                </IconButton>
+              </div>
+            </form>
+          )}
+        </div>
+      )}
 
-        {tab === "history" && (
-          <div role="tabpanel">
-            {!bonuses?.length ? (
-              <Empty title="No bonuses awarded yet" />
-            ) : (
-              <ul className="divide-y divide-line overflow-hidden rounded-xl border border-line">
-                {bonuses.map((b) => {
-                  const typeLabel =
-                    sortedTypes.find((t) => t.key === b.bonus_type)?.label || b.bonus_type;
-                  return (
-                    <li
-                      key={b.id}
-                      className="flex items-center gap-2 bg-surface-2/30 px-3 py-2.5"
+      {tab === "types" && (
+        <div role="tabpanel">
+          <BonusTypesListEditor
+            value={listItems}
+            onCreate={(item) =>
+              onAction(`/leagues/${leagueId}/bonus-types`, "POST", item)
+            }
+            onUpdate={(id, patch) =>
+              onAction(`/leagues/${leagueId}/bonus-types/${id}`, "PATCH", patch)
+            }
+            onDelete={(id) =>
+              onAction(`/leagues/${leagueId}/bonus-types/${id}`, "DELETE")
+            }
+          />
+        </div>
+      )}
+
+      {tab === "history" && (
+        <div role="tabpanel">
+          {!bonuses?.length ? (
+            <Empty title="No bonuses awarded yet" />
+          ) : (
+            <ul className="divide-y divide-line overflow-hidden rounded-xl border border-line">
+              {bonuses.map((b) => {
+                const typeLabel =
+                  sortedTypes.find((t) => t.key === b.bonus_type)?.label || b.bonus_type;
+                const targetLabel =
+                  b.target === "manager"
+                    ? "Manager"
+                    : b.target === "match"
+                      ? "Match"
+                      : "Team";
+                return (
+                  <li
+                    key={b.id}
+                    className="flex items-center gap-2 bg-surface-2/30 px-3 py-2.5"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <strong className="block truncate text-sm">
+                        {typeLabel} · {formatNumber(b.points)}
+                      </strong>
+                      <Muted className="truncate text-xs">
+                        {targetLabel} · {historyTargetLabel(b)}
+                        {b.reason ? ` · ${b.reason}` : ""}
+                      </Muted>
+                    </div>
+                    <IconButton
+                      type="button"
+                      variant="ghost"
+                      size="icon-sm"
+                      label="Revoke bonus"
+                      className="text-danger hover:bg-danger/10 hover:text-danger"
+                      onClick={() => {
+                        if (confirm("Revoke this awarded bonus?")) {
+                          onAction(`/leagues/${leagueId}/manual-bonuses/${b.id}`, "DELETE");
+                        }
+                      }}
                     >
-                      <div className="min-w-0 flex-1">
-                        <strong className="block truncate text-sm">
-                          {typeLabel} · {formatNumber(b.points)}
-                        </strong>
-                        <Muted className="truncate text-xs">
-                          {b.display_name || b.team_id}
-                          {b.reason ? ` · ${b.reason}` : ""}
-                        </Muted>
-                      </div>
-                      <IconButton
-                        type="button"
-                        variant="ghost"
-                        size="icon-sm"
-                        label="Revoke bonus"
-                        className="text-danger hover:bg-danger/10 hover:text-danger"
-                        onClick={() => {
-                          if (confirm("Revoke this awarded bonus?")) {
-                            onAction(`/leagues/${leagueId}/manual-bonuses/${b.id}`, "DELETE");
-                          }
-                        }}
-                      >
-                        <BanIcon className="size-4" />
-                      </IconButton>
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-          </div>
-        )}
-      </Stack>
+                      <BanIcon className="size-4" />
+                    </IconButton>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
+      )}
+    </Stack>
   );
 
   if (embedded) return body;

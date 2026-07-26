@@ -10,7 +10,12 @@ import { cn } from "@/lib/cn";
 
 const CATEGORY_ORDER = [
   "win",
+  "win_et",
+  "win_pk",
   "draw",
+  "loss",
+  "loss_et",
+  "loss_pk",
   "minor_upset",
   "major_upset",
   "major_upset_draw",
@@ -18,7 +23,12 @@ const CATEGORY_ORDER = [
 
 const CATEGORY_LABELS: Record<string, string> = {
   win: "Wins",
+  win_et: "Wins (extra time)",
+  win_pk: "Wins (penalties)",
   draw: "Draws",
+  loss: "Losses",
+  loss_et: "Losses (extra time)",
+  loss_pk: "Losses (penalties)",
   minor_upset: "Minor upsets",
   major_upset: "Major upsets",
   major_upset_draw: "Major upset draws",
@@ -272,6 +282,20 @@ export function TeamScoringBreakdown({
                         <strong className="block truncate text-sm">
                           {b.bonus_type_label || b.bonus_type}
                         </strong>
+                        {b.match_label && (
+                          <Muted className="mt-0.5 block truncate text-xs">
+                            {b.match_id ? (
+                              <Link
+                                href={`/leagues/${leagueId}/matches/${b.match_id}`}
+                                className="underline-offset-2 hover:underline"
+                              >
+                                {b.match_label}
+                              </Link>
+                            ) : (
+                              b.match_label
+                            )}
+                          </Muted>
+                        )}
                         {b.reason && (
                           <p className="mt-1 break-words text-xs text-muted">{b.reason}</p>
                         )}

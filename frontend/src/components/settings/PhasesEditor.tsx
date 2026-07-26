@@ -187,7 +187,7 @@ export function PhasesEditor({
   return (
     <EditorSection
       title="Leaderboard phases"
-      description="Split-season standings windows (e.g. matchweeks 1–19). Full season is always available."
+      description="Create separate leaderboards for parts of the competition—for example, group stage vs knockout—by matchweek range or stages. Full competition is always available."
     >
       {value.length > 0 && (
         <RowList>

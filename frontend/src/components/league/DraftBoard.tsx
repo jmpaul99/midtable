@@ -2,7 +2,7 @@
 
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, errorMessage, json } from "@/lib/api";
-import type { DraftState, League, PoolTeam } from "@/lib/types";
+import type { DraftState, League, PoolTeam, Readiness } from "@/lib/types";
 import { managerLabel } from "@/lib/types";
 import { Empty, ErrorState, Loading, Status, StatusBanner } from "@/components/ui/State";
 import { IconButton } from "@/components/ui/IconButton";
@@ -10,6 +10,7 @@ import { CheckIcon, PlayIcon, RefreshIcon } from "@/components/ui/icons";
 import { Card, Eyebrow, Muted, RankBadge, Row, Stack } from "@/components/ui/Card";
 import { Label, Select } from "@/components/ui/Field";
 import { cn } from "@/lib/cn";
+import { ReadinessChecklist } from "@/components/ReadinessChecklist";
 import { TeamCrest } from "./TeamCrest";
 import { TeamLink } from "./TeamLink";
 import { ManagerLink } from "./ManagerLink";
@@ -33,6 +34,7 @@ export function DraftBoard({
   const [updatedAt, setUpdatedAt] = useState<Date | null>(null);
   const [pendingKey, setPendingKey] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
+  const [readiness, setReadiness] = useState<Readiness>();
   const loadAbortRef = useRef<AbortController | null>(null);
 
   const managerName = (id: string) =>
@@ -109,19 +111,50 @@ export function DraftBoard({
   const running = state && ["running", "open"].includes(state.status);
   const myTurn = Boolean(running && onClock === league.current_member_id);
   const selected = teams.find((t) => t.id === team);
-  const requiredManagers = league.max_members ?? null;
-  const joinedManagers = league.members.length;
-  const rosterFull =
-    requiredManagers != null && joinedManagers === requiredManagers;
-  const canOpenDraft = rosterFull;
+  const canOpenDraft = readiness?.ready === true;
+  const showOpenControls =
+    commissioner && state && ["pending", "paused", "cancelled"].includes(state.status);
+
+  useEffect(() => {
+    if (!showOpenControls) {
+      setReadiness(undefined);
+      return;
+    }
+    let cancelled = false;
+    api<Readiness>(`/leagues/${league.id}/readiness`)
+      .then((r) => {
+        if (!cancelled) setReadiness(r);
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        setReadiness({
+          ready: false,
+          checks: [
+            {
+              key: "load",
+              label: "Could not load readiness",
+              status: "error",
+              detail: errorMessage(e),
+            },
+          ],
+          errors: [errorMessage(e)],
+          warnings: [],
+        });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    showOpenControls,
+    league.id,
+    league.members.length,
+    league.max_members,
+    league.pools.length,
+  ]);
 
   async function openDraft() {
     if (!canOpenDraft) {
-      setError(
-        requiredManagers == null
-          ? "Set the required number of managers in league settings before opening the draft."
-          : `Need exactly ${requiredManagers} managers to open the draft (have ${joinedManagers}).`,
-      );
+      setError(readiness?.errors?.[0] || "League is not ready to open the draft.");
       return;
     }
     setBusy(true);
@@ -207,31 +240,18 @@ export function DraftBoard({
               >
                 <Stack>
                   <h2>Draft controls</h2>
-                  {commissioner && ["pending", "paused", "cancelled"].includes(state.status) && (
+                  {showOpenControls && (
                     <>
                       <Muted>
                         Opens the league draft using the league draft style ({league.draft_style}).
                       </Muted>
-                      {requiredManagers == null ? (
-                        <StatusBanner tone="error">
-                          Set the required number of managers in league settings before opening
-                          the draft.
-                        </StatusBanner>
-                      ) : joinedManagers < requiredManagers ? (
-                        <StatusBanner tone="error">
-                          {joinedManagers} of {requiredManagers} managers joined. Invite or share a join link for the rest
-                          before opening the draft.
-                        </StatusBanner>
-                      ) : joinedManagers > requiredManagers ? (
-                        <StatusBanner tone="error">
-                          {joinedManagers} of {requiredManagers} managers joined. Remove extras
-                          before opening the draft.
-                        </StatusBanner>
-                      ) : (
-                        <StatusBanner tone="success">
-                          Roster full ({joinedManagers}/{requiredManagers}). Ready to open.
-                        </StatusBanner>
-                      )}
+                      <ReadinessChecklist
+                        readiness={readiness}
+                        readyLabel="Ready to open"
+                        readyWithWarningsDetail="warning(s) below — draft can open, but fix before relying on live scores."
+                        notReadyDetail="issue(s) to fix before opening the draft."
+                        checksSummaryLabel="Pre-draft checks"
+                      />
                       <div className="flex justify-start">
                         <IconButton
                           type="button"

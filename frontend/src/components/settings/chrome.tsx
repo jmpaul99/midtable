@@ -10,17 +10,21 @@ export function EditorSection({
   children,
   className,
 }: {
-  title: string;
+  title?: string;
   description?: string;
   children: ReactNode;
   className?: string;
 }) {
   return (
     <section className={cn("flex flex-col gap-3", className)}>
-      <div>
-        <h3 className="font-display text-base font-extrabold">{title}</h3>
-        {description ? <Muted className="mt-0.5 text-xs">{description}</Muted> : null}
-      </div>
+      {(title || description) && (
+        <div>
+          {title ? <h3 className="font-display text-base font-extrabold">{title}</h3> : null}
+          {description ? (
+            <Muted className={cn("text-xs", title && "mt-0.5")}>{description}</Muted>
+          ) : null}
+        </div>
+      )}
       {children}
     </section>
   );

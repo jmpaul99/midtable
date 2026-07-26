@@ -18,6 +18,7 @@ from app.services.scoring import (
     UpsetThreshold,
     attribute_team_points_to_members,
     build_standings_before_kickoff,
+    fantasy_result_for,
     kickoff_snapshots,
     match_passes_phase_filter,
     phase_points_from_events,
@@ -51,6 +52,7 @@ def _match(
     mw: int | None = 1,
     stage: str | None = None,
     status: str = "FINISHED",
+    duration: str = "REGULAR",
 ) -> MatchInput:
     return MatchInput(
         match_id=match_id,
@@ -61,6 +63,7 @@ def _match(
         home_goals=hg,
         away_goals=ag,
         status=status,
+        duration=duration,
         scheduled_matchweek=mw,
         stage=stage,
     )
@@ -70,6 +73,180 @@ def test_default_result_points() -> None:
     assert points_for_result(Result.WIN, POINTS) == 3
     assert points_for_result(Result.DRAW, POINTS) == 1
     assert points_for_result(Result.LOSS, POINTS) == 0
+    assert points_for_result(Result.WIN_ET, POINTS) == 3
+    assert points_for_result(Result.LOSS_ET, POINTS) == 0
+    assert points_for_result(Result.WIN_PK, POINTS) == 3
+    assert points_for_result(Result.LOSS_PK, POINTS) == 0
+
+
+def test_result_points_from_config_defaults_et_pk_to_win_loss() -> None:
+    pts = ResultPoints.from_config({"win": 5, "draw": 2, "loss": 1})
+    assert pts.win_et is None
+    assert pts.loss_et is None
+    assert pts.win_pk is None
+    assert pts.loss_pk is None
+    assert points_for_result(Result.WIN_ET, pts) == 5
+    assert points_for_result(Result.LOSS_ET, pts) == 1
+    assert points_for_result(Result.WIN_PK, pts) == 5
+    assert points_for_result(Result.LOSS_PK, pts) == 1
+
+
+def test_result_points_from_config_explicit_et_pk() -> None:
+    pts = ResultPoints.from_config(
+        {
+            "win": 3,
+            "draw": 1,
+            "loss": 0,
+            "win_et": 2,
+            "loss_et": 0.5,
+            "win_pk": 1.5,
+            "loss_pk": 0.5,
+        }
+    )
+    assert pts.win_et == Decimal("2")
+    assert pts.loss_et == Decimal("0.5")
+    assert pts.win_pk == Decimal("1.5")
+    assert pts.loss_pk == Decimal("0.5")
+
+
+def test_stage_win_override() -> None:
+    pts = ResultPoints.from_config(
+        {"win": 3, "draw": 1, "loss": 0, "by_stage": {"FINAL": {"win": 6}}}
+    )
+    assert points_for_result(Result.WIN, pts, "FINAL") == 6
+    assert points_for_result(Result.WIN, pts, "GROUP_STAGE") == 3
+    assert points_for_result(Result.WIN, pts) == 3
+    assert points_for_result(Result.DRAW, pts, "FINAL") == 1
+
+
+def test_stage_draw_loss_overrides() -> None:
+    pts = ResultPoints.from_config(
+        {
+            "win": 3,
+            "draw": 1,
+            "loss": 0,
+            "by_stage": {"SEMI_FINALS": {"draw": 2, "loss": 0.5}},
+        }
+    )
+    assert points_for_result(Result.DRAW, pts, "SEMI_FINALS") == 2
+    assert points_for_result(Result.LOSS, pts, "SEMI_FINALS") == Decimal("0.5")
+    assert points_for_result(Result.DRAW, pts, "FINAL") == 1
+
+
+def test_stage_empty_et_always_uses_default_not_stage_win() -> None:
+    """Empty stage ET/PK fields always fall back to Default, never stage win."""
+    pts = ResultPoints.from_config(
+        {"win": 3, "draw": 1, "loss": 0, "by_stage": {"FINAL": {"win": 6}}}
+    )
+    assert points_for_result(Result.WIN, pts, "FINAL") == 6
+    assert points_for_result(Result.WIN_ET, pts, "FINAL") == 3
+    assert points_for_result(Result.WIN_PK, pts, "FINAL") == 3
+
+
+def test_default_win_et_applies_when_stage_omits_et() -> None:
+    pts = ResultPoints.from_config(
+        {
+            "win": 3,
+            "draw": 1,
+            "loss": 0,
+            "win_et": 2,
+            "by_stage": {"FINAL": {"win": 6}},
+        }
+    )
+    assert points_for_result(Result.WIN, pts, "FINAL") == 6
+    assert points_for_result(Result.WIN_ET, pts, "FINAL") == 2
+    assert points_for_result(Result.WIN_ET, pts, "GROUP_STAGE") == 2
+
+
+def test_stage_et_override_beats_default_et() -> None:
+    pts = ResultPoints.from_config(
+        {
+            "win": 3,
+            "draw": 1,
+            "loss": 0,
+            "win_et": 2,
+            "loss_et": 0,
+            "by_stage": {"FINAL": {"win": 6, "win_et": 4, "loss_et": 1}},
+        }
+    )
+    assert points_for_result(Result.WIN_ET, pts, "FINAL") == 4
+    assert points_for_result(Result.LOSS_ET, pts, "FINAL") == 1
+    assert points_for_result(Result.WIN_ET, pts, "SEMI_FINALS") == 2
+
+
+def test_stage_win_event_uses_override() -> None:
+    pts = ResultPoints.from_config(
+        {"win": 3, "draw": 1, "loss": 0, "by_stage": {"FINAL": {"win": 6}}}
+    )
+    match = _match(1, 1, 2, NOW, 2, 1, stage="FINAL")
+    snapshot = {1: _team(1, 5, 8), 2: _team(2, 6, 8)}
+    events = score_match_events(match, snapshot, result_points=pts, upset_rules=RULES)
+    by_type = {(e.team_id, e.event_type): e.points for e in events}
+    assert by_type[(1, "win")] == 6
+
+
+@pytest.mark.parametrize(
+    ("gf", "ga", "duration", "expected"),
+    [
+        (2, 1, "REGULAR", Result.WIN),
+        (1, 2, "REGULAR", Result.LOSS),
+        (1, 1, "REGULAR", Result.DRAW),
+        (2, 1, "EXTRA_TIME", Result.WIN_ET),
+        (1, 2, "EXTRA_TIME", Result.LOSS_ET),
+        (5, 4, "PENALTY_SHOOTOUT", Result.WIN_PK),
+        (4, 5, "PENALTY_SHOOTOUT", Result.LOSS_PK),
+    ],
+)
+def test_fantasy_result_for_duration(
+    gf: int, ga: int, duration: str, expected: Result
+) -> None:
+    assert fantasy_result_for(gf, ga, duration) is expected
+
+
+def test_et_win_and_loss_events() -> None:
+    custom = ResultPoints(
+        win=Decimal(3),
+        draw=Decimal(1),
+        loss=Decimal(0),
+        win_et=Decimal(2),
+        loss_et=Decimal("0.5"),
+        win_pk=Decimal(3),
+        loss_pk=Decimal(0),
+    )
+    match = _match(1, 1, 2, NOW, 2, 1, duration="EXTRA_TIME")
+    snapshot = {1: _team(1, 5, 8), 2: _team(2, 6, 8)}
+    events = score_match_events(match, snapshot, result_points=custom, upset_rules=RULES)
+    by_type = {(e.team_id, e.event_type): e.points for e in events}
+    assert by_type[(1, "win_et")] == Decimal(2)
+    assert by_type[(2, "loss_et")] == Decimal("0.5")
+    assert (1, "win") not in by_type
+
+
+def test_pk_win_and_zero_point_loss_skips_loss_event() -> None:
+    custom = ResultPoints(
+        win=Decimal(3),
+        draw=Decimal(1),
+        loss=Decimal(0),
+        win_et=Decimal(3),
+        loss_et=Decimal(0),
+        win_pk=Decimal("1.5"),
+        loss_pk=Decimal(0),
+    )
+    match = _match(1, 1, 2, NOW, 5, 4, duration="PENALTY_SHOOTOUT")
+    snapshot = {1: _team(1, 5, 8), 2: _team(2, 6, 8)}
+    events = score_match_events(match, snapshot, result_points=custom, upset_rules=RULES)
+    by_type = {(e.team_id, e.event_type): e.points for e in events}
+    assert by_type[(1, "win_pk")] == Decimal("1.5")
+    assert (2, "loss_pk") not in by_type
+    assert (2, "loss") not in by_type
+
+
+def test_pk_win_still_eligible_for_upset() -> None:
+    match = _match(1, 1, 2, NOW, 5, 4, duration="PENALTY_SHOOTOUT")
+    snapshot = {1: _team(1, 12, 8), 2: _team(2, 2, 8)}  # gap 10
+    events = score_match_events(match, snapshot, result_points=POINTS, upset_rules=RULES)
+    assert any(e.event_type == "win_pk" and e.team_id == 1 for e in events)
+    assert any(e.event_type == "major_upset" and e.team_id == 1 and e.points == 3 for e in events)
 
 
 def test_pl_default_upset_rules_thresholds() -> None:

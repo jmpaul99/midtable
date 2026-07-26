@@ -5,6 +5,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    CheckConstraint,
     Date,
     DateTime,
     ForeignKey,
@@ -59,6 +60,8 @@ class CompetitionTemplate(Base):
     roster_slots: Mapped[list] = mapped_column(JSONB)
     pool_definitions: Mapped[list] = mapped_column(JSONB)
     bonus_types: Mapped[list] = mapped_column(JSONB)
+    roster_club_order: Mapped[str] = mapped_column(Text, default="draft")
+    max_members: Mapped[int | None] = mapped_column(Integer, nullable=True)
     featured: Mapped[bool] = mapped_column(Boolean, default=False)
     made_by_staff: Mapped[bool] = mapped_column(Boolean, default=False)
     created_by_profile_id: Mapped[int | None] = mapped_column(
@@ -251,6 +254,7 @@ class Match(Base):
     status: Mapped[str] = mapped_column(Text, default="SCHEDULED")
     home_goals: Mapped[int | None] = mapped_column(Integer)
     away_goals: Mapped[int | None] = mapped_column(Integer)
+    duration: Mapped[str] = mapped_column(Text, default="REGULAR")
     scheduled_matchweek: Mapped[int | None] = mapped_column(Integer)
     stage: Mapped[str | None] = mapped_column(Text)
     last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -385,10 +389,22 @@ class BonusType(Base):
 
 class ManualBonus(Base):
     __tablename__ = "manual_bonuses"
+    __table_args__ = (
+        CheckConstraint(
+            "("
+            "(team_id IS NOT NULL AND match_id IS NULL AND member_id IS NULL) OR "
+            "(team_id IS NOT NULL AND match_id IS NOT NULL AND member_id IS NULL) OR "
+            "(member_id IS NOT NULL AND team_id IS NULL AND match_id IS NULL)"
+            ")",
+            name="manual_bonuses_target_check",
+        ),
+    )
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     public_id: Mapped[UUID] = _public_id_column()
     league_id: Mapped[int] = mapped_column(ForeignKey("leagues.id", ondelete="CASCADE"))
-    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id", ondelete="CASCADE"))
+    team_id: Mapped[int | None] = mapped_column(ForeignKey("teams.id", ondelete="CASCADE"))
+    match_id: Mapped[int | None] = mapped_column(ForeignKey("matches.id", ondelete="CASCADE"))
+    member_id: Mapped[int | None] = mapped_column(ForeignKey("league_members.id", ondelete="CASCADE"))
     bonus_type_id: Mapped[int] = mapped_column(ForeignKey("bonus_types.id", ondelete="CASCADE"))
     points: Mapped[Decimal] = mapped_column(Numeric(10, 2))
     notes: Mapped[str | None] = mapped_column(Text)

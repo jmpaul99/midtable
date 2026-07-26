@@ -223,6 +223,11 @@ def preassign_team(
             status_code=409,
             detail="Preassign only allowed before the draft opens",
         )
+    if (league.preassign_mode or "none").lower() == "none":
+        raise HTTPException(
+            status_code=409,
+            detail="Preassign is disabled for this league",
+        )
     member = db.scalars(
         select(LeagueMember).where(
             LeagueMember.public_id == payload.member_id,

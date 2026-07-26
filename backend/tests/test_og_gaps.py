@@ -100,6 +100,18 @@ def test_phase_match_counts_helper():
     assert counts["is_final"] is False
 
 
+def _ready_pool():
+    return SimpleNamespace(
+        id=100,
+        key="premier_league",
+        label="Premier League",
+        slot_count=5,
+        scores_match_results=True,
+        competition_code="PL",
+        season_year=2026,
+    )
+
+
 def test_open_draft_requires_supported_preassigns():
     from app.services.draft import open_draft
 
@@ -113,7 +125,7 @@ def test_open_draft_requires_supported_preassigns():
         SimpleNamespace(id=10, draft_slot=1),
         SimpleNamespace(id=11, draft_slot=2),
     ]
-    pools = [SimpleNamespace(id=100, slot_count=5)]
+    pools = [_ready_pool()]
 
     db = MagicMock()
 
@@ -125,6 +137,9 @@ def test_open_draft_requires_supported_preassigns():
             return out
         if "team_pool" in sql:
             out.all.return_value = pools
+            return out
+        if "pool_team" in sql or "poolteam" in sql:
+            out.all.return_value = [SimpleNamespace(id=1)]
             return out
         if "roster" in sql:
             out.all.return_value = [
@@ -158,14 +173,28 @@ def test_open_draft_requires_exact_manager_count():
         SimpleNamespace(id=11, draft_slot=2),
     ]
     db = MagicMock()
-    scalars_out = MagicMock()
-    scalars_out.all.return_value = members
-    db.scalars.return_value = scalars_out
+
+    def scalars(stmt):
+        sql = str(stmt).lower()
+        out = MagicMock()
+        if "league_member" in sql:
+            out.all.return_value = members
+            return out
+        if "team_pool" in sql:
+            out.all.return_value = [_ready_pool()]
+            return out
+        if "pool_team" in sql or "poolteam" in sql:
+            out.all.return_value = [SimpleNamespace(id=1)]
+            return out
+        out.first.return_value = None
+        out.all.return_value = []
+        return out
+
+    db.scalars.side_effect = scalars
 
     with pytest.raises(ConflictError) as exc:
         open_draft(db, league)
-    assert "exactly 4 managers" in str(exc.value.message)
-    assert "have 2" in str(exc.value.message)
+    assert "2 of 4 managers" in str(exc.value.message)
 
 
 def test_open_draft_requires_manager_count_configured():
@@ -178,12 +207,27 @@ def test_open_draft_requires_manager_count_configured():
         config={},
     )
     db = MagicMock()
-    scalars_out = MagicMock()
-    scalars_out.all.return_value = [
-        SimpleNamespace(id=10, draft_slot=1),
-        SimpleNamespace(id=11, draft_slot=2),
-    ]
-    db.scalars.return_value = scalars_out
+
+    def scalars(stmt):
+        sql = str(stmt).lower()
+        out = MagicMock()
+        if "league_member" in sql:
+            out.all.return_value = [
+                SimpleNamespace(id=10, draft_slot=1),
+                SimpleNamespace(id=11, draft_slot=2),
+            ]
+            return out
+        if "team_pool" in sql:
+            out.all.return_value = [_ready_pool()]
+            return out
+        if "pool_team" in sql or "poolteam" in sql:
+            out.all.return_value = [SimpleNamespace(id=1)]
+            return out
+        out.first.return_value = None
+        out.all.return_value = []
+        return out
+
+    db.scalars.side_effect = scalars
 
     with pytest.raises(ConflictError) as exc:
         open_draft(db, league)

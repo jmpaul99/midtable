@@ -5,7 +5,7 @@ from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.db import get_db
@@ -46,6 +46,82 @@ from app.schemas.leagues import (
 router = APIRouter(tags=["league-reads"])
 
 _FINISHED = frozenset({"FINISHED", "AWARDED"})
+
+
+def _bonus_target(bonus: ManualBonus) -> str:
+    if bonus.member_id is not None:
+        return "manager"
+    if bonus.match_id is not None:
+        return "match"
+    return "team"
+
+
+def _match_label(match: Match, teams: dict[int, Team]) -> str:
+    home = teams.get(match.home_team_id)
+    away = teams.get(match.away_team_id)
+    home_name = home.name if home else "Home"
+    away_name = away.name if away else "Away"
+    label = f"{home_name} vs {away_name}"
+    if match.scheduled_matchweek is not None:
+        label = f"{label} · MW{match.scheduled_matchweek}"
+    return label
+
+
+def _bonus_award_row(
+    bonus: ManualBonus,
+    *,
+    bonus_types: dict[int, BonusType],
+    teams: dict[int, Team],
+    matches: dict[int, Match],
+) -> BonusAwardRow:
+    bt = bonus_types.get(bonus.bonus_type_id)
+    key = bt.key if bt else "bonus"
+    label = (bt.label or bt.key) if bt else "bonus"
+    team = teams.get(bonus.team_id) if bonus.team_id is not None else None
+    match = matches.get(bonus.match_id) if bonus.match_id is not None else None
+    return BonusAwardRow(
+        id=bonus.public_id,
+        target=_bonus_target(bonus),
+        team_id=team.public_id if team else None,
+        team_name=team.name if team else None,
+        crest_url=team.crest_url if team else None,
+        match_id=match.public_id if match else None,
+        match_label=_match_label(match, teams) if match else None,
+        scheduled_matchweek=match.scheduled_matchweek if match else None,
+        bonus_type=key,
+        bonus_type_label=label,
+        points=float(bonus.points),
+        reason=bonus.notes,
+        awarded_at=bonus.created_at,
+    )
+
+
+def _load_bonus_context(
+    db: Session,
+    league_id: int,
+    bonuses: list[ManualBonus],
+    *,
+    known_teams: dict[int, Team] | None = None,
+) -> tuple[dict[int, BonusType], dict[int, Team], dict[int, Match]]:
+    bonus_types = {
+        bt.id: bt
+        for bt in db.scalars(select(BonusType).where(BonusType.league_id == league_id)).all()
+    }
+    match_ids = {b.match_id for b in bonuses if b.match_id is not None}
+    matches = {
+        m.id: m
+        for m in db.scalars(select(Match).where(Match.id.in_(match_ids or [0]))).all()
+    }
+    team_ids = {b.team_id for b in bonuses if b.team_id is not None}
+    for match in matches.values():
+        team_ids.add(match.home_team_id)
+        team_ids.add(match.away_team_id)
+    teams = dict(known_teams or {})
+    missing = team_ids - set(teams)
+    if missing:
+        for t in db.scalars(select(Team).where(Team.id.in_(missing))).all():
+            teams[t.id] = t
+    return bonus_types, teams, matches
 
 
 @router.get("/leagues/{league_id}/pools/{pool_id}/teams", response_model=list[PoolTeamResponse])
@@ -383,44 +459,39 @@ def member_detail(
     bonus_points = 0.0
     bonus_by_type: dict[str, float] = {}
     awarded_bonuses: list[BonusAwardRow] = []
+    bonus_conditions = [ManualBonus.member_id == member.id]
     if team_ids:
-        bonuses = list(
-            db.scalars(
-                select(ManualBonus)
-                .where(
-                    ManualBonus.league_id == league.id,
-                    ManualBonus.team_id.in_(team_ids),
-                )
-                .order_by(ManualBonus.created_at.desc())
-            ).all()
-        )
-        bonus_types = {
-            bt.id: bt
-            for bt in db.scalars(select(BonusType).where(BonusType.league_id == league.id)).all()
-        }
-        for bonus in bonuses:
-            pts = float(bonus.points)
-            bonus_points += pts
-            total_points += pts
-            bt = bonus_types.get(bonus.bonus_type_id)
-            label = (bt.label or bt.key) if bt else "bonus"
-            key = bt.key if bt else "bonus"
-            bonus_by_type[label] = bonus_by_type.get(label, 0.0) + pts
-            points_by_team[bonus.team_id] = points_by_team.get(bonus.team_id, 0.0) + pts
-            team = teams.get(bonus.team_id)
-            awarded_bonuses.append(
-                BonusAwardRow(
-                    id=bonus.public_id,
-                    team_id=team.public_id if team else None,
-                    team_name=team.name if team else None,
-                    crest_url=team.crest_url if team else None,
-                    bonus_type=key,
-                    bonus_type_label=label,
-                    points=pts,
-                    reason=bonus.notes,
-                    awarded_at=bonus.created_at,
-                )
+        bonus_conditions.append(ManualBonus.team_id.in_(team_ids))
+    bonuses = list(
+        db.scalars(
+            select(ManualBonus)
+            .where(
+                ManualBonus.league_id == league.id,
+                or_(*bonus_conditions),
             )
+            .order_by(ManualBonus.created_at.desc())
+        ).all()
+    )
+    bonus_types, bonus_teams, bonus_matches = _load_bonus_context(
+        db, league.id, bonuses, known_teams=teams
+    )
+    for bonus in bonuses:
+        pts = float(bonus.points)
+        bonus_points += pts
+        total_points += pts
+        bt = bonus_types.get(bonus.bonus_type_id)
+        label = (bt.label or bt.key) if bt else "bonus"
+        bonus_by_type[label] = bonus_by_type.get(label, 0.0) + pts
+        if bonus.team_id is not None:
+            points_by_team[bonus.team_id] = points_by_team.get(bonus.team_id, 0.0) + pts
+        awarded_bonuses.append(
+            _bonus_award_row(
+                bonus,
+                bonus_types=bonus_types,
+                teams=bonus_teams,
+                matches=bonus_matches,
+            )
+        )
 
     finished = (
         list(
@@ -579,30 +650,23 @@ def team_detail(
             .order_by(ManualBonus.created_at.desc())
         ).all()
     )
-    bonus_types = {
-        bt.id: bt
-        for bt in db.scalars(select(BonusType).where(BonusType.league_id == league.id)).all()
-    }
+    bonus_types, bonus_teams, bonus_matches = _load_bonus_context(
+        db, league.id, bonuses, known_teams={team.id: team}
+    )
     bonus_by_type: dict[str, float] = {}
     awarded_bonuses: list[BonusAwardRow] = []
     for bonus in bonuses:
         pts = float(bonus.points)
         bonus_points += pts
         bt = bonus_types.get(bonus.bonus_type_id)
-        key = bt.key if bt else "bonus"
         label = (bt.label or bt.key) if bt else "bonus"
         bonus_by_type[label] = bonus_by_type.get(label, 0.0) + pts
         awarded_bonuses.append(
-            BonusAwardRow(
-                id=bonus.public_id,
-                team_id=team.public_id,
-                team_name=team.name,
-                crest_url=team.crest_url,
-                bonus_type=key,
-                bonus_type_label=label,
-                points=pts,
-                reason=bonus.notes,
-                awarded_at=bonus.created_at,
+            _bonus_award_row(
+                bonus,
+                bonus_types=bonus_types,
+                teams=bonus_teams,
+                matches=bonus_matches,
             )
         )
     total_points += bonus_points

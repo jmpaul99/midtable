@@ -122,7 +122,14 @@ def bootstrap_season(
         leaderboard_tiebreaks=deepcopy(template.leaderboard_tiebreaks),
         buy_in=template.buy_in,
         payouts=deepcopy(template.payouts),
-        config={"max_members": max_members} if max_members is not None else {},
+        config={
+            **({"max_members": max_members} if max_members is not None else {}),
+            "roster_club_order": (
+                template.roster_club_order
+                if template.roster_club_order in ("draft", "competition")
+                else "draft"
+            ),
+        },
         scheduled_start_date=scheduled_start_date,
         scheduled_end_date=scheduled_end_date,
     )

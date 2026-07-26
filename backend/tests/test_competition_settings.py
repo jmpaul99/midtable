@@ -90,6 +90,52 @@ def test_update_settings_rejects_remove_after_draft_starts():
     assert exc.value.status_code == 409
 
 
+def test_update_settings_rejects_draft_style_after_draft_starts():
+    league = _league(status="drafting")
+    member = SimpleNamespace(id=1)
+    payload = LeagueSettingsUpdate(draft_style="snake")
+    with pytest.raises(HTTPException) as exc:
+        update_settings(payload=payload, membership=(league, member), db=MagicMock())
+    assert exc.value.status_code == 409
+    assert "before the draft" in exc.value.detail
+
+
+def test_update_settings_allows_draft_style_in_pre_draft():
+    league = _league(status="pre_draft")
+    league.draft_style = "linear"
+    league.preassign_mode = "none"
+    member = SimpleNamespace(id=1)
+    db = MagicMock()
+    detail = SimpleNamespace(id=league.id)
+    payload = LeagueSettingsUpdate(draft_style="snake", preassign_mode="supported")
+    with patch("app.routers.leagues_core._league_detail", return_value=detail):
+        result = update_settings(payload=payload, membership=(league, member), db=db)
+    assert result is detail
+    assert league.draft_style == "snake"
+    assert league.preassign_mode == "supported"
+    db.commit.assert_called_once()
+
+
+def test_update_settings_clears_preassigns_when_mode_becomes_none():
+    league = _league(status="pre_draft")
+    league.draft_style = "linear"
+    league.preassign_mode = "supported"
+    member = SimpleNamespace(id=1)
+    entry = SimpleNamespace(id=99, league_id=league.id, source="preassigned")
+    db = MagicMock()
+    scalars_out = MagicMock()
+    scalars_out.all.return_value = [entry]
+    db.scalars.return_value = scalars_out
+    detail = SimpleNamespace(id=league.id)
+    payload = LeagueSettingsUpdate(preassign_mode="none")
+    with patch("app.routers.leagues_core._league_detail", return_value=detail):
+        update_settings(payload=payload, membership=(league, member), db=db)
+    assert league.preassign_mode == "none"
+    db.delete.assert_called_once_with(entry)
+    db.flush.assert_called()
+    db.commit.assert_called_once()
+
+
 def test_update_settings_creates_pool_in_pre_draft():
     league = _league(status="pre_draft")
     member = SimpleNamespace(id=1, public_id=uuid4())
@@ -211,10 +257,9 @@ def test_update_settings_update_only_allowed_when_drafting():
 
 
 def test_readiness_pools_check_errors_without_competitions():
-    from app.routers.league_ops import readiness
+    from app.services.readiness import evaluate_readiness
 
     league = _league(status="pre_draft")
-    member = SimpleNamespace(id=1)
     db = MagicMock()
 
     def scalars_side_effect(stmt):
@@ -224,7 +269,7 @@ def test_readiness_pools_check_errors_without_competitions():
 
     db.scalars.side_effect = scalars_side_effect
 
-    result = readiness(membership=(league, member), db=db)
+    result = evaluate_readiness(db, league)
     pools_check = next(c for c in result.checks if c.key == "pools")
     assert pools_check.status == "error"
     assert "League settings" in (pools_check.detail or "")
@@ -232,7 +277,7 @@ def test_readiness_pools_check_errors_without_competitions():
 
 
 def test_readiness_pools_check_ok_with_competition():
-    from app.routers.league_ops import readiness
+    from app.services.readiness import evaluate_readiness
 
     league = _league(status="pre_draft")
     member = SimpleNamespace(id=1, draft_slot=1)
@@ -263,7 +308,7 @@ def test_readiness_pools_check_ok_with_competition():
 
     db.scalars.side_effect = scalars_side_effect
     # max_members configured via league.config
-    result = readiness(membership=(league, member), db=db)
+    result = evaluate_readiness(db, league)
     pools_check = next(c for c in result.checks if c.key == "pools")
     assert pools_check.status == "ok"
 

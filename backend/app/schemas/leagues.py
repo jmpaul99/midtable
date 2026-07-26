@@ -265,6 +265,8 @@ class LeagueSettingsUpdate(BaseModel):
     payouts: list[Any] | None = None
     max_members: int | None = Field(default=None, ge=2, le=100)
     roster_club_order: Literal["draft", "competition"] | None = None
+    draft_style: Literal["linear", "snake"] | None = None
+    preassign_mode: Literal["none", "supported", "optional"] | None = None
     pools: list[PoolSettingsPatch] | None = None
     remove_pool_ids: list[UUID] | None = None
 
@@ -381,9 +383,13 @@ class MemberClubRow(BaseModel):
 
 class BonusAwardRow(BaseModel):
     id: UUID
+    target: str = "team"
     team_id: UUID | None = None
     team_name: str | None = None
     crest_url: str | None = None
+    match_id: UUID | None = None
+    match_label: str | None = None
+    scheduled_matchweek: int | None = None
     bonus_type: str
     bonus_type_label: str
     points: float

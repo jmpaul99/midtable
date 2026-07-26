@@ -5,9 +5,7 @@ import { useRouter } from "next/navigation";
 import { api, errorMessage, json } from "@/lib/api";
 import type { CompetitionTemplate, Json, League } from "@/lib/types";
 import { ErrorState, Loading, StatusBanner } from "@/components/ui/State";
-import { IconButton } from "@/components/ui/IconButton";
 import { Button } from "@/components/ui/Button";
-import { PlusIcon } from "@/components/ui/icons";
 import { Card, Muted, Stack } from "@/components/ui/Card";
 import { Input, Label } from "@/components/ui/Field";
 import { FieldHelp, LabelRow } from "@/components/ui/FieldHelp";
@@ -67,9 +65,14 @@ export function CreateLeagueForm({
 
   const isPremierLeague = template?.key === "premier_league";
   const templatePools = useMemo(() => poolsFromTemplate(template), [template]);
-  const hasTeamStep = templatePools.length > 0;
-  const stepCount = hasTeamStep ? 2 : 1;
+  const hasCompetitions = templatePools.length > 0;
+  const stepCount = 2;
   const isLast = step >= stepCount - 1;
+
+  useEffect(() => {
+    const n = Number(template?.max_members);
+    setMaxMembers(Number.isFinite(n) && n >= 2 ? String(n) : "");
+  }, [template]);
 
   useEffect(() => {
     if (!templatePools.length) {
@@ -110,6 +113,10 @@ export function CreateLeagueForm({
       setError("Fill in name, season label, and managers to continue.");
       return;
     }
+    if (!hasCompetitions) {
+      setError("This template needs at least one competition before you can create a league.");
+      return;
+    }
     setError("");
     setStep(1);
   }
@@ -118,6 +125,10 @@ export function CreateLeagueForm({
     e.preventDefault();
     if (!isLast) {
       goNext();
+      return;
+    }
+    if (!hasCompetitions) {
+      setError("This template needs at least one competition before you can create a league.");
       return;
     }
     setCreating(true);
@@ -156,24 +167,20 @@ export function CreateLeagueForm({
           }),
         );
 
-        if (templateId && templatePools.length) {
-          const out = await api<{
-            linked?: number;
-            created_teams?: number;
-            skipped_existing?: number;
-            pools?: Array<Record<string, unknown>>;
-          }>(
-            `/leagues/${created.id}/bootstrap-teams`,
-            json("POST", { pool_provider_params }),
-          );
-          const poolErrors = (out.pools || [])
-            .filter((p) => typeof p.error === "string")
-            .map((p) => `${p.pool_key}: ${p.error}`);
-          const base = `Created ${created.name}. Teams: ${out.linked ?? 0} linked, ${out.created_teams ?? 0} created.`;
-          setMessage(poolErrors.length ? `${base} Issues — ${poolErrors.join("; ")}` : base);
-        } else {
-          setMessage(`Created ${created.name}.`);
-        }
+        const out = await api<{
+          linked?: number;
+          created_teams?: number;
+          skipped_existing?: number;
+          pools?: Array<Record<string, unknown>>;
+        }>(
+          `/leagues/${created.id}/bootstrap-teams`,
+          json("POST", { pool_provider_params }),
+        );
+        const poolErrors = (out.pools || [])
+          .filter((p) => typeof p.error === "string")
+          .map((p) => `${p.pool_key}: ${p.error}`);
+        const base = `Created ${created.name}. Teams: ${out.linked ?? 0} linked, ${out.created_teams ?? 0} created.`;
+        setMessage(poolErrors.length ? `${base} Issues — ${poolErrors.join("; ")}` : base);
       }
 
       router.push(`/leagues/${created.id}/admin`);
@@ -189,7 +196,7 @@ export function CreateLeagueForm({
       <Stack>
         <div>
           <div className="flex items-baseline justify-between gap-3">
-            <h2>{step === 0 ? "League details" : "Load teams"}</h2>
+            <h2>{step === 0 ? "League details" : "Competitions"}</h2>
             <p className="text-xs font-semibold text-muted">
               Step {step + 1} of {stepCount}
             </p>
@@ -197,29 +204,27 @@ export function CreateLeagueForm({
           <Muted className="mt-1">
             {template
               ? `Using template “${template.label}”.`
-              : "Creating without a template — configure competitions later in Commissioner settings."}
+              : "Pick a template with competitions to create a league."}
           </Muted>
         </div>
 
-        {stepCount > 1 && (
-          <div className="flex gap-1" aria-label="League setup steps">
-            {Array.from({ length: stepCount }, (_, i) => (
-              <button
-                key={i}
-                type="button"
-                disabled={i >= step}
-                onClick={() => i < step && setStep(i)}
-                className={cn(
-                  "h-1.5 min-w-6 flex-1 rounded-full transition",
-                  i === step ? "bg-brand" : i < step ? "bg-brand/35" : "bg-surface-2",
-                  i < step && "cursor-pointer hover:bg-brand/60",
-                )}
-                aria-label={`Step ${i + 1}`}
-                aria-current={i === step ? "step" : undefined}
-              />
-            ))}
-          </div>
-        )}
+        <div className="flex gap-1" aria-label="League setup steps">
+          {Array.from({ length: stepCount }, (_, i) => (
+            <button
+              key={i}
+              type="button"
+              disabled={i >= step}
+              onClick={() => i < step && setStep(i)}
+              className={cn(
+                "h-1.5 min-w-6 flex-1 rounded-full transition",
+                i === step ? "bg-brand" : i < step ? "bg-brand/35" : "bg-surface-2",
+                i < step && "cursor-pointer hover:bg-brand/60",
+              )}
+              aria-label={`Step ${i + 1}`}
+              aria-current={i === step ? "step" : undefined}
+            />
+          ))}
+        </div>
 
         {error && <ErrorState error={error} />}
         {message && <StatusBanner tone="success">{message}</StatusBanner>}
@@ -309,17 +314,24 @@ export function CreateLeagueForm({
             </>
           )}
 
-          {step === 1 && hasTeamStep && (
+          {step === 1 && (
             <div className="sm:col-span-2 flex flex-col gap-3">
+              {!hasCompetitions ? (
+                <StatusBanner>
+                  This template has no competitions. Edit the template and add at least one before
+                  creating a league.
+                </StatusBanner>
+              ) : (
+                <>
               <div className="flex items-start gap-2">
                 <Muted className="text-xs">
-                  Competition and season year per pool — clubs are pulled right after the league is
-                  created.
+                  Confirm the competition and season year for each — clubs are loaded when you
+                  create the league.
                 </Muted>
-                <FieldHelp label="Load teams">
+                <FieldHelp label="Competitions">
                   <p className="mb-2">
                     Choose which provider competition and season year to pull clubs from for each
-                    pool.
+                    competition on the template.
                   </p>
                   <ul className="list-disc space-y-1 pl-4">
                     <li>
@@ -380,6 +392,8 @@ export function CreateLeagueForm({
                   </Label>
                 </div>
               ))}
+                </>
+              )}
             </div>
           )}
 
@@ -394,25 +408,22 @@ export function CreateLeagueForm({
                 Next
               </Button>
             ) : (
-              <IconButton
+              <Button
                 type="submit"
                 variant="primary"
-                label={
-                  creating
-                    ? templatePools.length
-                      ? "Creating & loading teams"
-                      : "Creating"
-                    : plBlocked
-                      ? "Blocked by prior seasons"
-                      : templatePools.length
-                        ? "Create league & load teams"
-                        : "Create league"
+                disabled={
+                  creating ||
+                  !hasCompetitions ||
+                  plBlocked ||
+                  (isPremierLeague && !gates)
                 }
-                busy={creating}
-                disabled={plBlocked || (isPremierLeague && !gates)}
               >
-                <PlusIcon />
-              </IconButton>
+                {creating
+                  ? "Creating"
+                  : plBlocked
+                    ? "Blocked by prior seasons"
+                    : "Create League"}
+              </Button>
             )}
           </div>
         </form>

@@ -6,8 +6,13 @@ from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.auth.jwt import get_current_profile
+from app.config import Settings, get_settings
 from app.db import get_db
-from app.deps import get_league_by_public_id, require_platform_admin
+from app.deps import (
+    get_football_provider,
+    get_league_by_public_id,
+    require_platform_admin,
+)
 from app.models import (
     Profile,
     RankingCatalog,
@@ -15,19 +20,31 @@ from app.models import (
     RankingCatalogTeamOverride,
     Team,
 )
+from app.providers.football_data import FootballDataError, FootballDataProvider
 from app.schemas.ranking_catalog import (
+    AdminSyncTeamsAndRankingsRequest,
+    CompetitionTeamResponse,
+    CompetitionTeamsRequest,
+    CompetitionTeamsResponse,
     RankingCatalogCreate,
     RankingCatalogDetailResponse,
     RankingCatalogEntryResponse,
+    RankingCatalogMatchRow,
     RankingCatalogOverrideResponse,
     RankingCatalogOverrideUpsert,
     RankingCatalogResponse,
     RankingCatalogUnmatchedRow,
 )
+from app.services.competitions import (
+    is_allowed_competition_code,
+    normalize_competition_code,
+)
+from app.services.global_sync import sync_all_teams_and_rankings
 from app.services.ranking_catalog import (
     create_user_catalog,
     get_catalog_for_viewer,
     get_visible_catalogs,
+    matches_for_catalog,
     unmatched_for_catalog,
     upsert_override,
 )
@@ -44,6 +61,69 @@ def list_ranking_catalogs(
 ) -> list[RankingCatalogResponse]:
     rows = get_visible_catalogs(db, profile_id=profile.id)
     return [RankingCatalogResponse.model_validate(row) for row in rows]
+
+
+@router.post("/competitions/teams", response_model=CompetitionTeamsResponse)
+def list_competition_teams(
+    payload: CompetitionTeamsRequest,
+    _profile: Profile = Depends(get_current_profile),
+    provider: FootballDataProvider = Depends(get_football_provider),
+) -> CompetitionTeamsResponse:
+    """Load provider teams for the given competition code/season pairs."""
+    if not payload.competitions:
+        raise HTTPException(status_code=400, detail="At least one competition is required")
+
+    seen_queries: set[tuple[str, int]] = set()
+    by_external_id: dict[str, CompetitionTeamResponse] = {}
+
+    for item in payload.competitions:
+        code = normalize_competition_code(item.code)
+        if not code or not is_allowed_competition_code(code):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unsupported competition code: {item.code!r}",
+            )
+        if item.season_year < 1990 or item.season_year > 2100:
+            raise HTTPException(status_code=400, detail="Invalid season_year")
+
+        query_key = (code, item.season_year)
+        if query_key in seen_queries:
+            continue
+        seen_queries.add(query_key)
+
+        try:
+            info, _ = provider.resolve_competition_season_or_latest(code, item.season_year)
+            if not info.available:
+                raise HTTPException(
+                    status_code=400,
+                    detail=info.message or f"Season not available for {code}",
+                )
+            teams, _ = provider.list_teams(code, info.season_year)
+        except FootballDataError as exc:
+            logger.warning(
+                "competition teams provider error code=%s season=%s err=%s",
+                code,
+                item.season_year,
+                exc,
+            )
+            raise HTTPException(
+                status_code=502,
+                detail=f"Failed to load teams for {code}: {exc}",
+            ) from exc
+
+        for team in teams:
+            if team.external_id in by_external_id:
+                continue
+            by_external_id[team.external_id] = CompetitionTeamResponse(
+                external_id=team.external_id,
+                name=team.name,
+                short_name=team.short_name,
+                crest_url=team.crest_url,
+                competition_code=code,
+            )
+
+    ordered = sorted(by_external_id.values(), key=lambda t: t.name.casefold())
+    return CompetitionTeamsResponse(teams=ordered)
 
 
 @router.post(
@@ -113,6 +193,26 @@ def list_unmatched_catalog_entries(
     sample = get_league_by_public_id(db, league_id) if league_id else None
     rows = unmatched_for_catalog(db, catalog, sample_league=sample)
     return [RankingCatalogUnmatchedRow.model_validate(r) for r in rows]
+
+
+@router.get(
+    "/ranking-catalogs/{catalog_id}/matches",
+    response_model=list[RankingCatalogMatchRow],
+)
+def list_catalog_matches(
+    catalog_id: UUID,
+    league_id: UUID | None = Query(default=None),
+    _admin: Profile = Depends(require_platform_admin),
+    db: Session = Depends(get_db),
+) -> list[RankingCatalogMatchRow]:
+    catalog = db.scalars(
+        select(RankingCatalog).where(RankingCatalog.public_id == catalog_id)
+    ).first()
+    if catalog is None:
+        raise HTTPException(status_code=404, detail="Ranking catalog not found")
+    sample = get_league_by_public_id(db, league_id) if league_id else None
+    rows = matches_for_catalog(db, catalog, sample_league=sample)
+    return [RankingCatalogMatchRow.model_validate(r) for r in rows]
 
 
 @router.get(
@@ -189,17 +289,28 @@ def list_teams_for_admin_rematch(
     _admin: Profile = Depends(require_platform_admin),
     db: Session = Depends(get_db),
 ) -> list[dict]:
-    stmt = select(Team).where(Team.provider == "football-data.org").order_by(Team.name)
-    if q and q.strip():
-        like = f"%{q.strip()}%"
-        stmt = stmt.where(
+    """Search football-data.org teams for rematch pickers.
+
+    Without ``q``, returns an empty list so clients use search rather than
+    loading an incomplete global dump.
+    """
+    needle = (q or "").strip()
+    if not needle:
+        return []
+    like = f"%{needle}%"
+    teams = db.scalars(
+        select(Team)
+        .where(
+            Team.provider == "football-data.org",
             or_(
                 Team.name.ilike(like),
                 Team.short_name.ilike(like),
                 Team.tla.ilike(like),
-            )
+            ),
         )
-    teams = db.scalars(stmt.limit(200)).all()
+        .order_by(Team.name)
+        .limit(100)
+    ).all()
     return [
         {
             "external_id": t.external_id,
@@ -210,3 +321,32 @@ def list_teams_for_admin_rematch(
         }
         for t in teams
     ]
+
+
+@router.post("/admin/sync-teams-and-rankings")
+def admin_sync_teams_and_rankings(
+    payload: AdminSyncTeamsAndRankingsRequest | None = None,
+    _admin: Profile = Depends(require_platform_admin),
+    db: Session = Depends(get_db),
+    provider: FootballDataProvider = Depends(get_football_provider),
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    """Upsert global teams for all free-plan competitions, then refresh FIFA catalogs."""
+    body = payload or AdminSyncTeamsAndRankingsRequest()
+    if body.season_year is not None and (
+        body.season_year < 1990 or body.season_year > 2100
+    ):
+        raise HTTPException(status_code=400, detail="Invalid season_year")
+    logger.info(
+        "admin sync-teams-and-rankings started season_year=%s",
+        body.season_year,
+    )
+    result = sync_all_teams_and_rankings(
+        db,
+        provider,
+        settings=settings,
+        season_year=body.season_year,
+    )
+    if not result.get("ok") and not result.get("teams", {}).get("ok"):
+        raise HTTPException(status_code=502, detail=result)
+    return result

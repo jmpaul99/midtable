@@ -22,9 +22,45 @@ class Result(StrEnum):
     WIN = "win"
     DRAW = "draw"
     LOSS = "loss"
+    WIN_ET = "win_et"
+    LOSS_ET = "loss_et"
+    WIN_PK = "win_pk"
+    LOSS_PK = "loss_pk"
 
 
 FINISHED_STATUSES = frozenset({"FINISHED", "AWARDED"})
+
+# Coarse outcomes used by competition tables and upset eligibility.
+_WIN_RESULTS = frozenset({Result.WIN, Result.WIN_ET, Result.WIN_PK})
+_LOSS_RESULTS = frozenset({Result.LOSS, Result.LOSS_ET, Result.LOSS_PK})
+
+
+_STAGE_POINT_KEYS = ("win", "draw", "loss", "win_et", "loss_et", "win_pk", "loss_pk")
+
+
+@dataclass(frozen=True)
+class StageResultPoints:
+    """Sparse per-stage overrides; None means use Default for that field."""
+
+    win: Decimal | None = None
+    draw: Decimal | None = None
+    loss: Decimal | None = None
+    win_et: Decimal | None = None
+    loss_et: Decimal | None = None
+    win_pk: Decimal | None = None
+    loss_pk: Decimal | None = None
+
+    def get(self, key: str) -> Decimal | None:
+        return getattr(self, key, None)
+
+    @classmethod
+    def from_config(cls, config: Mapping[str, Any] | None) -> StageResultPoints:
+        cfg = dict(config or {})
+        kwargs: dict[str, Decimal | None] = {}
+        for key in _STAGE_POINT_KEYS:
+            if key in cfg and cfg[key] is not None and cfg[key] != "":
+                kwargs[key] = Decimal(str(cfg[key]))
+        return cls(**kwargs)
 
 
 @dataclass(frozen=True)
@@ -32,14 +68,38 @@ class ResultPoints:
     win: Decimal = Decimal(3)
     draw: Decimal = Decimal(1)
     loss: Decimal = Decimal(0)
+    # None = inherit from Default win/loss.
+    win_et: Decimal | None = None
+    loss_et: Decimal | None = None
+    win_pk: Decimal | None = None
+    loss_pk: Decimal | None = None
+    by_stage: Mapping[str, StageResultPoints] = field(default_factory=dict)
 
     @classmethod
     def from_config(cls, config: Mapping[str, Any] | None) -> ResultPoints:
         cfg = dict(config or {})
+        win = Decimal(str(cfg.get("win", 3)))
+        draw = Decimal(str(cfg.get("draw", 1)))
+        loss = Decimal(str(cfg.get("loss", 0)))
+        by_stage_raw = cfg.get("by_stage")
+        by_stage: dict[str, StageResultPoints] = {}
+        if isinstance(by_stage_raw, Mapping):
+            for stage_key, stage_cfg in by_stage_raw.items():
+                code = str(stage_key).strip()
+                if not code or not isinstance(stage_cfg, Mapping):
+                    continue
+                parsed = StageResultPoints.from_config(stage_cfg)
+                if any(parsed.get(k) is not None for k in _STAGE_POINT_KEYS):
+                    by_stage[code] = parsed
         return cls(
-            win=Decimal(str(cfg.get("win", 3))),
-            draw=Decimal(str(cfg.get("draw", 1))),
-            loss=Decimal(str(cfg.get("loss", 0))),
+            win=win,
+            draw=draw,
+            loss=loss,
+            win_et=Decimal(str(cfg["win_et"])) if "win_et" in cfg else None,
+            loss_et=Decimal(str(cfg["loss_et"])) if "loss_et" in cfg else None,
+            win_pk=Decimal(str(cfg["win_pk"])) if "win_pk" in cfg else None,
+            loss_pk=Decimal(str(cfg["loss_pk"])) if "loss_pk" in cfg else None,
+            by_stage=by_stage,
         )
 
 
@@ -178,6 +238,7 @@ class MatchInput:
     home_goals: int | None
     away_goals: int | None
     status: str = "FINISHED"
+    duration: str = "REGULAR"
     scheduled_matchweek: int | None = None
     stage: str | None = None
 
@@ -242,6 +303,7 @@ DEFAULT_TABLE_TIEBREAKS = ("points", "gd", "gf", "name")
 
 
 def result_for(goals_for: int, goals_against: int) -> Result:
+    """Competition-table outcome from goals (ignores duration)."""
     if goals_for > goals_against:
         return Result.WIN
     if goals_for < goals_against:
@@ -249,12 +311,72 @@ def result_for(goals_for: int, goals_against: int) -> Result:
     return Result.DRAW
 
 
-def points_for_result(result: Result, points: ResultPoints) -> Decimal:
-    return {
-        Result.WIN: points.win,
-        Result.DRAW: points.draw,
-        Result.LOSS: points.loss,
-    }[result]
+def fantasy_result_for(
+    goals_for: int, goals_against: int, duration: str = "REGULAR"
+) -> Result:
+    """Fantasy outcome keyed by match duration (REGULAR / EXTRA_TIME / PENALTY_SHOOTOUT)."""
+    base = result_for(goals_for, goals_against)
+    if duration == "EXTRA_TIME":
+        if base is Result.WIN:
+            return Result.WIN_ET
+        if base is Result.LOSS:
+            return Result.LOSS_ET
+        # Drawn after ET should not happen (would go to PKs); treat as draw.
+        return Result.DRAW
+    if duration == "PENALTY_SHOOTOUT":
+        if base is Result.WIN:
+            return Result.WIN_PK
+        if base is Result.LOSS:
+            return Result.LOSS_PK
+        return Result.DRAW
+    return base
+
+
+def coarse_result(result: Result) -> Result:
+    """Map ET/PK results to win/draw/loss for upset eligibility."""
+    if result in _WIN_RESULTS:
+        return Result.WIN
+    if result in _LOSS_RESULTS:
+        return Result.LOSS
+    return Result.DRAW
+
+
+def _default_points_for_result(result: Result, points: ResultPoints) -> Decimal:
+    """Points from the Default block only (ET/PK inherit Default win/loss)."""
+    if result is Result.WIN:
+        return points.win
+    if result is Result.DRAW:
+        return points.draw
+    if result is Result.LOSS:
+        return points.loss
+    if result is Result.WIN_ET:
+        return points.win_et if points.win_et is not None else points.win
+    if result is Result.LOSS_ET:
+        return points.loss_et if points.loss_et is not None else points.loss
+    if result is Result.WIN_PK:
+        return points.win_pk if points.win_pk is not None else points.win
+    if result is Result.LOSS_PK:
+        return points.loss_pk if points.loss_pk is not None else points.loss
+    return points.draw
+
+
+def points_for_result(
+    result: Result,
+    points: ResultPoints,
+    stage: str | None = None,
+) -> Decimal:
+    """Resolve fantasy points for a result, optionally scoped to a match stage.
+
+    Stage sparse overrides win when set; any empty stage field always uses Default
+    for that same result type (Default ET/PK still inherit Default win/loss).
+    """
+    if stage:
+        stage_pts = points.by_stage.get(stage)
+        if stage_pts is not None:
+            stage_val = stage_pts.get(result.value)
+            if stage_val is not None:
+                return stage_val
+    return _default_points_for_result(result, points)
 
 
 def normalize_tiebreaks(tiebreaks: Sequence[str] | None) -> tuple[str, ...]:
@@ -408,15 +530,17 @@ def score_match_events(
         return ()
     home = snapshot[match.home_team_id]
     away = snapshot[match.away_team_id]
-    home_result = result_for(match.home_goals, match.away_goals)
-    away_result = result_for(match.away_goals, match.home_goals)
+    assert match.home_goals is not None and match.away_goals is not None
+    home_result = fantasy_result_for(match.home_goals, match.away_goals, match.duration)
+    away_result = fantasy_result_for(match.away_goals, match.home_goals, match.duration)
+    home_coarse = coarse_result(home_result)
+    away_coarse = coarse_result(away_result)
     events: list[ScoringEventDraft] = []
 
     def add_result(team_id: int, result: Result) -> None:
-        pts = points_for_result(result, result_points)
-        if pts == 0 and result is Result.LOSS:
-            return
-        if result is Result.LOSS:
+        pts = points_for_result(result, result_points, match.stage)
+        # Skip zero-point outcomes (typically losses) so leaderboards stay clean.
+        if pts == 0:
             return
         events.append(
             ScoringEventDraft(
@@ -431,6 +555,7 @@ def score_match_events(
                     "away_rank": away.rank,
                     "home_played": home.played,
                     "away_played": away.played,
+                    "duration": match.duration,
                 },
             )
         )
@@ -438,7 +563,7 @@ def score_match_events(
     add_result(match.home_team_id, home_result)
     add_result(match.away_team_id, away_result)
 
-    if home_result is Result.WIN:
+    if home_coarse is Result.WIN:
         bonus, key, gap = upset_bonus(home, away, Result.WIN, upset_rules)
         if key and bonus:
             logger.debug(
@@ -465,7 +590,7 @@ def score_match_events(
                     },
                 )
             )
-    elif away_result is Result.WIN:
+    elif away_coarse is Result.WIN:
         bonus, key, gap = upset_bonus(away, home, Result.WIN, upset_rules)
         if key and bonus:
             logger.debug(

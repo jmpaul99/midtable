@@ -25,6 +25,8 @@ interface AuthContextValue {
   session: Session | null;
   loading: boolean;
   isAdmin: boolean;
+  /** False until /auth/me has resolved platform-admin status for the current session. */
+  adminReady: boolean;
   signOut: () => Promise<void>;
   refresh: () => Promise<void>;
 }
@@ -35,6 +37,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [adminReady, setAdminReady] = useState(false);
 
   const refresh = useCallback(async () => {
     const { data } = await supabase().auth.getSession();
@@ -72,16 +75,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     let cancelled = false;
     if (!session) {
       setIsAdmin(false);
+      setAdminReady(true);
       return;
     }
 
     setIsAdmin(false);
+    setAdminReady(false);
     api<Me>("/auth/me")
       .then((me) => {
-        if (!cancelled) setIsAdmin(Boolean(me.is_platform_admin));
+        if (!cancelled) {
+          setIsAdmin(Boolean(me.is_platform_admin));
+          setAdminReady(true);
+        }
       })
       .catch(() => {
-        if (!cancelled) setIsAdmin(false);
+        if (!cancelled) {
+          setIsAdmin(false);
+          setAdminReady(true);
+        }
       });
 
     return () => {
@@ -100,10 +111,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       session,
       loading,
       isAdmin,
+      adminReady,
       signOut,
       refresh,
     }),
-    [session, loading, isAdmin, signOut, refresh],
+    [session, loading, isAdmin, adminReady, signOut, refresh],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
@@ -134,6 +146,28 @@ export function RequireAuth({ children }: { children: ReactNode }) {
 
   if (loading || !session) {
     return <AuthLoading />;
+  }
+
+  return children;
+}
+
+export function RequirePlatformAdmin({ children }: { children: ReactNode }) {
+  const { session, loading, isAdmin, adminReady } = useAuth();
+  const router = useRouter();
+
+  useEffect(() => {
+    if (loading || !session || !adminReady) return;
+    if (!isAdmin) {
+      router.replace("/");
+    }
+  }, [loading, session, adminReady, isAdmin, router]);
+
+  if (loading || !session || !adminReady) {
+    return <AuthLoading />;
+  }
+
+  if (!isAdmin) {
+    return <Loading label="Checking admin access" />;
   }
 
   return children;

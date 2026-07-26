@@ -119,6 +119,8 @@ export interface CompetitionTemplate {
   roster_slots: Json[];
   pool_definitions: Json[];
   bonus_types: Json[];
+  roster_club_order?: "draft" | "competition";
+  max_members?: number | null;
   featured?: boolean;
   made_by_staff?: boolean;
   created_by_id?: UUID | null;
@@ -140,6 +142,8 @@ export type TemplateWrite = {
   roster_slots: Json[];
   pool_definitions: Json[];
   bonus_types: Json[];
+  roster_club_order?: "draft" | "competition";
+  max_members?: number | null;
   featured?: boolean;
   made_by_staff?: boolean;
 };
@@ -271,12 +275,17 @@ export interface JoinLink {
   join_url: string | null;
 }
 
+export type BonusTarget = "team" | "match" | "manager";
+
 export interface Bonus {
   id: UUID;
+  target?: BonusTarget;
   member_id: UUID | null;
   display_name: string | null;
-  team_id: UUID;
+  team_id: UUID | null;
+  team_name?: string | null;
   match_id?: UUID | null;
+  match_label?: string | null;
   bonus_type: string;
   phase?: string;
   points: number | string;
@@ -358,9 +367,13 @@ export interface VenueSplit {
 
 export interface BonusAward {
   id: UUID;
+  target?: BonusTarget;
   team_id: UUID | null;
   team_name: string | null;
   crest_url?: string | null;
+  match_id?: UUID | null;
+  match_label?: string | null;
+  scheduled_matchweek?: number | null;
   bonus_type: string;
   bonus_type_label: string;
   points: number;

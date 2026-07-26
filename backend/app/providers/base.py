@@ -32,6 +32,7 @@ class ProviderMatch:
     away_goals: int | None
     matchday: int | None
     stage: str | None
+    duration: str = "REGULAR"
 
 
 @dataclass(frozen=True)
@@ -55,5 +56,10 @@ class FootballProvider(Protocol):
 
     def resolve_competition_season(
         self, competition_code: str, season_year: int
+    ) -> tuple[CompetitionSeasonInfo, RateLimitInfo]:
+        ...
+
+    def resolve_competition_season_or_latest(
+        self, competition_code: str, preferred_season_year: int
     ) -> tuple[CompetitionSeasonInfo, RateLimitInfo]:
         ...

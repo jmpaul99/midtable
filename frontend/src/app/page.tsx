@@ -216,7 +216,7 @@ function LeagueList() {
         </section>
       )}
 
-      <section>
+      <section className="flex flex-col gap-2">
         <Link
           href="/leagues/new"
           className="inline-flex w-full min-h-11 items-center justify-center gap-2 rounded-xl bg-brand px-4 py-2.5 text-[0.95rem] font-bold text-on-brand shadow-sm transition hover:bg-brand-dark active:scale-[0.98]"

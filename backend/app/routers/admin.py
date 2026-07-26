@@ -10,7 +10,16 @@ from app.auth.jwt import get_current_profile
 from app.db import get_db
 from app.deps import require_commissioner, team_in_league
 from app.logging_config import log_id
-from app.models import BonusType, League, LeagueMember, ManualBonus, Profile, RosterEntry, Team
+from app.models import (
+    BonusType,
+    League,
+    LeagueMember,
+    ManualBonus,
+    Match,
+    Profile,
+    RosterEntry,
+    Team,
+)
 from app.schemas.admin import BonusTypeCreate, BonusTypeUpdate, ManualBonusCreate
 from app.services.members import member_label
 
@@ -133,6 +142,25 @@ def delete_bonus_type(
     db.commit()
 
 
+def _bonus_target(row: ManualBonus) -> str:
+    if row.member_id is not None:
+        return "manager"
+    if row.match_id is not None:
+        return "match"
+    return "team"
+
+
+def _match_label(match: Match, teams: dict[int, Team]) -> str:
+    home = teams.get(match.home_team_id)
+    away = teams.get(match.away_team_id)
+    home_name = home.name if home else "Home"
+    away_name = away.name if away else "Away"
+    label = f"{home_name} vs {away_name}"
+    if match.scheduled_matchweek is not None:
+        label = f"{label} · MW{match.scheduled_matchweek}"
+    return label
+
+
 @router.get("/leagues/{league_id}/manual-bonuses")
 def list_manual_bonuses(
     membership: tuple[League, LeagueMember] = Depends(require_commissioner),
@@ -144,11 +172,18 @@ def list_manual_bonuses(
         b.id: b
         for b in db.scalars(select(BonusType).where(BonusType.league_id == league.id)).all()
     }
+    team_ids = {r.team_id for r in rows if r.team_id is not None}
+    match_ids = {r.match_id for r in rows if r.match_id is not None}
+    matches = {
+        m.id: m
+        for m in db.scalars(select(Match).where(Match.id.in_(match_ids or [0]))).all()
+    }
+    for match in matches.values():
+        team_ids.add(match.home_team_id)
+        team_ids.add(match.away_team_id)
     teams = {
         t.id: t
-        for t in db.scalars(
-            select(Team).where(Team.id.in_([r.team_id for r in rows] or [0]))
-        ).all()
+        for t in db.scalars(select(Team).where(Team.id.in_(team_ids or [0]))).all()
     }
     roster = {
         r.team_id: r
@@ -160,15 +195,24 @@ def list_manual_bonuses(
     }
     out = []
     for row in rows:
-        team = teams.get(row.team_id)
+        target = _bonus_target(row)
+        team = teams.get(row.team_id) if row.team_id is not None else None
+        match = matches.get(row.match_id) if row.match_id is not None else None
         btype = types.get(row.bonus_type_id)
-        entry = roster.get(row.team_id)
-        member = members.get(entry.member_id) if entry else None
+        if target == "manager":
+            member = members.get(row.member_id) if row.member_id is not None else None
+        else:
+            entry = roster.get(row.team_id) if row.team_id is not None else None
+            member = members.get(entry.member_id) if entry else None
         profile = db.get(Profile, member.profile_id) if member else None
         out.append(
             {
                 "id": str(row.public_id),
+                "target": target,
                 "team_id": str(team.public_id) if team else None,
+                "team_name": team.name if team else None,
+                "match_id": str(match.public_id) if match else None,
+                "match_label": _match_label(match, teams) if match else None,
                 "member_id": str(member.public_id) if member else None,
                 "display_name": member_label(member, profile) if member else None,
                 "bonus_type": btype.key if btype else None,
@@ -189,7 +233,6 @@ def award_manual_bonus(
     db: Session = Depends(get_db),
 ) -> dict:
     league, _ = membership
-    team = team_in_league(db, league.id, payload.team_id)
     bonus_type = db.scalars(
         select(BonusType).where(
             BonusType.public_id == payload.bonus_type_id,
@@ -198,10 +241,49 @@ def award_manual_bonus(
     ).first()
     if bonus_type is None:
         raise HTTPException(status_code=404, detail="bonus type not found")
+
+    team: Team | None = None
+    match: Match | None = None
+    member: LeagueMember | None = None
+
+    if payload.target in ("team", "match"):
+        assert payload.team_id is not None
+        team = team_in_league(db, league.id, payload.team_id)
+
+    if payload.target == "match":
+        assert payload.match_id is not None
+        match = db.scalars(
+            select(Match).where(
+                Match.public_id == payload.match_id,
+                Match.league_id == league.id,
+            )
+        ).first()
+        if match is None:
+            raise HTTPException(status_code=404, detail="match not found")
+        assert team is not None
+        if team.id not in (match.home_team_id, match.away_team_id):
+            raise HTTPException(
+                status_code=400,
+                detail="team must be home or away in the selected match",
+            )
+
+    if payload.target == "manager":
+        assert payload.member_id is not None
+        member = db.scalars(
+            select(LeagueMember).where(
+                LeagueMember.public_id == payload.member_id,
+                LeagueMember.league_id == league.id,
+            )
+        ).first()
+        if member is None:
+            raise HTTPException(status_code=404, detail="manager not found")
+
     points = payload.points if payload.points is not None else Decimal(bonus_type.default_points)
     row = ManualBonus(
         league_id=league.id,
-        team_id=team.id,
+        team_id=team.id if team else None,
+        match_id=match.id if match else None,
+        member_id=member.id if member else None,
         bonus_type_id=bonus_type.id,
         points=points,
         notes=payload.notes,
@@ -211,16 +293,19 @@ def award_manual_bonus(
     db.commit()
     db.refresh(row)
     logger.info(
-        "manual bonus awarded league_id=%s bonus_id=%s team_id=%s bonus_type=%s "
-        "points=%s actor_profile_id=%s",
+        "manual bonus awarded league_id=%s bonus_id=%s target=%s team_id=%s match_id=%s "
+        "member_id=%s bonus_type=%s points=%s actor_profile_id=%s",
         league.public_id,
         row.public_id,
-        team.public_id,
+        payload.target,
+        team.public_id if team else None,
+        match.public_id if match else None,
+        member.public_id if member else None,
         bonus_type.key,
         float(points),
         profile.public_id,
     )
-    return {"id": str(row.public_id), "points": float(row.points)}
+    return {"id": str(row.public_id), "points": float(row.points), "target": payload.target}
 
 
 @router.delete("/leagues/{league_id}/manual-bonuses/{bonus_id}", status_code=204)

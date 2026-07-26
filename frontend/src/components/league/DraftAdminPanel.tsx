@@ -8,6 +8,18 @@ import { Stack } from "@/components/ui/Card";
 import { DraftOrderSection } from "@/components/admin/DraftOrderSection";
 import { RosterCorrectionsSection } from "@/components/admin/RosterCorrectionsSection";
 
+type DraftStyle = "linear" | "snake";
+type PreassignMode = "none" | "supported" | "optional";
+
+function normalizeDraftStyle(value: string | undefined): DraftStyle {
+  return value === "snake" ? "snake" : "linear";
+}
+
+function normalizePreassignMode(value: string | undefined): PreassignMode {
+  if (value === "supported" || value === "optional") return value;
+  return "none";
+}
+
 export function DraftAdminPanel({
   league,
   onLeagueChange,
@@ -20,10 +32,19 @@ export function DraftAdminPanel({
       .sort((a, b) => (a.draft_slot ?? 999) - (b.draft_slot ?? 999))
       .map((m) => m.id),
   );
+  const [draftStyle, setDraftStyle] = useState<DraftStyle>(() =>
+    normalizeDraftStyle(league.draft_style),
+  );
+  const [preassignMode, setPreassignMode] = useState<PreassignMode>(() =>
+    normalizePreassignMode(league.preassign_mode),
+  );
   const [teamPool, setTeamPool] = useState(league.pools[0]?.id || "");
   const [poolTeams, setPoolTeams] = useState<Record<string, PoolTeam[]>>({});
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
+  const [settingsBusy, setSettingsBusy] = useState(false);
+
+  const settingsEditable = league.status === "pre_draft";
 
   const loadPoolTeams = useCallback(() => {
     setError("");
@@ -53,6 +74,11 @@ export function DraftAdminPanel({
     );
   }, [league.members]);
 
+  useEffect(() => {
+    setDraftStyle(normalizeDraftStyle(league.draft_style));
+    setPreassignMode(normalizePreassignMode(league.preassign_mode));
+  }, [league.draft_style, league.preassign_mode]);
+
   function moveMember(index: number, direction: -1 | 1) {
     const target = index + direction;
     if (target < 0 || target >= draftOrder.length) return;
@@ -71,6 +97,38 @@ export function DraftAdminPanel({
       loadPoolTeams();
     } catch (e) {
       setError(errorMessage(e));
+    }
+  }
+
+  async function saveDraftSetting(patch: {
+    draft_style?: DraftStyle;
+    preassign_mode?: PreassignMode;
+  }) {
+    if (!settingsEditable || settingsBusy) return;
+    const prevStyle = draftStyle;
+    const prevMode = preassignMode;
+    if (patch.draft_style != null) setDraftStyle(patch.draft_style);
+    if (patch.preassign_mode != null) setPreassignMode(patch.preassign_mode);
+    setSettingsBusy(true);
+    setError("");
+    setMessage("");
+    try {
+      await api(`/leagues/${league.id}/settings`, json("PATCH", patch));
+      setMessage(
+        patch.preassign_mode === "none"
+          ? "Draft settings saved. Preassigned clubs were cleared."
+          : "Draft settings saved.",
+      );
+      onLeagueChange?.();
+      if (patch.preassign_mode === "none") {
+        loadPoolTeams();
+      }
+    } catch (e) {
+      setDraftStyle(prevStyle);
+      setPreassignMode(prevMode);
+      setError(errorMessage(e));
+    } finally {
+      setSettingsBusy(false);
     }
   }
 
@@ -102,11 +160,17 @@ export function DraftAdminPanel({
         <DraftOrderSection
           league={league}
           draftOrder={draftOrder}
+          draftStyle={draftStyle}
+          preassignMode={preassignMode}
+          settingsEditable={settingsEditable}
+          settingsBusy={settingsBusy}
           teamPool={teamPool}
           poolTeams={poolTeams}
           onMove={moveMember}
           onTeamPool={setTeamPool}
           onSaveOrder={saveOrder}
+          onDraftStyleChange={(value) => void saveDraftSetting({ draft_style: value })}
+          onPreassignModeChange={(value) => void saveDraftSetting({ preassign_mode: value })}
           onPreassign={preassign}
         />
         <RosterCorrectionsSection
