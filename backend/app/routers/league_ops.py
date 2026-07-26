@@ -8,9 +8,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.auth.jwt import AuthenticatedUser, get_current_profile
+from app.auth.jwt import get_current_profile
 from app.db import get_db
-from app.deps import get_football_provider, require_commissioner, require_platform_admin
+from app.deps import get_football_provider, require_commissioner
 from app.models import (
     CompetitionTemplate,
     League,
@@ -325,7 +325,6 @@ def bootstrap_gates(
 @router.post("/leagues/premier-league/seasons", response_model=LeagueDetailResponse)
 def start_pl_season(
     payload: BootstrapSeasonRequest,
-    _: AuthenticatedUser = Depends(require_platform_admin),
     profile: Profile = Depends(get_current_profile),
     db: Session = Depends(get_db),
     provider: FootballDataProvider = Depends(get_football_provider),

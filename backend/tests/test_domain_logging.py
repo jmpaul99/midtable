@@ -67,9 +67,10 @@ def test_authz_platform_admin_denied_logs(caplog: pytest.LogCaptureFixture):
         role="authenticated",
         claims={},
     )
+    profile = SimpleNamespace(email="manager@example.com", is_platform_admin=False)
     with caplog.at_level(logging.WARNING, logger="app.deps"):
         with pytest.raises(HTTPException) as exc_info:
-            require_platform_admin(user=user)
+            require_platform_admin(profile=profile, user=user)
     assert exc_info.value.status_code == 403
     assert any("not_platform_admin" in r.getMessage() for r in caplog.records)
 

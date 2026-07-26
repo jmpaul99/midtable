@@ -1,8 +1,14 @@
 "use client";
 
+import { useCallback, useEffect, useState } from "react";
+import { api, errorMessage } from "@/lib/api";
 import { Checkbox, Input, Label, Select } from "@/components/ui/Field";
 import { cn } from "@/lib/cn";
 import { AddRowButton, EditorSection, RemoveButton, RowItem, RowList } from "./chrome";
+import {
+  CustomRankingListModal,
+  type RankingCatalogOption,
+} from "./CustomRankingListModal";
 import {
   slugifyKey,
   uniqueKey,
@@ -27,11 +33,27 @@ function blankThreshold(existingKeys: string[]): UpsetThreshold {
 export function UpsetRulesEditor({
   value,
   onChange,
+  allowCustomLists = false,
 }: {
   value: UpsetRules;
   onChange: (next: UpsetRules) => void;
+  /** Custom lists require competitions to be defined first. */
+  allowCustomLists?: boolean;
 }) {
   const fixed = value.rank_source === "fixed_ranking_at_event_start";
+  const [catalogs, setCatalogs] = useState<RankingCatalogOption[]>([]);
+  const [catalogError, setCatalogError] = useState("");
+  const [modalOpen, setModalOpen] = useState(false);
+
+  const loadCatalogs = useCallback(() => {
+    api<RankingCatalogOption[]>("/ranking-catalogs")
+      .then(setCatalogs)
+      .catch((e) => setCatalogError(errorMessage(e)));
+  }, []);
+
+  useEffect(() => {
+    if (fixed) loadCatalogs();
+  }, [fixed, loadCatalogs]);
 
   function updateThreshold(index: number, patch: Partial<UpsetThreshold>) {
     onChange({
@@ -44,7 +66,6 @@ export function UpsetRulesEditor({
     const current = value.thresholds[index];
     if (!current) return;
     const patch: Partial<UpsetThreshold> = { name };
-    // Generate key from the name only the first time a name is entered on a new row.
     const hadName = Boolean((current.name ?? "").trim());
     const key = (current.key ?? "").trim();
     const placeholderKey = !key || /^upset(_\d+)?$/.test(key);
@@ -61,6 +82,13 @@ export function UpsetRulesEditor({
       thresholds: value.thresholds.filter((_, i) => i !== index),
     });
   }
+
+  const selectValue =
+    value.ranking_list_key && catalogs.some((c) => c.key === value.ranking_list_key)
+      ? value.ranking_list_key
+      : value.ranking_list_key
+        ? value.ranking_list_key
+        : "";
 
   return (
     <EditorSection
@@ -111,14 +139,34 @@ export function UpsetRulesEditor({
           />
         </Label>
         {fixed && (
-          <Label className="min-w-[8rem] flex-1 gap-1">
+          <Label className="min-w-[12rem] flex-1 gap-1">
             Ranking list
-            <Input
-              value={value.ranking_list_key || ""}
-              onChange={(e) => onChange({ ...value, ranking_list_key: e.target.value || null })}
-              placeholder="fifa_men"
+            <Select
+              value={selectValue}
+              onChange={(e) => {
+                const v = e.target.value;
+                if (v === "__add_custom__") {
+                  if (allowCustomLists) setModalOpen(true);
+                  return;
+                }
+                onChange({ ...value, ranking_list_key: v || null });
+              }}
               className={compactInput}
-            />
+            >
+              <option value="">Select a list…</option>
+              {catalogs.map((c) => (
+                <option key={c.id} value={c.key}>
+                  {c.label}
+                  {c.kind === "user" ? " (yours)" : ""}
+                </option>
+              ))}
+              <option value="__add_custom__" disabled={!allowCustomLists}>
+                {allowCustomLists
+                  ? "Add custom list…"
+                  : "Add custom list… (set competitions first)"}
+              </option>
+            </Select>
+            {catalogError && <span className="text-xs text-danger">{catalogError}</span>}
           </Label>
         )}
       </div>
@@ -224,6 +272,17 @@ export function UpsetRulesEditor({
             ],
           })
         }
+      />
+
+      <CustomRankingListModal
+        open={modalOpen}
+        onClose={() => setModalOpen(false)}
+        onCreated={(catalog) => {
+          setCatalogs((prev) =>
+            prev.some((c) => c.id === catalog.id) ? prev : [...prev, catalog],
+          );
+          onChange({ ...value, ranking_list_key: catalog.key });
+        }}
       />
     </EditorSection>
   );

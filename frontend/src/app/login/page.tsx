@@ -209,7 +209,7 @@ function LoginForm() {
         ? "Choose a display name, then we will email you a magic link to finish signing up."
         : step === "existing"
           ? "We will email you a magic link to sign in."
-          : "Enter your email to continue. Join a league with an invite or shareable link.";
+          : "Enter your email to continue. Create a league, or join with an invite or shareable link.";
 
   return (
     <section className="mx-auto flex min-h-[70dvh] max-w-md flex-col items-center justify-center gap-6 py-6 animate-in">

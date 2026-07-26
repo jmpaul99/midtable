@@ -11,7 +11,7 @@ import { LogInIcon, LogOutIcon, MenuIcon, XIcon } from "@/components/ui/icons";
 import { LeagueBottomNav, LeagueDesktopTabs, leagueNavItems } from "@/components/ui/BottomNav";
 
 export function Nav() {
-  const { user, loading, isAdmin, signOut } = useAuth();
+  const { user, loading, signOut } = useAuth();
   const pathname = usePathname();
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -25,15 +25,11 @@ export function Nav() {
 
   const links = user
     ? [
-        ...(isAdmin
-          ? [
-              {
-                href: "/leagues/new",
-                label: "Create a league",
-                active: pathname.startsWith("/leagues/new"),
-              },
-            ]
-          : []),
+        {
+          href: "/leagues/new",
+          label: "Create a league",
+          active: pathname.startsWith("/leagues/new"),
+        },
         { href: "/profile", label: "Profile", active: pathname.startsWith("/profile") },
       ]
     : [];

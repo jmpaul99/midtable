@@ -6,6 +6,7 @@ on:
       - master
     paths:
       - "backend/**"
+      - "supabase/migrations/**"
       - ".github/workflows/deploy-backend.yml"
   workflow_dispatch:
 
@@ -41,6 +42,19 @@ jobs:
 
       - name: Configure Docker for Artifact Registry
         run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+
+      - name: Run database migrations
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          pip install -e .
+          python -m app.scripts.run_migrations
 
       - name: Build and push image
         env:
@@ -86,6 +100,7 @@ jobs:
             DATABASE_URL=${{ secrets.DATABASE_URL }}
             SUPABASE_URL=${{ secrets.SUPABASE_URL }}
             FOOTBALL_DATA_API_TOKEN=${{ secrets.FOOTBALL_DATA_API_TOKEN }}
+            PARSE_API_KEY=${{ secrets.PARSE_API_KEY }}
             CRON_SECRET=${{ secrets.CRON_SECRET }}
             INTERNAL_API_SECRET=${{ secrets.INTERNAL_API_SECRET }}
             TURNSTILE_SECRET=${{ secrets.TURNSTILE_SECRET }}

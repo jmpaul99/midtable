@@ -20,10 +20,6 @@ function AuthLoading() {
   return <Loading label="Checking your session" />;
 }
 
-function jwtLooksAdmin(user: User | null | undefined): boolean {
-  return ["admin", "service_role"].includes(String(user?.app_metadata?.role));
-}
-
 interface AuthContextValue {
   user: User | null;
   session: Session | null;
@@ -79,13 +75,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    setIsAdmin(jwtLooksAdmin(session.user));
+    setIsAdmin(false);
     api<Me>("/auth/me")
       .then((me) => {
         if (!cancelled) setIsAdmin(Boolean(me.is_platform_admin));
       })
       .catch(() => {
-        if (!cancelled) setIsAdmin(jwtLooksAdmin(session.user));
+        if (!cancelled) setIsAdmin(false);
       });
 
     return () => {

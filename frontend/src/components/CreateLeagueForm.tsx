@@ -6,9 +6,12 @@ import { api, errorMessage, json } from "@/lib/api";
 import type { CompetitionTemplate, Json, League } from "@/lib/types";
 import { ErrorState, Loading, StatusBanner } from "@/components/ui/State";
 import { IconButton } from "@/components/ui/IconButton";
+import { Button } from "@/components/ui/Button";
 import { PlusIcon } from "@/components/ui/icons";
 import { Card, Muted, Stack } from "@/components/ui/Card";
 import { Input, Label } from "@/components/ui/Field";
+import { FieldHelp, LabelRow } from "@/components/ui/FieldHelp";
+import { cn } from "@/lib/cn";
 import {
   AVAILABLE_COMPETITIONS,
   defaultFootballSeasonYear,
@@ -54,12 +57,19 @@ export function CreateLeagueForm({
   const [message, setMessage] = useState("");
   const [gates, setGates] = useState<GateResponse>();
   const [gatesError, setGatesError] = useState("");
+  const [step, setStep] = useState(0);
+  const [name, setName] = useState("");
+  const [seasonLabel, setSeasonLabel] = useState("");
+  const [maxMembers, setMaxMembers] = useState("");
   const [poolParams, setPoolParams] = useState<
     Record<string, { competition_code: string; season_year: string }>
   >({});
 
   const isPremierLeague = template?.key === "premier_league";
   const templatePools = useMemo(() => poolsFromTemplate(template), [template]);
+  const hasTeamStep = templatePools.length > 0;
+  const stepCount = hasTeamStep ? 2 : 1;
+  const isLast = step >= stepCount - 1;
 
   useEffect(() => {
     if (!templatePools.length) {
@@ -95,13 +105,24 @@ export function CreateLeagueForm({
   const blockers = gates?.blockers || [];
   const plBlocked = isPremierLeague && blockers.length > 0;
 
+  function goNext() {
+    if (!name.trim() || !seasonLabel.trim() || !maxMembers) {
+      setError("Fill in name, season label, and managers to continue.");
+      return;
+    }
+    setError("");
+    setStep(1);
+  }
+
   async function createLeague(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    if (!isLast) {
+      goNext();
+      return;
+    }
     setCreating(true);
     setMessage("");
     setError("");
-    const form = e.currentTarget;
-    const f = new FormData(form);
     const pool_provider_params = templatePools.map((p) => ({
       key: p.key,
       provider: p.provider || "football-data.org",
@@ -117,9 +138,9 @@ export function CreateLeagueForm({
           "/leagues/premier-league/seasons",
           json("POST", {
             template_key: "premier_league",
-            name: f.get("name"),
-            season_label: f.get("season_label"),
-            max_members: Number(f.get("max_members")),
+            name,
+            season_label: seasonLabel,
+            max_members: Number(maxMembers),
             pool_provider_params,
           }),
         );
@@ -128,10 +149,10 @@ export function CreateLeagueForm({
         created = await api<League>(
           "/leagues",
           json("POST", {
-            name: f.get("name"),
+            name,
             template_id: templateId || null,
-            season_label: f.get("season_label"),
-            max_members: Number(f.get("max_members")),
+            season_label: seasonLabel,
+            max_members: Number(maxMembers),
           }),
         );
 
@@ -167,78 +188,150 @@ export function CreateLeagueForm({
     <Card>
       <Stack>
         <div>
-          <h2>League details</h2>
+          <div className="flex items-baseline justify-between gap-3">
+            <h2>{step === 0 ? "League details" : "Load teams"}</h2>
+            <p className="text-xs font-semibold text-muted">
+              Step {step + 1} of {stepCount}
+            </p>
+          </div>
           <Muted className="mt-1">
             {template
-              ? `Using template “${template.label || template.key}”.`
+              ? `Using template “${template.label}”.`
               : "Creating without a template — configure competitions later in Commissioner settings."}
           </Muted>
         </div>
+
+        {stepCount > 1 && (
+          <div className="flex gap-1" aria-label="League setup steps">
+            {Array.from({ length: stepCount }, (_, i) => (
+              <button
+                key={i}
+                type="button"
+                disabled={i >= step}
+                onClick={() => i < step && setStep(i)}
+                className={cn(
+                  "h-1.5 min-w-6 flex-1 rounded-full transition",
+                  i === step ? "bg-brand" : i < step ? "bg-brand/35" : "bg-surface-2",
+                  i < step && "cursor-pointer hover:bg-brand/60",
+                )}
+                aria-label={`Step ${i + 1}`}
+                aria-current={i === step ? "step" : undefined}
+              />
+            ))}
+          </div>
+        )}
+
         {error && <ErrorState error={error} />}
         {message && <StatusBanner tone="success">{message}</StatusBanner>}
-        <form className="grid grid-cols-1 gap-3 sm:grid-cols-2" onSubmit={createLeague}>
-          <Label>
-            Name
-            <Input name="name" required maxLength={160} />
-          </Label>
-          <Label>
-            Season label
-            <Input name="season_label" required placeholder="2026-27" maxLength={40} />
-          </Label>
-          <Label>
-            Managers
-            <Input
-              name="max_members"
-              type="number"
-              min={2}
-              max={100}
-              placeholder="e.g. 8"
-              required
-            />
-          </Label>
 
-          {isPremierLeague && (
-            <div className="sm:col-span-2">
-              {gatesError ? (
-                <ErrorState
-                  error={gatesError}
-                  retry={() => {
-                    setGatesError("");
-                    api<GateResponse>("/leagues/premier-league/bootstrap-gates")
-                      .then(setGates)
-                      .catch((e) => setGatesError(errorMessage(e)));
-                  }}
+        <form className="grid grid-cols-1 gap-3 sm:grid-cols-2" onSubmit={createLeague}>
+          {step === 0 && (
+            <>
+              <Label>
+                Name
+                <Input
+                  name="name"
+                  required
+                  maxLength={160}
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
                 />
-              ) : !gates ? (
-                <Loading label="Checking prior seasons" />
-              ) : blockers.length ? (
-                <StatusBanner>
-                  <strong>Prior seasons still open</strong>
-                  <ul className="mt-2 list-disc pl-5">
-                    {blockers.map((b, i) => (
-                      <li key={i}>
-                        {String(b.name || b.season_label || "league")} (
-                        {String(b.status || "?")}): {String(b.reason || JSON.stringify(b))}
-                      </li>
-                    ))}
-                  </ul>
-                </StatusBanner>
-              ) : (
-                <StatusBanner tone="success">
-                  No prior-season blockers — ready if the provider has teams.
-                </StatusBanner>
+              </Label>
+              <Label>
+                <LabelRow>
+                  Season label
+                  <FieldHelp label="Season label">
+                    Display name for this season (for example 2026-27). Shown on the league home and
+                    standings.
+                  </FieldHelp>
+                </LabelRow>
+                <Input
+                  name="season_label"
+                  required
+                  placeholder="2026-27"
+                  maxLength={40}
+                  value={seasonLabel}
+                  onChange={(e) => setSeasonLabel(e.target.value)}
+                />
+              </Label>
+              <Label>
+                <LabelRow>
+                  Managers
+                  <FieldHelp label="Managers">
+                    Maximum number of manager seats in the league (including you).
+                  </FieldHelp>
+                </LabelRow>
+                <Input
+                  name="max_members"
+                  type="number"
+                  min={2}
+                  max={100}
+                  placeholder="e.g. 8"
+                  required
+                  value={maxMembers}
+                  onChange={(e) => setMaxMembers(e.target.value)}
+                />
+              </Label>
+
+              {isPremierLeague && (
+                <div className="sm:col-span-2">
+                  {gatesError ? (
+                    <ErrorState
+                      error={gatesError}
+                      retry={() => {
+                        setGatesError("");
+                        api<GateResponse>("/leagues/premier-league/bootstrap-gates")
+                          .then(setGates)
+                          .catch((e) => setGatesError(errorMessage(e)));
+                      }}
+                    />
+                  ) : !gates ? (
+                    <Loading label="Checking prior seasons" />
+                  ) : blockers.length ? (
+                    <StatusBanner>
+                      <strong>Prior seasons still open</strong>
+                      <ul className="mt-2 list-disc pl-5">
+                        {blockers.map((b, i) => (
+                          <li key={i}>
+                            {String(b.name || b.season_label || "league")} (
+                            {String(b.status || "?")}): {String(b.reason || JSON.stringify(b))}
+                          </li>
+                        ))}
+                      </ul>
+                    </StatusBanner>
+                  ) : (
+                    <StatusBanner tone="success">
+                      No prior-season blockers — ready if the provider has teams.
+                    </StatusBanner>
+                  )}
+                </div>
               )}
-            </div>
+            </>
           )}
 
-          {templatePools.length > 0 && (
+          {step === 1 && hasTeamStep && (
             <div className="sm:col-span-2 flex flex-col gap-3">
-              <div>
-                <h3 className="font-display text-base font-extrabold">Load teams</h3>
+              <div className="flex items-start gap-2">
                 <Muted className="text-xs">
                   Competition and season year per pool — clubs are pulled right after the league is
                   created.
                 </Muted>
+                <FieldHelp label="Load teams">
+                  <p className="mb-2">
+                    Choose which provider competition and season year to pull clubs from for each
+                    pool.
+                  </p>
+                  <ul className="list-disc space-y-1 pl-4">
+                    <li>
+                      <strong className="text-ink">Competition</strong> — the real-world league or
+                      cup code (for example PL).
+                    </li>
+                    <li>
+                      <strong className="text-ink">Season year</strong> — the provider season year
+                      for that competition.
+                    </li>
+                  </ul>
+                </FieldHelp>
               </div>
               {templatePools.map((p) => (
                 <div
@@ -264,7 +357,12 @@ export function CreateLeagueForm({
                     />
                   </Label>
                   <Label>
-                    Season year
+                    <LabelRow>
+                      Season year
+                      <FieldHelp label="Season year">
+                        Provider season year used when loading clubs for this competition.
+                      </FieldHelp>
+                    </LabelRow>
                     <Input
                       type="number"
                       value={poolParams[p.key]?.season_year || ""}
@@ -285,26 +383,37 @@ export function CreateLeagueForm({
             </div>
           )}
 
-          <div className="sm:col-span-2 flex justify-start">
-            <IconButton
-              type="submit"
-              variant="primary"
-              label={
-                creating
-                  ? templatePools.length
-                    ? "Creating & loading teams"
-                    : "Creating"
-                  : plBlocked
-                    ? "Blocked by prior seasons"
-                    : templatePools.length
-                      ? "Create league & load teams"
-                      : "Create league"
-              }
-              busy={creating}
-              disabled={plBlocked || (isPremierLeague && !gates)}
-            >
-              <PlusIcon />
-            </IconButton>
+          <div className="sm:col-span-2 flex flex-wrap gap-2">
+            {step > 0 && (
+              <Button type="button" variant="secondary" onClick={() => setStep(0)}>
+                Back
+              </Button>
+            )}
+            {!isLast ? (
+              <Button type="button" variant="primary" onClick={goNext}>
+                Next
+              </Button>
+            ) : (
+              <IconButton
+                type="submit"
+                variant="primary"
+                label={
+                  creating
+                    ? templatePools.length
+                      ? "Creating & loading teams"
+                      : "Creating"
+                    : plBlocked
+                      ? "Blocked by prior seasons"
+                      : templatePools.length
+                        ? "Create league & load teams"
+                        : "Create league"
+                }
+                busy={creating}
+                disabled={plBlocked || (isPremierLeague && !gates)}
+              >
+                <PlusIcon />
+              </IconButton>
+            )}
           </div>
         </form>
       </Stack>

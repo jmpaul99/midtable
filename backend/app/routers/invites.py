@@ -21,6 +21,7 @@ from app.schemas.leagues import (
     InviteCreate,
     InviteEmailDeliveryResponse,
     InviteResponse,
+    PendingInviteResponse,
 )
 from app.services.mailjet import send_invite_email
 from app.services.members import default_team_name, required_manager_count
@@ -145,6 +146,36 @@ def _load_invite_with_deliveries(
         .options(selectinload(Invite.email_deliveries))
         .where(Invite.public_id == invite_id, Invite.league_id == league_id)
     ).first()
+
+
+@router.get("/invites/pending", response_model=list[PendingInviteResponse])
+def list_pending_invites(
+    profile: Profile = Depends(get_current_profile),
+    db: Session = Depends(get_db),
+) -> list[PendingInviteResponse]:
+    normalized = profile.email.strip().lower()
+    rows = db.execute(
+        select(Invite, League)
+        .join(League, League.id == Invite.league_id)
+        .where(
+            Invite.email == normalized,
+            Invite.status == "pending",
+        )
+        .order_by(Invite.created_at.desc())
+    ).all()
+    return [
+        PendingInviteResponse(
+            id=invite.public_id,
+            league_id=league.public_id,
+            league_name=league.name,
+            season_label=league.season_label,
+            is_commissioner=invite.is_commissioner,
+            draft_slot=invite.draft_slot,
+            role="commissioner" if invite.is_commissioner else "member",
+            token=invite.token,
+        )
+        for invite, league in rows
+    ]
 
 
 @router.get("/leagues/{league_id}/invites", response_model=list[InviteResponse])

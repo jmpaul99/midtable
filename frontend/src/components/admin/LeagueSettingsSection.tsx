@@ -144,7 +144,11 @@ export function LeagueSettingsSection({
                 <ResultPointsEditor value={resultPoints} onChange={setResultPoints} />
               )}
               {tab === "upsets" && (
-                <UpsetRulesEditor value={upsetRules} onChange={setUpsetRules} />
+                <UpsetRulesEditor
+                  value={upsetRules}
+                  onChange={setUpsetRules}
+                  allowCustomLists={(league.pools?.length ?? 0) > 0}
+                />
               )}
               {tab === "tiebreaks" && (
                 <TiebreaksEditor

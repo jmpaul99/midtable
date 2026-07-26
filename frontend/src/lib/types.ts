@@ -119,12 +119,15 @@ export interface CompetitionTemplate {
   roster_slots: Json[];
   pool_definitions: Json[];
   bonus_types: Json[];
+  featured?: boolean;
+  made_by_staff?: boolean;
+  created_by_id?: UUID | null;
+  can_edit?: boolean;
   created_at?: string;
   updated_at?: string;
 }
 
 export type TemplateWrite = {
-  key: string;
   label: string;
   draft_style: string;
   preassign_mode: string;
@@ -137,7 +140,16 @@ export type TemplateWrite = {
   roster_slots: Json[];
   pool_definitions: Json[];
   bonus_types: Json[];
+  featured?: boolean;
+  made_by_staff?: boolean;
 };
+
+export interface RecentTemplateUsage {
+  template: CompetitionTemplate;
+  league_id: UUID;
+  league_name: string;
+  used_at: string;
+}
 
 export interface Standing {
   member_id: UUID;
@@ -240,6 +252,17 @@ export interface Invite {
   email_sent?: boolean | null;
   email_error?: string | null;
   email_deliveries?: InviteEmailDelivery[];
+}
+
+export interface PendingInvite {
+  id: UUID;
+  league_id: UUID;
+  league_name: string;
+  season_label: string;
+  is_commissioner: boolean;
+  draft_slot?: number | null;
+  role: string;
+  token: string | null;
 }
 
 export interface JoinLink {

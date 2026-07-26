@@ -37,6 +37,7 @@ class Profile(Base):
     auth_user_id: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True), unique=True)
     email: Mapped[str] = mapped_column(Text, unique=True)
     display_name: Mapped[str] = mapped_column(Text)
+    is_platform_admin: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
@@ -58,8 +59,16 @@ class CompetitionTemplate(Base):
     roster_slots: Mapped[list] = mapped_column(JSONB)
     pool_definitions: Mapped[list] = mapped_column(JSONB)
     bonus_types: Mapped[list] = mapped_column(JSONB)
+    featured: Mapped[bool] = mapped_column(Boolean, default=False)
+    made_by_staff: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_by_profile_id: Mapped[int | None] = mapped_column(
+        ForeignKey("profiles.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    created_by: Mapped[Profile | None] = relationship()
 
 
 class League(Base):
@@ -305,6 +314,59 @@ class TeamRanking(Base):
     ranking_list_id: Mapped[int] = mapped_column(ForeignKey("ranking_lists.id", ondelete="CASCADE"))
     team_id: Mapped[int] = mapped_column(ForeignKey("teams.id", ondelete="CASCADE"))
     rank: Mapped[int] = mapped_column(Integer)
+
+
+class RankingCatalog(Base):
+    __tablename__ = "ranking_catalogs"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    public_id: Mapped[UUID] = _public_id_column()
+    key: Mapped[str] = mapped_column(Text, unique=True)
+    label: Mapped[str] = mapped_column(Text)
+    kind: Mapped[str] = mapped_column(Text)
+    owner_profile_id: Mapped[int | None] = mapped_column(
+        ForeignKey("profiles.id", ondelete="CASCADE")
+    )
+    source: Mapped[str] = mapped_column(Text, default="manual")
+    as_of: Mapped[date | None] = mapped_column(Date)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    entries: Mapped[list["RankingCatalogEntry"]] = relationship(back_populates="catalog")
+    overrides: Mapped[list["RankingCatalogTeamOverride"]] = relationship(
+        back_populates="catalog"
+    )
+
+
+class RankingCatalogEntry(Base):
+    __tablename__ = "ranking_catalog_entries"
+    __table_args__ = (
+        UniqueConstraint("catalog_id", "rank"),
+        UniqueConstraint("catalog_id", "team_name"),
+    )
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    public_id: Mapped[UUID] = _public_id_column()
+    catalog_id: Mapped[int] = mapped_column(ForeignKey("ranking_catalogs.id", ondelete="CASCADE"))
+    rank: Mapped[int] = mapped_column(Integer)
+    team_name: Mapped[str] = mapped_column(Text)
+    country_code: Mapped[str | None] = mapped_column(Text)
+    confederation: Mapped[str | None] = mapped_column(Text)
+
+    catalog: Mapped["RankingCatalog"] = relationship(back_populates="entries")
+
+
+class RankingCatalogTeamOverride(Base):
+    __tablename__ = "ranking_catalog_team_overrides"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    public_id: Mapped[UUID] = _public_id_column()
+    catalog_id: Mapped[int] = mapped_column(ForeignKey("ranking_catalogs.id", ondelete="CASCADE"))
+    country_code: Mapped[str | None] = mapped_column(Text)
+    team_name: Mapped[str | None] = mapped_column(Text)
+    provider: Mapped[str] = mapped_column(Text, default="football-data.org")
+    external_team_id: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    catalog: Mapped["RankingCatalog"] = relationship(back_populates="overrides")
 
 
 class BonusType(Base):

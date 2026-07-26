@@ -21,6 +21,10 @@ class Settings(BaseSettings):
     supabase_jwt_audience: str = "authenticated"
     football_data_api_token: str = ""
     football_data_base_url: str = "https://api.football-data.org/v4"
+    parse_api_key: str = ""
+    parse_fifa_base_url: str = (
+        "https://api.parse.bot/scraper/29ef51e4-86d0-4580-a598-4c86dfa6e5ff"
+    )
     cron_secret: str = _DEV_CRON
     internal_api_secret: str = _DEV_INTERNAL
     # Frontend hostnames allowed by Turnstile siteverify (no scheme).

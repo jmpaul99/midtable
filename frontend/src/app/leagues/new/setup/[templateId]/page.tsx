@@ -1,9 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
-import { use } from "react";
-import { RequireAuth, useAuth } from "@/lib/auth";
+import { useRouter } from "next/navigation";
+import { use, useEffect, useState } from "react";
+import { RequireAuth } from "@/lib/auth";
 import { api, errorMessage } from "@/lib/api";
 import type { CompetitionTemplate } from "@/lib/types";
 import { CreateLeagueForm } from "@/components/CreateLeagueForm";
@@ -16,26 +16,28 @@ export default function CreateLeagueSetupPage({
   params: Promise<{ templateId: string }>;
 }) {
   const { templateId } = use(params);
-  const blank = templateId === "blank";
 
   return (
     <RequireAuth>
-      <SetupBody templateId={blank ? null : templateId} blank={blank} />
+      <SetupBody templateId={templateId} />
     </RequireAuth>
   );
 }
 
-function SetupBody({ templateId, blank }: { templateId: string | null; blank: boolean }) {
-  const { isAdmin, loading: authLoading } = useAuth();
+function SetupBody({ templateId }: { templateId: string }) {
+  const router = useRouter();
+  const blank = templateId === "blank";
   const [template, setTemplate] = useState<CompetitionTemplate | null>();
   const [error, setError] = useState("");
 
   useEffect(() => {
     if (blank) {
-      setTemplate(null);
-      return;
+      router.replace("/leagues/new/templates/new?flow=league");
     }
-    if (!templateId) return;
+  }, [blank, router]);
+
+  useEffect(() => {
+    if (blank) return;
     setTemplate(undefined);
     setError("");
     api<CompetitionTemplate>(`/templates/${templateId}`)
@@ -43,25 +45,16 @@ function SetupBody({ templateId, blank }: { templateId: string | null; blank: bo
       .catch((e) => setError(errorMessage(e)));
   }, [blank, templateId]);
 
-  if (authLoading) return <Loading label="Checking permissions" />;
-  if (!isAdmin) {
-    return (
-      <ErrorState error="Platform admin access is required to create leagues." />
-    );
-  }
+  if (blank) return <Loading label="Starting blank league" />;
   if (error) return <ErrorState error={error} />;
-  if (!blank && template === undefined) return <Loading label="Loading template" />;
+  if (template === undefined) return <Loading label="Loading template" />;
 
   return (
     <Stack gap="lg" className="animate-in">
       <PageHeader
         eyebrow="Step 2"
         title="League setup"
-        description={
-          blank
-            ? "Name the league and set how many managers. Add competitions later in Commissioner settings."
-            : "Confirm season details and load clubs from the template’s competitions."
-        }
+        description="Confirm season details and load clubs from the template’s competitions."
         actions={
           <Link
             href="/leagues/new"
@@ -71,7 +64,7 @@ function SetupBody({ templateId, blank }: { templateId: string | null; blank: bo
           </Link>
         }
       />
-      <CreateLeagueForm template={template ?? null} templateId={templateId} />
+      <CreateLeagueForm template={template} templateId={templateId} />
     </Stack>
   );
 }

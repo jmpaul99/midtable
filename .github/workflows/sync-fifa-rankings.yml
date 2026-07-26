@@ -1,0 +1,21 @@
+# Weekly FIFA men/women ranking catalog refresh via Parse.
+# Secrets: API_URL, CRON_SECRET (same as fixture sync). PARSE_API_KEY must be on the API service.
+name: Sync FIFA rankings
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Mondays at 06:15 UTC
+    - cron: "15 6 * * 1"
+
+jobs:
+  sync-fifa:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger FIFA ranking sync
+        env:
+          API_URL: ${{ secrets.API_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          curl -fsS -X POST "${API_URL}/internal/sync-fifa-rankings" \
+            -H "X-Cron-Secret: ${CRON_SECRET}"

@@ -1,14 +1,14 @@
+from datetime import datetime
 from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-from app.schemas.common import IdSchema
+from app.schemas.common import IdSchema, ORMModel
 
 
 class TemplateCreate(BaseModel):
-    key: str
     label: str
     draft_style: str = "linear"
     preassign_mode: str = "none"
@@ -23,6 +23,8 @@ class TemplateCreate(BaseModel):
     roster_slots: list[Any] = Field(default_factory=list)
     pool_definitions: list[Any] = Field(default_factory=list)
     bonus_types: list[Any] = Field(default_factory=list)
+    featured: bool = False
+    made_by_staff: bool = False
 
 
 class TemplateResponse(IdSchema):
@@ -39,6 +41,10 @@ class TemplateResponse(IdSchema):
     roster_slots: list[Any]
     pool_definitions: list[Any]
     bonus_types: list[Any]
+    featured: bool = False
+    made_by_staff: bool = False
+    created_by_id: UUID | None = None
+    can_edit: bool = False
 
 
 class TemplateUpdate(BaseModel):
@@ -54,3 +60,12 @@ class TemplateUpdate(BaseModel):
     roster_slots: list[Any] | None = None
     pool_definitions: list[Any] | None = None
     bonus_types: list[Any] | None = None
+    featured: bool | None = None
+    made_by_staff: bool | None = None
+
+
+class RecentTemplateUsage(ORMModel):
+    template: TemplateResponse
+    league_id: UUID
+    league_name: str
+    used_at: datetime

@@ -23,6 +23,7 @@ from app.services.scoring import (
     score_match_events,
 )
 from app.logging_config import log_id
+from app.services.ranking_catalog import ensure_fixed_ranking_for_league
 from app.services.standings import build_snapshot_for_kickoff, mark_snapshots_stale_after
 
 logger = logging.getLogger(__name__)
@@ -135,6 +136,8 @@ def sync_league_fixtures(
     status.in_progress = True
     status.in_progress_since = datetime.now(UTC)
     status.last_error = None
+    db.flush()
+    ensure_fixed_ranking_for_league(db, league)
     db.flush()
 
     changed_matches: list[Match] = []

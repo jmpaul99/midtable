@@ -9,9 +9,9 @@ from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.auth.jwt import AuthenticatedUser, get_current_profile
+from app.auth.jwt import get_current_profile
 from app.db import get_db
-from app.deps import require_commissioner, require_league_member, require_platform_admin
+from app.deps import require_commissioner, require_league_member
 from app.models import CompetitionTemplate, DraftState, League, LeagueMember, PoolTeam, Profile, TeamPool
 from app.routers.league_mappers import (
     _league_detail,
@@ -109,7 +109,6 @@ def list_leagues(
 @router.post("/leagues", response_model=LeagueDetailResponse)
 def create_league(
     payload: LeagueCreate,
-    _: AuthenticatedUser = Depends(require_platform_admin),
     profile: Profile = Depends(get_current_profile),
     db: Session = Depends(get_db),
 ) -> LeagueDetailResponse:

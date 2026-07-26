@@ -69,7 +69,7 @@ def auth_me(
     user: AuthenticatedUser = Depends(get_current_user),
 ) -> MeResponse:
     """Return current profile."""
-    return _me_response(profile, platform_admin=is_platform_admin(user))
+    return _me_response(profile, platform_admin=is_platform_admin(profile, user))
 
 
 @router.patch("/auth/me", response_model=MeResponse)
@@ -89,4 +89,4 @@ def update_me(
         profile.public_id,
         body.display_name,
     )
-    return _me_response(profile, platform_admin=is_platform_admin(user))
+    return _me_response(profile, platform_admin=is_platform_admin(profile, user))

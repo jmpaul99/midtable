@@ -188,6 +188,10 @@ def bootstrap_season(
 
     db.add(DraftState(league_id=league.id, current_pick_number=1, status="pending"))
     db.flush()
+    from app.services.ranking_catalog import ensure_fixed_ranking_for_league
+
+    ensure_fixed_ranking_for_league(db, league)
+    db.flush()
     logger.info(
         "bootstrap_season ok league_id=%s name=%s season_label=%s pools=%s",
         league.public_id,
@@ -342,6 +346,10 @@ def bootstrap_teams_for_league(
             }
         )
 
+    db.flush()
+    from app.services.ranking_catalog import ensure_fixed_ranking_for_league
+
+    ensure_fixed_ranking_for_league(db, league)
     db.flush()
     summary = {
         "created_teams": created_teams,

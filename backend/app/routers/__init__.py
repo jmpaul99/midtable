@@ -12,6 +12,7 @@ from app.routers import (
     league_ops,
     league_reads,
     leagues_core,
+    ranking_catalog,
     rankings,
     sync,
     templates,
@@ -32,6 +33,7 @@ def build_api_router() -> APIRouter:
     router.include_router(admin.router)
     router.include_router(templates.router)
     router.include_router(rankings.router)
+    router.include_router(ranking_catalog.router)
     router.include_router(analytics.router)
     router.include_router(internal.router)
     return router

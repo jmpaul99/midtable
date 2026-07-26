@@ -30,7 +30,7 @@ Interactive API docs: `http://localhost:8000/docs`
 ```
 backend/          FastAPI app (`app/`), tests, seed script, Dockerfile
 frontend/         Next.js app (+ Dockerfile for Cloud Run)
-supabase/         Postgres migrations (`migrations/001`–`008`)
+supabase/         Postgres migrations (`migrations/001`–`011`)
 compose.yaml      API + frontend containers (local; override adds API --reload)
 .env.example      Shared backend + frontend env template
 ```
@@ -77,7 +77,14 @@ Fill in values. Root `.env` is loaded by the backend; frontend reads `frontend/.
 
 ### 2. Database
 
-Apply migrations from `supabase/migrations/` (e.g. `supabase db push` against your linked/local project, or run the SQL in order via the Supabase SQL editor).
+Apply migrations from `supabase/migrations/`:
+
+```bash
+# From backend/ (uses DATABASE_URL from ../.env or the environment)
+cd backend && pip install -e . && python -m app.scripts.run_migrations
+```
+
+Or `supabase db push` against a linked/local project, or run the SQL files in order via the Supabase SQL editor. Production deploys run the same migration script automatically before Cloud Run update.
 
 Local Supabase defaults match `.env.example` (`54321` API, `54322` DB).
 
@@ -157,7 +164,7 @@ Settings → Secrets and variables → Actions.
 | --- | --- | --- |
 | `GCP_PROJECT_ID` | Variable | GCP project id |
 | `GCP_SA_KEY` | Secret | Deploy service-account JSON |
-| `DATABASE_URL` | Secret | Hosted Supabase Postgres URL |
+| `DATABASE_URL` | Secret | Hosted Supabase Postgres URL (also used to apply migrations on backend deploy) |
 | `SUPABASE_URL` | Secret | Hosted Supabase project URL (`https://….supabase.co`) |
 | `FOOTBALL_DATA_API_TOKEN` | Secret | football-data.org API token |
 | `CRON_SECRET` | Secret | Long random string |
@@ -182,16 +189,17 @@ Settings → Secrets and variables → Actions.
 
 Use **hosted** Supabase URLs — not `127.0.0.1` or `host.docker.internal`. Backend workflow sets `APP_ENV=production` and `MAILJET_FROM_NAME=Midtable`.
 
+Backend deploy runs `python -m app.scripts.run_migrations` with `DATABASE_URL` after CI and **before** building/pushing the API image. Pending files under `supabase/migrations/*.sql` are applied; if the DB already has the schema but no tracking rows, existing files are recorded without re-running.
+
 #### Before first deploy
 
 1. Enable Cloud Run + Artifact Registry; create Artifact Registry Docker repo `midtable` in `us-central1`.
 2. Deploy SA JSON → secret `GCP_SA_KEY`; set variable `GCP_PROJECT_ID`.
-3. Apply `supabase/migrations/` to the hosted project.
-4. Set secrets that do not need Cloud Run URLs yet (`DATABASE_URL`, `SUPABASE_URL`, Mailjet, `FOOTBALL_DATA_API_TOKEN`, `CRON_SECRET`, `INTERNAL_API_SECRET`, Turnstile keys/hostnames, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`).
-5. Temporary `PUBLIC_APP_URL` (e.g. `https://example.com`) → deploy **backend** → copy API origin → set `API_URL`.
-6. Deploy **frontend** → copy frontend origin → set `PUBLIC_APP_URL` to that origin → update `TURNSTILE_HOSTNAMES` to match → redeploy backend and frontend.
-7. Supabase Auth redirects: `{frontend-origin}`, `{frontend-origin}/auth/callback`.
-8. Confirm cron secrets (`API_URL` + `CRON_SECRET`); run Sync and score via `workflow_dispatch`.
+3. Set secrets that do not need Cloud Run URLs yet (`DATABASE_URL`, `SUPABASE_URL`, Mailjet, `FOOTBALL_DATA_API_TOKEN`, `CRON_SECRET`, `INTERNAL_API_SECRET`, Turnstile keys/hostnames, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`). Schema migrations are applied by the backend deploy workflow.
+4. Temporary `PUBLIC_APP_URL` (e.g. `https://example.com`) → deploy **backend** → copy API origin → set `API_URL`.
+5. Deploy **frontend** → copy frontend origin → set `PUBLIC_APP_URL` to that origin → update `TURNSTILE_HOSTNAMES` to match → redeploy backend and frontend.
+6. Supabase Auth redirects: `{frontend-origin}`, `{frontend-origin}/auth/callback`.
+7. Confirm cron secrets (`API_URL` + `CRON_SECRET`); run Sync and score via `workflow_dispatch`.
 
 Local smoke tests:
 

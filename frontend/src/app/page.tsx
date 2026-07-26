@@ -4,11 +4,12 @@ import Link from "next/link";
 import { Suspense, useCallback, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@/lib/auth";
-import { api, errorMessage } from "@/lib/api";
+import { api, errorMessage, json } from "@/lib/api";
 import { formatNumber } from "@/lib/format";
-import type { LeagueSummary } from "@/lib/types";
+import type { LeagueSummary, Manager, PendingInvite } from "@/lib/types";
 import { Empty, ErrorState, Loading, Status } from "@/components/ui/State";
 import { Muted, Stack } from "@/components/ui/Card";
+import { Button } from "@/components/ui/Button";
 import { MidtableLogo } from "@/components/MidtableLogo";
 import { LandingPage } from "@/components/LandingPage";
 
@@ -62,6 +63,15 @@ function leagueMetaLabel(league: LeagueSummary): string {
   return season;
 }
 
+function inviteMetaLabel(invite: PendingInvite): string {
+  const season = invite.season_label || "Season";
+  const role = invite.role === "commissioner" ? "Commissioner" : "Manager";
+  if (invite.draft_slot != null) {
+    return `${season} · ${role} · Draft ${ordinal(invite.draft_slot)}`;
+  }
+  return `${season} · ${role}`;
+}
+
 export default function HomePage() {
   return (
     <Suspense fallback={<Loading label="Checking your session" />}>
@@ -97,20 +107,45 @@ function HomeContent() {
 }
 
 function LeagueList() {
-  const { isAdmin } = useAuth();
+  const router = useRouter();
   const [leagues, setLeagues] = useState<LeagueSummary[]>();
+  const [invites, setInvites] = useState<PendingInvite[]>();
   const [error, setError] = useState("");
+  const [acceptingId, setAcceptingId] = useState<string | null>(null);
+  const [acceptError, setAcceptError] = useState("");
 
   const load = useCallback(() => {
     setError("");
-    api<LeagueSummary[]>("/leagues")
-      .then(setLeagues)
+    Promise.all([
+      api<LeagueSummary[]>("/leagues"),
+      api<PendingInvite[]>("/invites/pending"),
+    ])
+      .then(([leagueRows, inviteRows]) => {
+        setLeagues(leagueRows);
+        setInvites(inviteRows);
+      })
       .catch((e) => setError(errorMessage(e)));
   }, []);
 
   useEffect(() => {
     load();
   }, [load]);
+
+  async function acceptInvite(invite: PendingInvite) {
+    if (!invite.token) return;
+    setAcceptingId(invite.id);
+    setAcceptError("");
+    try {
+      const out = await api<Manager & { league_id: string }>(
+        "/invites/accept",
+        json("POST", { token: invite.token }),
+      );
+      router.push(`/leagues/${out.league_id}`);
+    } catch (err) {
+      setAcceptError(errorMessage(err));
+      setAcceptingId(null);
+    }
+  }
 
   return (
     <Stack gap="lg" className="animate-in">
@@ -127,11 +162,7 @@ function LeagueList() {
           <Loading label="Loading leagues" />
         ) : !leagues.length ? (
           <Empty title="No leagues yet">
-            <p>
-              {isAdmin
-                ? "Use Create a league in the nav to start from a template, or join via an invite or shareable link."
-                : "Accept an invite or open a shareable join link to enter a league."}
-            </p>
+            <p>Create a league below, or join via an invite or shareable link.</p>
           </Empty>
         ) : (
           <ul className="flex flex-col gap-2">
@@ -153,6 +184,45 @@ function LeagueList() {
             ))}
           </ul>
         )}
+      </section>
+
+      {invites && invites.length > 0 && (
+        <section className="flex flex-col gap-3">
+          <h2 className="text-lg sm:text-xl">Pending invites</h2>
+          {acceptError && <ErrorState error={acceptError} />}
+          <ul className="flex flex-col gap-2">
+            {invites.map((invite) => (
+              <li
+                key={invite.id}
+                className="rounded-xl border border-line bg-surface p-4 shadow-soft"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0 flex-1">
+                    <strong className="block truncate text-base">{invite.league_name}</strong>
+                    <Muted className="mt-1">{inviteMetaLabel(invite)}</Muted>
+                  </div>
+                  <Button
+                    type="button"
+                    size="sm"
+                    disabled={!invite.token || acceptingId === invite.id}
+                    onClick={() => acceptInvite(invite)}
+                  >
+                    {acceptingId === invite.id ? "Accepting…" : "Accept"}
+                  </Button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      <section>
+        <Link
+          href="/leagues/new"
+          className="inline-flex w-full min-h-11 items-center justify-center gap-2 rounded-xl bg-brand px-4 py-2.5 text-[0.95rem] font-bold text-on-brand shadow-sm transition hover:bg-brand-dark active:scale-[0.98]"
+        >
+          Create a league
+        </Link>
       </section>
     </Stack>
   );

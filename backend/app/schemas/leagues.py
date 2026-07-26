@@ -140,6 +140,17 @@ class InviteResponse(IdSchema):
     email_deliveries: list[InviteEmailDeliveryResponse] = Field(default_factory=list)
 
 
+class PendingInviteResponse(BaseModel):
+    id: UUID
+    league_id: UUID
+    league_name: str
+    season_label: str
+    is_commissioner: bool
+    draft_slot: int | None = None
+    role: str = "member"
+    token: str | None = None
+
+
 class InviteAcceptRequest(BaseModel):
     token: str
 

@@ -65,19 +65,24 @@ def require_commissioner(
     return league, member
 
 
-def is_platform_admin(user: AuthenticatedUser) -> bool:
-    meta = user.claims.get("app_metadata") or {}
-    return bool(user.bypass or meta.get("role") == "admin" or user.role == "admin")
+def is_platform_admin(
+    profile: Profile,
+    user: AuthenticatedUser | None = None,
+) -> bool:
+    if user is not None and user.bypass:
+        return True
+    return bool(profile.is_platform_admin)
 
 
 def require_platform_admin(
+    profile: Profile = Depends(get_current_profile),
     user: AuthenticatedUser = Depends(get_current_user),
-) -> AuthenticatedUser:
-    if is_platform_admin(user):
-        return user
+) -> Profile:
+    if is_platform_admin(profile, user):
+        return profile
     logger.warning(
         "authz denied reason=not_platform_admin email=%s",
-        user.email,
+        profile.email,
     )
     raise HTTPException(status_code=403, detail="Platform admin access required")
 
