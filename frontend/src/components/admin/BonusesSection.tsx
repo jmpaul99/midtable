@@ -75,12 +75,12 @@ export function BonusesSection({
 
   const listItems = useMemo(
     () =>
-      sortedTypes.map((t) => ({
+      sortedTypes.map((t, i) => ({
         id: t.id,
         key: t.key,
         label: t.label,
         default_points: t.default_points,
-        sort_order: t.sort_order,
+        sort_order: t.sort_order ?? i + 1,
       })),
     [sortedTypes],
   );
