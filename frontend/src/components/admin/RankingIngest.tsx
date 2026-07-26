@@ -43,8 +43,9 @@ export function RankingIngest({ leagueId }: { leagueId: UUID }) {
         <div>
           <h2>Ranking lists</h2>
           <Muted className="mt-1">
-            Fixed ranks used for upset scoring. System lists refresh via sync; platform admins can
-            rematch unmatched countries globally.
+            Fixed ranks used for upset scoring. System lists refresh via sync; unmatched counts
+            national-competition teams missing a FIFA ranking link (not FIFA countries outside the
+            tournament).
           </Muted>
         </div>
         {error && <ErrorState error={error} />}
@@ -79,7 +80,7 @@ export function RankingIngest({ leagueId }: { leagueId: UUID }) {
 
         {isAdmin && (
           <Muted className="text-sm">
-            Rematch unmatched countries on the{" "}
+            Rematch unmatched national teams on the{" "}
             <Link href="/admin/rankings" className="font-bold text-brand hover:underline">
               ranking rematch
             </Link>{" "}

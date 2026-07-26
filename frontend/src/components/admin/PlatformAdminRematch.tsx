@@ -30,6 +30,16 @@ interface MatchRow {
   score: number;
 }
 
+interface UnmatchedRow {
+  external_team_id: string;
+  team_name: string;
+  tla: string | null;
+  suggested_rank: number | null;
+  suggested_team_name: string | null;
+  suggested_country_code: string | null;
+  score: number;
+}
+
 interface AdminTeamOption {
   external_id: string;
   name: string;
@@ -43,7 +53,12 @@ type FilterMode = "all" | "unmatched" | "override" | "auto";
 function sourceLabel(source: MatchRow["match_source"]) {
   if (source === "override") return "Override";
   if (source === "auto") return "Auto";
-  return "Unmatched";
+  return "No team";
+}
+
+function catalogPath(catalogId: UUID, suffix: "matches" | "unmatched", leagueId?: UUID) {
+  const base = `/ranking-catalogs/${catalogId}/${suffix}`;
+  return leagueId ? `${base}?league_id=${leagueId}` : base;
 }
 
 export function PlatformAdminRematch({
@@ -60,12 +75,17 @@ export function PlatformAdminRematch({
   const [catalogs, setCatalogs] = useState<CatalogOption[]>([]);
   const [catalogId, setCatalogId] = useState<UUID | "">("");
   const [matches, setMatches] = useState<MatchRow[]>([]);
+  const [unmatched, setUnmatched] = useState<UnmatchedRow[]>([]);
   const [teams, setTeams] = useState<AdminTeamOption[]>([]);
   const [teamQuery, setTeamQuery] = useState("");
   const [entryQuery, setEntryQuery] = useState("");
   const [filter, setFilter] = useState<FilterMode>("all");
   const [mappings, setMappings] = useState<Record<number, string>>({});
+  const [unmatchedEntryByTeam, setUnmatchedEntryByTeam] = useState<Record<string, string>>(
+    {},
+  );
   const [busyRank, setBusyRank] = useState<number | null>(null);
+  const [busyTeamId, setBusyTeamId] = useState<string | null>(null);
 
   useEffect(() => {
     api<CatalogOption[]>("/ranking-catalogs")
@@ -92,20 +112,32 @@ export function PlatformAdminRematch({
     return () => window.clearTimeout(handle);
   }, [teamQuery]);
 
-  const loadMatches = useCallback(() => {
+  const loadData = useCallback(() => {
     if (!catalogId) return;
-    const path = leagueId
-      ? `/ranking-catalogs/${catalogId}/matches?league_id=${leagueId}`
-      : `/ranking-catalogs/${catalogId}/matches`;
-    api<MatchRow[]>(path)
-      .then((rows) => {
-        setMatches(rows);
+    Promise.all([
+      api<MatchRow[]>(catalogPath(catalogId, "matches", leagueId)),
+      api<UnmatchedRow[]>(catalogPath(catalogId, "unmatched", leagueId)),
+    ])
+      .then(([matchRows, unmatchedRows]) => {
+        setMatches(matchRows);
+        setUnmatched(unmatchedRows);
         setMappings(
           Object.fromEntries(
-            rows.map((r) => {
+            matchRows.map((r) => {
               const current =
                 r.matched_external_team_id || r.suggested_external_team_id || "";
               return [r.rank, current] as const;
+            }),
+          ),
+        );
+        setUnmatchedEntryByTeam(
+          Object.fromEntries(
+            unmatchedRows.map((r) => {
+              const key =
+                r.suggested_rank != null
+                  ? String(r.suggested_rank)
+                  : "";
+              return [r.external_team_id, key] as const;
             }),
           ),
         );
@@ -114,13 +146,13 @@ export function PlatformAdminRematch({
   }, [catalogId, leagueId, onError]);
 
   useEffect(() => {
-    loadMatches();
-  }, [loadMatches]);
+    loadData();
+  }, [loadData]);
 
-  const filtered = useMemo(() => {
+  const filteredMatches = useMemo(() => {
+    if (filter === "unmatched") return [];
     const q = entryQuery.trim().toLowerCase();
     return matches.filter((row) => {
-      if (filter === "unmatched" && row.matched_external_team_id) return false;
       if (filter === "override" && row.match_source !== "override") return false;
       if (filter === "auto" && row.match_source !== "auto") return false;
       if (!q) return true;
@@ -132,17 +164,32 @@ export function PlatformAdminRematch({
     });
   }, [matches, filter, entryQuery]);
 
+  const filteredUnmatched = useMemo(() => {
+    if (filter !== "unmatched") return [];
+    const q = entryQuery.trim().toLowerCase();
+    if (!q) return unmatched;
+    return unmatched.filter(
+      (row) =>
+        row.team_name.toLowerCase().includes(q) ||
+        (row.tla || "").toLowerCase().includes(q) ||
+        (row.suggested_team_name || "").toLowerCase().includes(q),
+    );
+  }, [unmatched, filter, entryQuery]);
+
   const counts = useMemo(() => {
-    let unmatched = 0;
     let override = 0;
     let auto = 0;
     for (const row of matches) {
-      if (!row.matched_external_team_id) unmatched += 1;
-      else if (row.match_source === "override") override += 1;
-      else auto += 1;
+      if (row.match_source === "override") override += 1;
+      else if (row.match_source === "auto") auto += 1;
     }
-    return { all: matches.length, unmatched, override, auto };
-  }, [matches]);
+    return {
+      all: matches.length,
+      unmatched: unmatched.length,
+      override,
+      auto,
+    };
+  }, [matches, unmatched]);
 
   const teamOptions = useMemo(() => {
     const byId = new Map(teams.map((t) => [t.external_id, t]));
@@ -179,6 +226,20 @@ export function PlatformAdminRematch({
     return Array.from(byId.values()).sort((a, b) => a.name.localeCompare(b.name));
   }, [teams, matches, mappings]);
 
+  const entryOptions = useMemo(
+    () =>
+      matches
+        .slice()
+        .sort((a, b) => a.rank - b.rank)
+        .map((m) => ({
+          rank: m.rank,
+          label: `#${m.rank} ${m.team_name}${m.country_code ? ` (${m.country_code})` : ""}`,
+          country_code: m.country_code,
+          team_name: m.team_name,
+        })),
+    [matches],
+  );
+
   async function saveOverride(row: MatchRow) {
     const externalId = mappings[row.rank];
     if (!catalogId || !externalId) return;
@@ -198,11 +259,38 @@ export function PlatformAdminRematch({
         }),
       );
       onSaved();
-      loadMatches();
+      loadData();
     } catch (err) {
       onError(errorMessage(err));
     } finally {
       setBusyRank(null);
+    }
+  }
+
+  async function saveUnmatchedLink(row: UnmatchedRow) {
+    const rankKey = unmatchedEntryByTeam[row.external_team_id];
+    if (!catalogId || !rankKey) return;
+    const rank = Number(rankKey);
+    const entry = matches.find((m) => m.rank === rank);
+    if (!entry) return;
+    setBusyTeamId(row.external_team_id);
+    onError("");
+    try {
+      await api(
+        `/ranking-catalogs/${catalogId}/overrides`,
+        json("PUT", {
+          country_code: entry.country_code,
+          team_name: entry.team_name,
+          provider: "football-data.org",
+          external_team_id: row.external_team_id,
+        }),
+      );
+      onSaved();
+      loadData();
+    } catch (err) {
+      onError(errorMessage(err));
+    } finally {
+      setBusyTeamId(null);
     }
   }
 
@@ -219,8 +307,9 @@ export function PlatformAdminRematch({
         <div>
           <h2>Platform admin rematch</h2>
           <Muted className="mt-1">
-            Review and correct FIFA ranking → football-data.org team mappings. Saving an
-            override updates all unlocked leagues using this catalog.
+            Review FIFA ranking → football-data.org mappings for national teams. Unmatched means a
+            synced national-competition team has no FIFA link — FIFA countries outside the
+            tournament are ignored. Club teams do not use FIFA rankings.
           </Muted>
         </div>
         <Label>
@@ -256,7 +345,7 @@ export function PlatformAdminRematch({
         </div>
         <div className="grid gap-3 sm:grid-cols-2">
           <Label>
-            Filter countries
+            Filter {filter === "unmatched" ? "teams" : "countries"}
             <Input
               type="search"
               value={entryQuery}
@@ -265,22 +354,88 @@ export function PlatformAdminRematch({
               autoComplete="off"
             />
           </Label>
-          <Label>
-            Search teams to map
-            <Input
-              type="search"
-              value={teamQuery}
-              onChange={(e) => setTeamQuery(e.target.value)}
-              placeholder="Type at least 2 characters…"
-              autoComplete="off"
-            />
-          </Label>
+          {filter !== "unmatched" && (
+            <Label>
+              Search teams to map
+              <Input
+                type="search"
+                value={teamQuery}
+                onChange={(e) => setTeamQuery(e.target.value)}
+                placeholder="Type at least 2 characters…"
+                autoComplete="off"
+              />
+            </Label>
+          )}
         </div>
-        {filtered.length === 0 ? (
+        {filter === "unmatched" ? (
+          filteredUnmatched.length === 0 ? (
+            <Muted className="text-sm">
+              No national competition teams are missing a FIFA ranking match.
+            </Muted>
+          ) : (
+            <ul className="flex flex-col gap-2">
+              {filteredUnmatched.map((row) => {
+                const selected = unmatchedEntryByTeam[row.external_team_id] || "";
+                return (
+                  <li
+                    key={row.external_team_id}
+                    className="rounded-xl border border-line bg-surface-2/50 p-3"
+                  >
+                    <div className="mb-2 flex items-center gap-3">
+                      <div className="min-w-0 flex-1">
+                        <strong className="block truncate">{row.team_name}</strong>
+                        <Muted className="text-xs">
+                          {row.tla || "no TLA"}
+                          {row.suggested_team_name
+                            ? ` · suggested FIFA #${row.suggested_rank} ${row.suggested_team_name}`
+                            : ""}
+                        </Muted>
+                      </div>
+                      <span className="shrink-0 rounded-md bg-amber-500/15 px-2 py-0.5 text-[0.7rem] font-bold text-amber-800 dark:text-amber-200">
+                        Unmatched
+                      </span>
+                    </div>
+                    <Label>
+                      Link to FIFA ranking entry
+                      <Select
+                        value={selected}
+                        onChange={(e) =>
+                          setUnmatchedEntryByTeam((prev) => ({
+                            ...prev,
+                            [row.external_team_id]: e.target.value,
+                          }))
+                        }
+                      >
+                        <option value="">— select FIFA entry —</option>
+                        {entryOptions.map((e) => (
+                          <option key={e.rank} value={String(e.rank)}>
+                            {e.label}
+                          </option>
+                        ))}
+                      </Select>
+                    </Label>
+                    <div className="mt-2">
+                      <IconButton
+                        type="button"
+                        label="Save override"
+                        variant="primary"
+                        busy={busyTeamId === row.external_team_id}
+                        disabled={!selected}
+                        onClick={() => void saveUnmatchedLink(row)}
+                      >
+                        <SaveIcon />
+                      </IconButton>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          )
+        ) : filteredMatches.length === 0 ? (
           <Muted className="text-sm">No catalog entries match this filter.</Muted>
         ) : (
           <ul className="flex flex-col gap-2">
-            {filtered.map((row) => {
+            {filteredMatches.map((row) => {
               const selected = mappings[row.rank] || "";
               const dirty =
                 selected !== "" && selected !== (row.matched_external_team_id || "");
@@ -306,8 +461,10 @@ export function PlatformAdminRematch({
                       className={cn(
                         "shrink-0 rounded-md px-2 py-0.5 text-[0.7rem] font-bold",
                         row.match_source === "override" && "bg-brand/15 text-brand",
-                        row.match_source === "auto" && "bg-surface text-muted ring-1 ring-line",
-                        !row.match_source && "bg-amber-500/15 text-amber-800 dark:text-amber-200",
+                        row.match_source === "auto" &&
+                          "bg-surface text-muted ring-1 ring-line",
+                        !row.match_source &&
+                          "bg-surface text-muted ring-1 ring-line",
                       )}
                     >
                       {sourceLabel(row.match_source)}
@@ -321,7 +478,7 @@ export function PlatformAdminRematch({
                         setMappings((prev) => ({ ...prev, [row.rank]: e.target.value }))
                       }
                     >
-                      <option value="">— unmatched —</option>
+                      <option value="">— no team —</option>
                       {teamOptions.map((t) => (
                         <option key={t.external_id} value={t.external_id}>
                           {t.name}

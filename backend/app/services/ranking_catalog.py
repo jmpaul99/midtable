@@ -29,6 +29,12 @@ logger = logging.getLogger(__name__)
 SYSTEM_FIFA_KEYS = ("fifa_men", "fifa_women")
 PROVIDER_KEY = "football-data.org"
 
+# FIFA system catalogs only apply to national teams of the matching gender.
+CATALOG_TEAM_KIND: dict[str, str] = {
+    "fifa_men": "national_men",
+    "fifa_women": "national_women",
+}
+
 
 def slugify_catalog_key(label: str) -> str:
     base = re.sub(r"[^a-z0-9]+", "_", label.strip().lower()).strip("_") or "custom"
@@ -170,6 +176,37 @@ def league_pool_teams(db: Session, league: League) -> list[Team]:
     )
 
 
+def team_kind_for_catalog(catalog: RankingCatalog) -> str | None:
+    return CATALOG_TEAM_KIND.get(catalog.key)
+
+
+def candidate_teams_for_catalog(
+    db: Session,
+    catalog: RankingCatalog,
+    *,
+    sample_league: League | None = None,
+) -> list[Team]:
+    """National teams in scope for FIFA matching; empty for non-FIFA / club-only."""
+    kind = team_kind_for_catalog(catalog)
+    if kind is None:
+        # Custom catalogs: keep prior behavior (all pool / all provider teams).
+        if sample_league is not None:
+            return league_pool_teams(db, sample_league)
+        return list(db.scalars(select(Team).where(Team.provider == PROVIDER_KEY)).all())
+
+    if sample_league is not None:
+        return [t for t in league_pool_teams(db, sample_league) if t.team_kind == kind]
+
+    return list(
+        db.scalars(
+            select(Team).where(
+                Team.provider == PROVIDER_KEY,
+                Team.team_kind == kind,
+            )
+        ).all()
+    )
+
+
 def _override_map(
     overrides: list[RankingCatalogTeamOverride],
 ) -> tuple[dict[str, str], dict[str, str]]:
@@ -294,7 +331,7 @@ def materialize_catalog_into_league(
         ).all()
     )
     by_code, by_name = _override_map(overrides)
-    teams = league_pool_teams(db, league)
+    teams = candidate_teams_for_catalog(db, catalog, sample_league=league)
 
     for existing in db.scalars(
         select(TeamRanking).where(TeamRanking.ranking_list_id == ranking_list.id)
@@ -303,7 +340,6 @@ def materialize_catalog_into_league(
     db.flush()
 
     matched = 0
-    unmatched = 0
     seen_teams: set[int] = set()
     for entry in entries:
         team = match_team_for_entry(
@@ -313,7 +349,6 @@ def materialize_catalog_into_league(
             overrides_by_name=by_name,
         )
         if team is None or team.id in seen_teams:
-            unmatched += 1
             continue
         seen_teams.add(team.id)
         db.add(
@@ -324,6 +359,8 @@ def materialize_catalog_into_league(
             )
         )
         matched += 1
+    # Unmatched = national competition teams in the league without a FIFA rank.
+    unmatched = sum(1 for t in teams if t.id not in seen_teams)
     return {
         "league_id": str(league.public_id),
         "matched": matched,
@@ -437,10 +474,37 @@ def _best_suggestion(
     return None, best[0] if best else 0.0
 
 
+def _best_entry_suggestion(
+    team: Team, entries: list[RankingCatalogEntry]
+) -> tuple[RankingCatalogEntry | None, float]:
+    scored = sorted(
+        (
+            (
+                max(
+                    fuzzy_match_score(entry.team_name, team.name),
+                    fuzzy_match_score(entry.team_name, team.short_name or ""),
+                    1.0
+                    if entry.country_code
+                    and (team.tla or "").upper() == entry.country_code.upper()
+                    else 0.0,
+                ),
+                entry,
+            )
+            for entry in entries
+        ),
+        key=lambda x: x[0],
+        reverse=True,
+    )
+    best = scored[0] if scored else None
+    if best and best[0] >= 0.34:
+        return best[1], best[0]
+    return None, best[0] if best else 0.0
+
+
 def matches_for_catalog(
     db: Session, catalog: RankingCatalog, *, sample_league: League | None = None
 ) -> list[dict]:
-    """Resolve every catalog entry to a team (or unmatched), for admin review."""
+    """Resolve every catalog entry to a national team (or none), for admin review."""
     entries = list(
         db.scalars(
             select(RankingCatalogEntry)
@@ -456,13 +520,7 @@ def matches_for_catalog(
         ).all()
     )
     by_code, by_name = _override_map(overrides)
-
-    if sample_league is not None:
-        teams = league_pool_teams(db, sample_league)
-    else:
-        teams = list(
-            db.scalars(select(Team).where(Team.provider == PROVIDER_KEY)).all()
-        )
+    teams = candidate_teams_for_catalog(db, catalog, sample_league=sample_league)
 
     out: list[dict] = []
     for entry in entries:
@@ -505,18 +563,54 @@ def matches_for_catalog(
 def unmatched_for_catalog(
     db: Session, catalog: RankingCatalog, *, sample_league: League | None = None
 ) -> list[dict]:
-    return [
-        {
-            "rank": row["rank"],
-            "team_name": row["team_name"],
-            "country_code": row["country_code"],
-            "suggested_external_team_id": row["suggested_external_team_id"],
-            "suggested_team_name": row["suggested_team_name"],
-            "score": row["score"],
-        }
-        for row in matches_for_catalog(db, catalog, sample_league=sample_league)
-        if row["matched_external_team_id"] is None
-    ]
+    """National competition teams in scope with no FIFA catalog match."""
+    entries = list(
+        db.scalars(
+            select(RankingCatalogEntry)
+            .where(RankingCatalogEntry.catalog_id == catalog.id)
+            .order_by(RankingCatalogEntry.rank)
+        ).all()
+    )
+    overrides = list(
+        db.scalars(
+            select(RankingCatalogTeamOverride).where(
+                RankingCatalogTeamOverride.catalog_id == catalog.id
+            )
+        ).all()
+    )
+    by_code, by_name = _override_map(overrides)
+    teams = candidate_teams_for_catalog(db, catalog, sample_league=sample_league)
+
+    matched_ids: set[int] = set()
+    for entry in entries:
+        team = match_team_for_entry(
+            entry,
+            teams,
+            overrides_by_code=by_code,
+            overrides_by_name=by_name,
+        )
+        if team is not None:
+            matched_ids.add(team.id)
+
+    out: list[dict] = []
+    for team in sorted(teams, key=lambda t: t.name.lower()):
+        if team.id in matched_ids:
+            continue
+        suggestion, score = _best_entry_suggestion(team, entries)
+        out.append(
+            {
+                "external_team_id": team.external_id,
+                "team_name": team.name,
+                "tla": team.tla,
+                "suggested_rank": suggestion.rank if suggestion else None,
+                "suggested_team_name": suggestion.team_name if suggestion else None,
+                "suggested_country_code": (
+                    suggestion.country_code if suggestion else None
+                ),
+                "score": score,
+            }
+        )
+    return out
 
 
 def league_ranking_status(db: Session, league: League) -> list[dict]:

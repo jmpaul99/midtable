@@ -187,6 +187,7 @@ class Team(Base):
     short_name: Mapped[str | None] = mapped_column(Text)
     tla: Mapped[str | None] = mapped_column(Text)
     crest_url: Mapped[str | None] = mapped_column(Text)
+    team_kind: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 

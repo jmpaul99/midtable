@@ -15,7 +15,7 @@ from app.models import Team
 from app.providers.base import FootballProvider, RateLimitInfo
 from app.providers.fifa_rankings import FifaRankingsError, ParseFifaRankingsProvider
 from app.providers.football_data import FootballDataError
-from app.services.competitions import AVAILABLE_COMPETITIONS
+from app.services.competitions import AVAILABLE_COMPETITIONS, should_apply_team_kind
 from app.services.ranking_catalog import sync_fifa_catalogs
 
 logger = logging.getLogger(__name__)
@@ -56,9 +56,11 @@ def upsert_teams_for_competitions(
 
     for entry in AVAILABLE_COMPETITIONS:
         code = entry["code"]
+        kind = entry["team_kind"]
         summary: dict[str, Any] = {
             "code": code,
             "label": entry["label"],
+            "team_kind": kind,
             "requested_season_year": season_year,
             "season_year": season_year,
             "ok": False,
@@ -115,6 +117,7 @@ def upsert_teams_for_competitions(
                             short_name=pt.short_name,
                             tla=pt.tla,
                             crest_url=pt.crest_url,
+                            team_kind=kind,
                         )
                     )
                     created_here += 1
@@ -131,6 +134,9 @@ def upsert_teams_for_competitions(
                     changed = True
                 if team.crest_url != pt.crest_url:
                     team.crest_url = pt.crest_url
+                    changed = True
+                if should_apply_team_kind(team.team_kind, kind):
+                    team.team_kind = kind
                     changed = True
                 if changed:
                     updated_here += 1

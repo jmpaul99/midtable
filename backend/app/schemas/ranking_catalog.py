@@ -45,11 +45,14 @@ class RankingCatalogOverrideResponse(IdSchema):
 
 
 class RankingCatalogUnmatchedRow(BaseModel):
-    rank: int
+    """National competition team missing a FIFA ranking match."""
+
+    external_team_id: str
     team_name: str
-    country_code: str | None = None
-    suggested_external_team_id: str | None = None
+    tla: str | None = None
+    suggested_rank: int | None = None
     suggested_team_name: str | None = None
+    suggested_country_code: str | None = None
     score: float = 0.0
 
 

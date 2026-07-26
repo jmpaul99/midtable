@@ -21,6 +21,7 @@ from app.models import (
     TeamPool,
 )
 from app.providers.base import FootballProvider
+from app.services.competitions import should_apply_team_kind, team_kind_for_competition
 from app.services.errors import (
     ConflictError,
     DomainError,
@@ -161,6 +162,7 @@ def bootstrap_season(
 
         if pool.competition_code and pool.season_year:
             teams, _ = provider.list_teams(pool.competition_code, int(pool.season_year))
+            kind = team_kind_for_competition(pool.competition_code)
             for pt in teams:
                 team = db.scalars(
                     select(Team).where(
@@ -176,9 +178,12 @@ def bootstrap_season(
                         short_name=pt.short_name,
                         tla=pt.tla,
                         crest_url=pt.crest_url,
+                        team_kind=kind,
                     )
                     db.add(team)
                     db.flush()
+                elif kind is not None and should_apply_team_kind(team.team_kind, kind):
+                    team.team_kind = kind
                 db.add(PoolTeam(pool_id=pool.id, team_id=team.id))
 
     for index, bonus in enumerate(template.bonus_types or []):
@@ -311,6 +316,7 @@ def bootstrap_teams_for_league(
             )
 
         teams, _ = provider.list_teams(pool.competition_code, int(pool.season_year))
+        kind = team_kind_for_competition(pool.competition_code)
         pool_linked = 0
         for pt in teams:
             team = db.scalars(
@@ -327,10 +333,13 @@ def bootstrap_teams_for_league(
                     short_name=pt.short_name,
                     tla=pt.tla,
                     crest_url=pt.crest_url,
+                    team_kind=kind,
                 )
                 db.add(team)
                 db.flush()
                 created_teams += 1
+            elif kind is not None and should_apply_team_kind(team.team_kind, kind):
+                team.team_kind = kind
             existing_link = db.scalars(
                 select(PoolTeam).where(
                     PoolTeam.pool_id == pool.id,
