@@ -15,3 +15,38 @@ services:
     environment:
       # Reliable file watching on Docker Desktop (Windows/macOS)
       WATCHFILES_FORCE_POLLING: "true"
+
+  # Hot-reload Next.js (binds host source; node_modules kept in a named volume)
+  midtable-frontend:
+    image: midtable-frontend-dev
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile.dev
+    volumes:
+      - ./frontend:/repo/frontend
+      - ./brand:/repo/brand
+      - midtable_frontend_node_modules:/repo/frontend/node_modules
+    # Same file as `npm run dev` — do not inject root .env NEXT_PUBLIC_* here;
+    # process env overrides .env.local and a mismatched key causes Supabase 401s.
+    env_file:
+      - frontend/.env.local
+    environment:
+      NEXT_PUBLIC_SITE_URL: ${NEXT_PUBLIC_SITE_URL:-http://localhost:3000}
+      # Reliable file watching on Docker Desktop (Windows/macOS)
+      WATCHPACK_POLLING: "true"
+      CHOKIDAR_USEPOLLING: "true"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+
+volumes:
+  midtable_frontend_node_modules:

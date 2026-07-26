@@ -131,21 +131,21 @@ export function LeagueShell({
         <Loading label="Opening league" />
       ) : error && !league ? (
         <ErrorState error={error} retry={reload} />
-      ) : league && value ? (
+      ) : value ? (
         <LeagueContext.Provider value={value}>
           <Stack gap="lg" className="animate-in pb-[calc(5.5rem+env(safe-area-inset-bottom))] md:pb-0">
             {error && <ErrorState error={error} retry={reload} />}
             <header className="min-w-0">
               <Row className="gap-2">
-                <Eyebrow className="mb-0">{league.season_label}</Eyebrow>
-                <Status value={league.status} />
+                <Eyebrow className="mb-0">{value.league.season_label}</Eyebrow>
+                <Status value={value.league.status} />
               </Row>
-              <h1 className="mt-1 truncate">{league.name}</h1>
+              <h1 className="mt-1 truncate">{value.league.name}</h1>
             </header>
             <LeagueNav
-              leagueId={league.id}
-              role={league.role}
-              status={league.status}
+              leagueId={value.league.id}
+              role={value.league.role}
+              status={value.league.status}
               onTheClock={onTheClock}
             />
             <div className="animate-in">{children}</div>

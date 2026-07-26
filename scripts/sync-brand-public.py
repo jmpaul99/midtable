@@ -1,4 +1,7 @@
-"""Copy brand/logos/product/{svg,png,icons} → frontend/public/brand for Next.js."""
+"""Copy brand/logos/product/{svg,png,icons} → frontend/public/brand for Next.js.
+
+Prefer frontend/scripts/sync-brand-public.mjs (used by npm run sync-brand).
+"""
 
 from __future__ import annotations
 

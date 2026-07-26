@@ -1,0 +1,14 @@
+# syntax=docker/dockerfile:1
+# Local hot-reload image for Compose (compose.override.yaml). Source is bind-mounted.
+# Build from repo root: docker build -f frontend/Dockerfile.dev -t midtable-frontend-dev .
+
+FROM node:26.5.0-alpine
+
+WORKDIR /repo/frontend
+
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci
+
+EXPOSE 3000
+
+CMD ["npm", "run", "dev", "--", "-H", "0.0.0.0", "-p", "3000"]

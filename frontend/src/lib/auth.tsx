@@ -10,7 +10,7 @@ import {
   type ReactNode,
 } from "react";
 import { usePathname, useRouter } from "next/navigation";
-import type { Session, User } from "@supabase/supabase-js";
+import type { AuthChangeEvent, Session, User } from "@supabase/supabase-js";
 import { api } from "./api";
 import type { Me } from "./types";
 import { supabase } from "./supabase";
@@ -49,7 +49,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     let mounted = true;
     supabase()
       .auth.getSession()
-      .then(({ data }) => {
+      .then(({ data }: { data: { session: Session | null } }) => {
         if (mounted) {
           setSession(data.session);
           setLoading(false);
@@ -59,10 +59,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (mounted) setLoading(false);
       });
 
-    const { data } = supabase().auth.onAuthStateChange((_event, next) => {
-      setSession(next);
-      setLoading(false);
-    });
+    const { data } = supabase().auth.onAuthStateChange(
+      (_event: AuthChangeEvent, next: Session | null) => {
+        setSession(next);
+        setLoading(false);
+      },
+    );
 
     return () => {
       mounted = false;

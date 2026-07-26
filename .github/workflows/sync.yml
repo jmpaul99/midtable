@@ -1,5 +1,6 @@
-# Example external cron — enable when the API is hosted.
-# Replace API_URL secret and schedule as needed.
+# External cron against the hosted API (Cloud Run).
+# Secrets: API_URL = API origin only (e.g. https://midtable-api-….run.app);
+# the path /internal/sync-and-score is appended below. CRON_SECRET must match the API.
 name: Sync and score
 
 on:

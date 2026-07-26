@@ -38,7 +38,7 @@ export function DraftBoard({
   const managerName = (id: string) =>
     managerLabel(league.members.find((m) => m.id === id), "Unknown manager");
 
-  const ManagerName = ({ id }: { id: string }) => (
+  const renderManagerName = (id: string) => (
     <ManagerLink leagueId={league.id} managerId={id}>
       {managerName(id)}
     </ManagerLink>
@@ -318,7 +318,7 @@ export function DraftBoard({
                       </form>
                     ) : (
                       <StatusBanner>
-                        Waiting for {onClock ? <ManagerName id={onClock} /> : "the next manager"} to pick.
+                        Waiting for {onClock ? renderManagerName(onClock) : "the next manager"} to pick.
                       </StatusBanner>
                     ))}
                 </Stack>
@@ -337,7 +337,7 @@ export function DraftBoard({
                 {state.status !== "complete" && state.status !== "completed" && (
                   <StatusBanner>
                     <strong>On the clock: </strong>
-                    {onClock ? <ManagerName id={onClock} /> : "Not started"}
+                    {onClock ? renderManagerName(onClock) : "Not started"}
                   </StatusBanner>
                 )}
                 {!state.picks.length ? (
@@ -371,11 +371,9 @@ export function DraftBoard({
                               )}
                             </strong>
                             <Muted className="truncate">
-                              {p.member_id ? (
-                                <ManagerName id={String(p.member_id)} />
-                              ) : (
-                                "Unknown manager"
-                              )}
+                              {p.member_id
+                                ? renderManagerName(String(p.member_id))
+                                : "Unknown manager"}
                             </Muted>
                           </div>
                           <span className="rounded-full border border-line bg-surface px-2.5 py-1 text-xs font-bold">

@@ -1,0 +1,83 @@
+name: Deploy backend to Cloud Run
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "backend/**"
+      - ".github/workflows/deploy-backend.yml"
+  workflow_dispatch:
+
+env:
+  # Set repository variable GCP_PROJECT_ID.
+  PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+  REGION: us-central1
+  SERVICE: midtable-api
+  REPOSITORY: midtable
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+          project_id: ${{ env.PROJECT_ID }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
+
+      - name: Build and push image
+        env:
+          IMAGE: ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.SERVICE }}:${{ github.sha }}
+        run: |
+          docker build -t "$IMAGE" ./backend
+          docker push "$IMAGE"
+
+      - name: Deploy to Cloud Run
+        id: deploy
+        uses: google-github-actions/deploy-cloudrun@v2
+        with:
+          service: ${{ env.SERVICE }}
+          region: ${{ env.REGION }}
+          project_id: ${{ env.PROJECT_ID }}
+          image: ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.SERVICE }}:${{ github.sha }}
+          flags: >-
+            --allow-unauthenticated
+            --port=8000
+            --memory=512Mi
+            --cpu=1
+            --min-instances=0
+            --max-instances=10
+          env_vars: |-
+            APP_ENV=production
+            LOG_LEVEL=INFO
+            API_HOST=0.0.0.0
+            API_PORT=8000
+            SUPABASE_JWT_AUDIENCE=authenticated
+            FOOTBALL_DATA_BASE_URL=https://api.football-data.org/v4
+            DATABASE_URL=${{ secrets.DATABASE_URL }}
+            SUPABASE_URL=${{ secrets.SUPABASE_URL }}
+            FOOTBALL_DATA_API_TOKEN=${{ secrets.FOOTBALL_DATA_API_TOKEN }}
+            CRON_SECRET=${{ secrets.CRON_SECRET }}
+            CORS_ORIGINS=${{ secrets.PUBLIC_APP_URL }}
+            PUBLIC_APP_URL=${{ secrets.PUBLIC_APP_URL }}
+            MAILJET_API_KEY_PUBLIC=${{ secrets.MAILJET_API_KEY_PUBLIC }}
+            MAILJET_API_KEY_PRIVATE=${{ secrets.MAILJET_API_KEY_PRIVATE }}
+            MAILJET_FROM_EMAIL=${{ secrets.MAILJET_FROM_EMAIL }}
+            MAILJET_FROM_NAME=Midtable
+          env_vars_update_strategy: overwrite
+
+      - name: Show service URL
+        run: echo "Deployed to ${{ steps.deploy.outputs.url }}"

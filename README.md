@@ -7,11 +7,11 @@ Platform for running multi-pool football draft leagues: create a league from a c
 | Layer | Tech |
 | --- | --- |
 | API | FastAPI, SQLAlchemy 2, Pydantic Settings |
-| App | Next.js 15, React 19, Tailwind CSS 4 |
+| App | Next.js 16, React 19, Tailwind CSS 4 |
 | Auth / DB | Supabase Auth + Postgres |
 | Fixtures | [football-data.org](https://www.football-data.org/) API |
 
-Python **3.12+**, Node **20+**.
+Python **3.14+**, Node **26.5.0+**.
 
 ## What’s in the box
 
@@ -29,16 +29,16 @@ Interactive API docs: `http://localhost:8000/docs`
 
 ```
 backend/          FastAPI app (`app/`), tests, seed script, Dockerfile
-frontend/         Next.js app
+frontend/         Next.js app (+ Dockerfile for Cloud Run)
 supabase/         Postgres migrations (`migrations/001`–`008`)
-compose.yaml      Backend container (local override adds --reload)
+compose.yaml      API + frontend containers (local; override adds API --reload)
 .env.example      Shared backend + frontend env template
 ```
 
 ## Prerequisites
 
-- Python 3.12+ (or Docker for the API)
-- Node 20+
+- Python 3.14+ (or Docker for the API)
+- Node 26.5.0+
 - [Docker](https://docs.docker.com/get-docker/) (optional; for running the API in a container)
 - [Supabase CLI](https://supabase.com/docs/guides/cli) (local) **or** a hosted Supabase project
 - A football-data.org API token (for bootstrap/sync)
@@ -78,14 +78,28 @@ Local Supabase defaults match `.env.example` (`54321` API, `54322` DB).
 
 ### 3. Backend
 
-**Option A — Docker (recommended for day-to-day API work)**
+**Option A — Docker Compose (API + frontend, hot reload)**
 
-Compose loads root `.env` into the container and merges `compose.override.yaml` (bind-mount + `uvicorn --reload`). Production hosts should use the image `CMD` (no reload).
+Compose builds `midtable-api` and `midtable-frontend`, loads root `.env`, and merges `compose.override.yaml`:
 
-When the API runs in Docker and Supabase stays on the host, point backend URLs at `host.docker.internal` in `.env` (see comments in `.env.example`). Keep `NEXT_PUBLIC_*` on `127.0.0.1` / `localhost` — the browser talks to the host, not the container network.
+- API: bind-mount + `uvicorn --reload`
+- Frontend: `frontend/Dockerfile.dev` + bind-mounts + `next dev` (polling enabled for Docker Desktop)
+
+Production still deploys frontend via Cloud Run, not Compose. For a production-like frontend image locally, run without the override: `docker compose -f compose.yaml up --build`.
+
+When the API runs in Docker and Supabase stays on the host, point backend URLs at `host.docker.internal` in `.env` (see comments in `.env.example`). Keep frontend `NEXT_PUBLIC_*` on `127.0.0.1` / `localhost` in `frontend/.env.local` — Compose hot-reload loads that file (same as `npm run dev`). Root `.env` `NEXT_PUBLIC_*` are only used when building the production frontend image (`compose.yaml` without override / Cloud Run).
 
 ```bash
 docker compose up --build
+```
+
+- API: `http://localhost:8000`
+- App: `http://localhost:3000`
+
+API only:
+
+```bash
+docker compose up --build midtable-api
 ```
 
 Optional seed inside the container:
@@ -94,7 +108,7 @@ Optional seed inside the container:
 docker compose exec midtable-api python -m app.scripts.seed_pl_template
 ```
 
-Dependency changes (`backend/pyproject.toml`) need `docker compose up --build` again.
+Backend `pyproject.toml` or frontend `package-lock.json` changes need `docker compose up --build` again (frontend `node_modules` live in a named volume).
 
 **Option B — local venv**
 
@@ -114,7 +128,7 @@ cd backend
 python -m app.scripts.seed_pl_template
 ```
 
-### 4. Frontend
+### 4. Frontend (local Node, without Docker)
 
 ```bash
 cd frontend
@@ -123,6 +137,66 @@ npm run dev
 ```
 
 App: `http://localhost:3000`
+
+### Production deploy (Cloud Run)
+
+Frontend and API both deploy to **Google Cloud Run** via GitHub Actions (same GCP project and Artifact Registry Docker repo `midtable` in `us-central1`).
+
+Workflows: [`.github/workflows/deploy-backend.yml`](.github/workflows/deploy-backend.yml), [`.github/workflows/deploy-frontend.yml`](.github/workflows/deploy-frontend.yml), [`.github/workflows/sync.yml`](.github/workflows/sync.yml).
+
+#### What to set in GitHub
+
+Settings → Secrets and variables → Actions.
+
+| Name | Type | Value |
+| --- | --- | --- |
+| `GCP_PROJECT_ID` | Variable | GCP project id |
+| `GCP_SA_KEY` | Secret | Deploy service-account JSON |
+| `DATABASE_URL` | Secret | Hosted Supabase Postgres URL |
+| `SUPABASE_URL` | Secret | Hosted Supabase project URL (`https://….supabase.co`) |
+| `FOOTBALL_DATA_API_TOKEN` | Secret | football-data.org API token |
+| `CRON_SECRET` | Secret | Long random string |
+| `PUBLIC_APP_URL` | Secret | Frontend origin (e.g. `https://….run.app`) |
+| `MAILJET_API_KEY_PUBLIC` | Secret | Mailjet public key |
+| `MAILJET_API_KEY_PRIVATE` | Secret | Mailjet private key |
+| `MAILJET_FROM_EMAIL` | Secret | Verified sender email |
+| `API_URL` | Secret | API origin (e.g. `https://….run.app`, no path) |
+| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Secret | Supabase publishable key |
+
+**1 variable + 11 secrets.** Shared mappings (do not create these as separate GitHub secrets):
+
+- `API_URL` → frontend `NEXT_PUBLIC_API_URL` + cron base URL
+- `PUBLIC_APP_URL` → backend `PUBLIC_APP_URL` + `CORS_ORIGINS` + frontend `NEXT_PUBLIC_SITE_URL`
+- `SUPABASE_URL` → backend + frontend `NEXT_PUBLIC_SUPABASE_URL`
+- `CRON_SECRET` → backend + cron
+
+Use **hosted** Supabase URLs — not `127.0.0.1` or `host.docker.internal`. Backend workflow sets `APP_ENV=production` and `MAILJET_FROM_NAME=Midtable`.
+
+#### Before first deploy
+
+1. Enable Cloud Run + Artifact Registry; create Artifact Registry Docker repo `midtable` in `us-central1`.
+2. Deploy SA JSON → secret `GCP_SA_KEY`; set variable `GCP_PROJECT_ID`.
+3. Apply `supabase/migrations/` to the hosted project.
+4. Set all secrets that do not need Cloud Run URLs yet (`DATABASE_URL`, `SUPABASE_URL`, Mailjet, `FOOTBALL_DATA_API_TOKEN`, `CRON_SECRET`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`).
+5. Temporary `PUBLIC_APP_URL` (e.g. `https://example.com`) → deploy **backend** → copy API origin → set `API_URL`.
+6. Deploy **frontend** → copy frontend origin → set `PUBLIC_APP_URL` to that origin → redeploy backend and frontend.
+7. Supabase Auth redirects: `{frontend-origin}`, `{frontend-origin}/auth/callback`.
+8. Confirm cron secrets (`API_URL` + `CRON_SECRET`); run Sync and score via `workflow_dispatch`.
+
+Local smoke tests:
+
+```bash
+docker build -t midtable-api ./backend
+docker run --rm -p 8000:8000 --env-file .env midtable-api
+
+docker build -f frontend/Dockerfile \
+  --build-arg NEXT_PUBLIC_API_URL=http://localhost:8000 \
+  --build-arg NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:54321 \
+  --build-arg NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=test-publishable-key \
+  --build-arg NEXT_PUBLIC_SITE_URL=http://localhost:3000 \
+  -t midtable-frontend .
+docker run --rm -p 3000:3000 midtable-frontend
+```
 
 ## Auth model
 
@@ -158,4 +232,4 @@ npx tsc --noEmit
 npm run build
 ```
 
-GitHub Actions (`.github/workflows/ci.yml`) runs backend pytest, a frontend typecheck + production build, and a Docker image build for the API on push/PR.
+GitHub Actions (`.github/workflows/ci.yml`) runs backend pytest, a frontend typecheck + production build, and Docker image builds for the API and frontend on push/PR. Production deploys: `.github/workflows/deploy-backend.yml` and `.github/workflows/deploy-frontend.yml` (Cloud Run).
