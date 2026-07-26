@@ -1,4 +1,3 @@
-# syntax=docker/dockerfile:1
 # Build from repo root:
 #   docker build -f frontend/Dockerfile \
 #     --build-arg NEXT_PUBLIC_API_URL=... \

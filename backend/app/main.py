@@ -40,6 +40,10 @@ app = FastAPI(
 origins = settings.cors_origin_list
 if "*" in origins:
     raise RuntimeError("CORS_ORIGINS must not include '*' with allow_credentials=True")
+# Last added runs outermost: CORS → access log → auth gate → app.
+# Logging must wrap the auth gate so 401 short-circuits still get access logs.
+app.add_middleware(AuthGateMiddleware)
+app.add_middleware(RequestLoggingMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
@@ -47,8 +51,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-app.add_middleware(RequestLoggingMiddleware)
-app.add_middleware(AuthGateMiddleware)
 
 app.include_router(build_api_router())
 

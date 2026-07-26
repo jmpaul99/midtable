@@ -1,4 +1,3 @@
-# syntax=docker/dockerfile:1
 # Local hot-reload image for Compose (compose.override.yaml). Source is bind-mounted.
 # Build from repo root: docker build -f frontend/Dockerfile.dev -t midtable-frontend-dev .
 

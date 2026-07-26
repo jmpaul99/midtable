@@ -81,8 +81,13 @@ def test_health_access_log_is_debug(caplog: pytest.LogCaptureFixture):
 def test_root_access_log_is_info(caplog: pytest.LogCaptureFixture):
     with caplog.at_level(logging.INFO, logger="app.access"):
         client = TestClient(app)
+        # Unauthenticated `/` is 401 from the auth gate; access log must still fire.
         client.get("/")
-    access_records = [r for r in caplog.records if r.name == "app.access" and "path=/" in r.getMessage()]
+    access_records = [
+        r
+        for r in caplog.records
+        if r.name == "app.access" and "path=/ status=" in r.getMessage()
+    ]
     assert access_records
     assert any(r.levelno == logging.INFO for r in access_records)
 

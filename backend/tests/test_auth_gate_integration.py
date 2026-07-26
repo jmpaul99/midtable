@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from fastapi.testclient import TestClient
 
 from app.config import Settings
+from app.db import get_db
 from app.main import app
 
 
@@ -35,8 +36,19 @@ def test_unauthenticated_league_list_blocked_when_no_bypass():
 
 def test_join_link_preview_public():
     settings = Settings(auth_bypass_email="")
-    with patch("app.middleware.get_settings", return_value=settings):
-        client = TestClient(app)
-        # 404 from handler is fine — gate must not return 401
-        response = client.get("/join-links/preview", params={"token": "nope"})
-    assert response.status_code != 401
+    mock_db = MagicMock()
+    mock_db.scalars.return_value.first.return_value = None
+
+    def _override_db():
+        yield mock_db
+
+    app.dependency_overrides[get_db] = _override_db
+    try:
+        with patch("app.middleware.get_settings", return_value=settings):
+            client = TestClient(app)
+            # 404 from handler is fine — gate must not return 401
+            response = client.get("/join-links/preview", params={"token": "nope"})
+        assert response.status_code != 401
+        assert response.status_code == 404
+    finally:
+        app.dependency_overrides.pop(get_db, None)
