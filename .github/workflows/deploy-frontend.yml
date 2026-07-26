@@ -3,7 +3,7 @@ name: Deploy frontend to Cloud Run
 on:
   push:
     branches:
-      - main
+      - master
     paths:
       - "frontend/**"
       - "brand/**"
