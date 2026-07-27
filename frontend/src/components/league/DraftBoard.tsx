@@ -577,11 +577,13 @@ export function DraftBoard({
           <>
             {phase === "pre" && (
               <Stack gap="md">
-                <DraftSettingsSummary
-                  league={league}
-                  scheduledAt={scheduledAt}
-                  pickTimerSeconds={pickTimerSeconds}
-                />
+                {!commissioner && (
+                  <DraftSettingsSummary
+                    league={league}
+                    scheduledAt={scheduledAt}
+                    pickTimerSeconds={pickTimerSeconds}
+                  />
+                )}
                 {renderPreControls()}
                 {state.picks.length > 0 &&
                   renderPickHistory({ emptyTitle: "Draft hasn’t started" })}
