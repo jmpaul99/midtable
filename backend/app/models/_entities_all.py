@@ -242,12 +242,19 @@ class DraftPick(Base):
 
 class Match(Base):
     __tablename__ = "matches"
-    __table_args__ = (UniqueConstraint("league_id", "provider", "external_id"),)
+    __table_args__ = (
+        UniqueConstraint(
+            "provider",
+            "competition_code",
+            "season_year",
+            "external_id",
+        ),
+    )
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     public_id: Mapped[UUID] = _public_id_column()
-    league_id: Mapped[int] = mapped_column(ForeignKey("leagues.id", ondelete="CASCADE"))
-    pool_id: Mapped[int] = mapped_column(ForeignKey("team_pools.id", ondelete="CASCADE"))
     provider: Mapped[str] = mapped_column(Text, default="football-data.org")
+    competition_code: Mapped[str] = mapped_column(Text)
+    season_year: Mapped[int] = mapped_column(Integer)
     external_id: Mapped[str] = mapped_column(Text)
     home_team_id: Mapped[int] = mapped_column(ForeignKey("teams.id"))
     away_team_id: Mapped[int] = mapped_column(ForeignKey("teams.id"))
@@ -265,10 +272,19 @@ class Match(Base):
 
 class StandingsSnapshot(Base):
     __tablename__ = "standings_snapshots"
-    __table_args__ = (UniqueConstraint("pool_id", "kickoff_at"),)
+    __table_args__ = (
+        UniqueConstraint(
+            "provider",
+            "competition_code",
+            "season_year",
+            "kickoff_at",
+        ),
+    )
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     public_id: Mapped[UUID] = _public_id_column()
-    pool_id: Mapped[int] = mapped_column(ForeignKey("team_pools.id", ondelete="CASCADE"))
+    provider: Mapped[str] = mapped_column(Text, default="football-data.org")
+    competition_code: Mapped[str] = mapped_column(Text)
+    season_year: Mapped[int] = mapped_column(Integer)
     kickoff_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     stale: Mapped[bool] = mapped_column(Boolean, default=False)
     computed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -307,6 +323,9 @@ class RankingList(Base):
     source: Mapped[str] = mapped_column(Text, default="manual")
     as_of: Mapped[date | None] = mapped_column(Date)
     locked: Mapped[bool] = mapped_column(Boolean, default=False)
+    freeze_id: Mapped[int | None] = mapped_column(
+        ForeignKey("ranking_freezes.id", ondelete="SET NULL")
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
@@ -374,6 +393,33 @@ class RankingCatalogTeamOverride(Base):
     catalog: Mapped["RankingCatalog"] = relationship(back_populates="overrides")
 
 
+class RankingFreeze(Base):
+    __tablename__ = "ranking_freezes"
+    __table_args__ = (UniqueConstraint("catalog_id", "as_of"),)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    public_id: Mapped[UUID] = _public_id_column()
+    catalog_id: Mapped[int] = mapped_column(ForeignKey("ranking_catalogs.id", ondelete="CASCADE"))
+    as_of: Mapped[date] = mapped_column(Date)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    entries: Mapped[list["RankingFreezeEntry"]] = relationship(
+        back_populates="freeze",
+        cascade="all, delete-orphan",
+    )
+
+
+class RankingFreezeEntry(Base):
+    __tablename__ = "ranking_freeze_entries"
+    __table_args__ = (UniqueConstraint("freeze_id", "team_id"),)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    public_id: Mapped[UUID] = _public_id_column()
+    freeze_id: Mapped[int] = mapped_column(ForeignKey("ranking_freezes.id", ondelete="CASCADE"))
+    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id", ondelete="CASCADE"))
+    rank: Mapped[int] = mapped_column(Integer)
+
+    freeze: Mapped["RankingFreeze"] = relationship(back_populates="entries")
+
+
 class BonusType(Base):
     __tablename__ = "bonus_types"
     __table_args__ = (UniqueConstraint("league_id", "key"),)
@@ -415,7 +461,9 @@ class ManualBonus(Base):
 
 class ScoringEvent(Base):
     __tablename__ = "scoring_events"
-    __table_args__ = (UniqueConstraint("match_id", "team_id", "event_type"),)
+    __table_args__ = (
+        UniqueConstraint("league_id", "match_id", "team_id", "event_type"),
+    )
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     public_id: Mapped[UUID] = _public_id_column()
     league_id: Mapped[int] = mapped_column(ForeignKey("leagues.id", ondelete="CASCADE"))
@@ -443,11 +491,14 @@ class DraftIdempotencyKey(Base):
 
 class SyncStatus(Base):
     __tablename__ = "sync_status"
-    __table_args__ = (UniqueConstraint("league_id", "provider"),)
+    __table_args__ = (
+        UniqueConstraint("provider", "competition_code", "season_year"),
+    )
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     public_id: Mapped[UUID] = _public_id_column()
-    league_id: Mapped[int] = mapped_column(ForeignKey("leagues.id", ondelete="CASCADE"))
     provider: Mapped[str] = mapped_column(Text, default="football-data.org")
+    competition_code: Mapped[str] = mapped_column(Text)
+    season_year: Mapped[int] = mapped_column(Integer)
     last_sync_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     in_progress: Mapped[bool] = mapped_column(Boolean, default=False)
     in_progress_since: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

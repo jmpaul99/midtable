@@ -323,6 +323,11 @@ def update_settings(
             status_code=409,
             detail="Draft style and preassign mode can only be changed before the draft opens.",
         )
+    if max_members is not None and league.status != "pre_draft":
+        raise HTTPException(
+            status_code=409,
+            detail="Number of managers can only be changed before the draft opens.",
+        )
     clear_preassigns = (
         preassign_mode is not None and str(preassign_mode).lower() == "none"
     )
@@ -444,6 +449,47 @@ def update_settings(
                 pool.label = item["label"]
             if "scores_match_results" in item and item["scores_match_results"] is not None:
                 pool.scores_match_results = bool(item["scores_match_results"])
+
+            structural_locked = league.status != "pre_draft"
+            if structural_locked:
+                if (
+                    "provider" in item
+                    and item["provider"] is not None
+                    and item["provider"] != pool.provider
+                ):
+                    raise HTTPException(
+                        status_code=409,
+                        detail="Competition provider can only be changed before the draft opens.",
+                    )
+                if (
+                    "competition_code" in item
+                    and item["competition_code"] is not None
+                    and (item["competition_code"] or "").upper()
+                    != (pool.competition_code or "").upper()
+                ):
+                    raise HTTPException(
+                        status_code=409,
+                        detail="Competition can only be changed before the draft opens.",
+                    )
+                if (
+                    "season_year" in item
+                    and item["season_year"] is not None
+                    and int(item["season_year"]) != int(pool.season_year or 0)
+                ):
+                    raise HTTPException(
+                        status_code=409,
+                        detail="Season year can only be changed before the draft opens.",
+                    )
+                if (
+                    "slot_count" in item
+                    and item["slot_count"] is not None
+                    and int(item["slot_count"]) != int(pool.slot_count)
+                ):
+                    raise HTTPException(
+                        status_code=409,
+                        detail="Roster slots can only be changed before the draft opens.",
+                    )
+
             if "provider" in item and item["provider"] is not None:
                 pool.provider = item["provider"]
             if "competition_code" in item and item["competition_code"] is not None:

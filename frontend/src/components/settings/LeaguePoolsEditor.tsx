@@ -133,9 +133,9 @@ export function LeaguePoolsEditor({
           : "Real-world competitions managers draft from (e.g. Premier League + Championship). The arrows set the pre-draft order shown on rosters (first in the list appears first)."
       }
     >
-      {!structureEditable && showCapacity && (
+      {!structureEditable && (
         <p className="text-sm text-muted">
-          Competitions can only be added or removed before the draft opens.
+          Competition structure (add/remove, season, and slots) is locked after the draft opens.
         </p>
       )}
 
@@ -250,12 +250,13 @@ export function LeaguePoolsEditor({
                           min={1}
                           max={maxSlots}
                           value={p.slot_count}
+                          disabled={!structureEditable}
                           onChange={(e) =>
                             updateById(p.id, { slot_count: Number(e.target.value) })
                           }
                           className="min-h-10 rounded-lg px-2.5 py-2 text-sm"
                         />
-                        {showCapacity && (
+                        {showCapacity && structureEditable && (
                           <span
                             className={cn(
                               "text-[0.65rem] font-normal leading-snug",

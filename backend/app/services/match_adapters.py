@@ -6,10 +6,10 @@ from app.models import Match
 from app.services.scoring import MatchInput
 
 
-def match_to_input(match: Match) -> MatchInput:
+def match_to_input(match: Match, *, pool_id: int) -> MatchInput:
     return MatchInput(
         match_id=match.id,
-        pool_id=match.pool_id,
+        pool_id=pool_id,
         home_team_id=match.home_team_id,
         away_team_id=match.away_team_id,
         kickoff_at=match.kickoff_at,

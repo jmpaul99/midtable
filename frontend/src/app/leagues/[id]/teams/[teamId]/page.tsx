@@ -15,6 +15,7 @@ export default function LeagueTeamPage({
   return (
     <TeamPage
       leagueId={league.id}
+      leagueName={league.name}
       teamId={teamId}
       eventTypeLabels={upsetNameByKey(league.upset_rules)}
     />

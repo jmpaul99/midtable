@@ -5,7 +5,7 @@ from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import or_, select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session
 
 from app.db import get_db
@@ -28,6 +28,12 @@ from app.models import (
 from app.routers.league_mappers import effective_roster_club_order
 from app.services import analytics as analytics_service
 from app.services import match_stats as match_stats_service
+from app.services.match_queries import (
+    competition_keys_from_pools,
+    matches_for_league,
+    pool_for_match,
+    scoring_pools_for_league,
+)
 from app.services.members import member_label
 from app.schemas.leagues import (
     BonusAwardRow,
@@ -135,7 +141,7 @@ def list_pool_teams(
         select(TeamPool).where(TeamPool.public_id == pool_id, TeamPool.league_id == league.id)
     ).first()
     if pool is None:
-        raise HTTPException(status_code=404, detail="Pool not found")
+        raise HTTPException(status_code=404, detail="Competition not found")
     teams = db.scalars(
         select(Team)
         .join(PoolTeam, PoolTeam.team_id == Team.id)
@@ -237,15 +243,12 @@ def list_rosters(
     stage_points_by_team = match_stats_service.points_by_stage_by_team(events)
 
     matches = (
-        list(
-            db.scalars(
-                select(Match).where(
-                    Match.league_id == league.id,
-                    Match.status.in_(tuple(_FINISHED)),
-                    (Match.home_team_id.in_(team_ids) | Match.away_team_id.in_(team_ids)),
-                )
-            ).all()
-        )
+        [
+            m
+            for m in matches_for_league(db, league)
+            if m.status in _FINISHED
+            and (m.home_team_id in team_ids or m.away_team_id in team_ids)
+        ]
         if team_ids
         else []
     )
@@ -316,22 +319,27 @@ def match_log(
     db: Session = Depends(get_db),
 ) -> list[MatchLogRow]:
     league, _ = membership
-    matches = db.scalars(
-        select(Match).where(Match.league_id == league.id).order_by(Match.kickoff_at.desc())
-    ).all()
+    matches = matches_for_league(db, league)
+    matches.sort(key=lambda m: m.kickoff_at, reverse=True)
     team_ids = {m.home_team_id for m in matches} | {m.away_team_id for m in matches}
     teams = {
         t.id: t
         for t in db.scalars(select(Team).where(Team.id.in_(team_ids))).all()
     } if team_ids else {}
-    pools = {
-        p.id: p
-        for p in db.scalars(select(TeamPool).where(TeamPool.league_id == league.id)).all()
-    }
+    pool_by_match_id: dict[int, TeamPool] = {}
+    for m in matches:
+        pool = pool_for_match(db, league, m)
+        if pool:
+            pool_by_match_id[m.id] = pool
     match_ids = [m.id for m in matches]
     events = (
         list(
-            db.scalars(select(ScoringEvent).where(ScoringEvent.match_id.in_(match_ids))).all()
+            db.scalars(
+                select(ScoringEvent).where(
+                    ScoringEvent.league_id == league.id,
+                    ScoringEvent.match_id.in_(match_ids),
+                )
+            ).all()
         )
         if match_ids
         else []
@@ -352,12 +360,12 @@ def match_log(
             away_team_name=teams[m.away_team_id].name,
             home_goals=m.home_goals,
             away_goals=m.away_goals,
-            pool_id=pools[m.pool_id].public_id,
+            pool_id=pool_by_match_id[m.id].public_id,
             home_points=points_by_match_team.get((m.id, m.home_team_id)),
             away_points=points_by_match_team.get((m.id, m.away_team_id)),
         )
         for m in matches
-        if m.home_team_id in teams and m.away_team_id in teams and m.pool_id in pools
+        if m.home_team_id in teams and m.away_team_id in teams and m.id in pool_by_match_id
     ]
 
 
@@ -366,13 +374,12 @@ def _fixture_row(
     match: Match,
     team_id: int,
     teams: dict[int, Team],
-    pools: dict[int, TeamPool],
+    pool: TeamPool | None,
     points: float | None,
     opponent_table_position: int | None = None,
 ) -> TeamFixtureRow | None:
     home = teams.get(match.home_team_id)
     away = teams.get(match.away_team_id)
-    pool = pools.get(match.pool_id)
     if not home or not away or not pool:
         return None
     is_home = match.home_team_id == team_id
@@ -494,15 +501,12 @@ def member_detail(
         )
 
     finished = (
-        list(
-            db.scalars(
-                select(Match).where(
-                    Match.league_id == league.id,
-                    Match.status.in_(tuple(_FINISHED)),
-                    (Match.home_team_id.in_(team_ids) | Match.away_team_id.in_(team_ids)),
-                )
-            ).all()
-        )
+        [
+            m
+            for m in matches_for_league(db, league)
+            if m.status in _FINISHED
+            and (m.home_team_id in team_ids or m.away_team_id in team_ids)
+        ]
         if team_ids
         else []
     )
@@ -618,6 +622,7 @@ def team_detail(
         owner = {
             "member_id": str(member.public_id) if member else None,
             "display_name": member_label(member, profile) if member else None,
+            "team_name": (member.team_name.strip() if member and member.team_name else None),
             "acquired_via": entry.source,
         }
 
@@ -671,14 +676,12 @@ def team_detail(
         )
     total_points += bonus_points
 
-    matches = db.scalars(
-        select(Match)
-        .where(
-            Match.league_id == league.id,
-            (Match.home_team_id == team.id) | (Match.away_team_id == team.id),
-        )
-        .order_by(Match.kickoff_at.desc())
-    ).all()
+    matches = [
+        m
+        for m in matches_for_league(db, league)
+        if m.home_team_id == team.id or m.away_team_id == team.id
+    ]
+    matches.sort(key=lambda m: m.kickoff_at, reverse=True)
     matches_by_id = {m.id: m for m in matches}
     team_ids = {m.home_team_id for m in matches} | {m.away_team_id for m in matches} | {team.id}
     # Include opponents from scoring events even if somehow missing from match list
@@ -690,10 +693,11 @@ def team_detail(
     teams = {
         t.id: t for t in db.scalars(select(Team).where(Team.id.in_(team_ids))).all()
     } if team_ids else {}
-    pools = {
-        p.id: p
-        for p in db.scalars(select(TeamPool).where(TeamPool.league_id == league.id)).all()
-    }
+    pool_by_match_id: dict[int, TeamPool] = {}
+    for m in matches:
+        match_pool = pool_for_match(db, league, m)
+        if match_pool:
+            pool_by_match_id[m.id] = match_pool
 
     scoring_event_rows: list[ScoringEventMatchRow] = []
     for event in sorted(
@@ -756,7 +760,7 @@ def team_detail(
             match=match,
             team_id=team.id,
             teams=teams,
-            pools=pools,
+            pool=pool_by_match_id.get(match.id),
             points=points_by_match.get(match.id) if finished else None,
             opponent_table_position=opp_pos,
         )
@@ -840,7 +844,24 @@ def sync_status(
     db: Session = Depends(get_db),
 ) -> list[SyncStatusResponse]:
     league, _ = membership
-    rows = db.scalars(select(SyncStatus).where(SyncStatus.league_id == league.id)).all()
+    scoring_pools = scoring_pools_for_league(db, league)
+    keys = competition_keys_from_pools(scoring_pools)
+    if not keys:
+        return []
+    rows = db.scalars(
+        select(SyncStatus).where(
+            or_(
+                *[
+                    and_(
+                        SyncStatus.provider == provider,
+                        SyncStatus.competition_code == competition_code,
+                        SyncStatus.season_year == season_year,
+                    )
+                    for provider, competition_code, season_year in keys
+                ]
+            )
+        )
+    ).all()
     return [
         SyncStatusResponse(
             id=row.public_id,
@@ -863,20 +884,37 @@ def snapshot_audit(
     db: Session = Depends(get_db),
 ) -> list[SnapshotAuditRow]:
     league, _ = membership
-    pools = {
-        p.id: p
-        for p in db.scalars(select(TeamPool).where(TeamPool.league_id == league.id)).all()
-    }
-    if not pools:
+    scoring_pools = scoring_pools_for_league(db, league)
+    keys = competition_keys_from_pools(scoring_pools)
+    if not keys:
         return []
+    pool_by_key: dict[tuple[str, str, int], TeamPool] = {}
+    for pool in scoring_pools:
+        if pool.competition_code is None or pool.season_year is None:
+            continue
+        key = (pool.provider, pool.competition_code, pool.season_year)
+        pool_by_key.setdefault(key, pool)
     snaps = db.scalars(
         select(StandingsSnapshot)
-        .where(StandingsSnapshot.pool_id.in_(list(pools)))
+        .where(
+            or_(
+                *[
+                    and_(
+                        StandingsSnapshot.provider == provider,
+                        StandingsSnapshot.competition_code == competition_code,
+                        StandingsSnapshot.season_year == season_year,
+                    )
+                    for provider, competition_code, season_year in keys
+                ]
+            )
+        )
         .order_by(StandingsSnapshot.kickoff_at.desc())
     ).all()
     out: list[SnapshotAuditRow] = []
     for snap in snaps:
-        pool = pools[snap.pool_id]
+        pool = pool_by_key.get((snap.provider, snap.competition_code, snap.season_year))
+        if pool is None:
+            continue
         team_ids = [r.team_id for r in snap.rows]
         teams = {
             t.id: t for t in db.scalars(select(Team).where(Team.id.in_(team_ids))).all()

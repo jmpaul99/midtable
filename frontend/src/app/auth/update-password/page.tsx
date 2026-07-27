@@ -10,14 +10,16 @@ import { Button } from "@/components/ui/Button";
 import { LockIcon, SpinnerIcon } from "@/components/ui/icons";
 import { Card, Eyebrow, Muted, Stack } from "@/components/ui/Card";
 import { Input, Label } from "@/components/ui/Field";
+import { useToast } from "@/components/ui/ToastProvider";
 import { useAuth } from "@/lib/auth";
 
 export default function UpdatePasswordPage() {
   const router = useRouter();
   const { session, loading } = useAuth();
+  const { toast } = useToast();
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
-  const [message, setMessage] = useState("");
+  const [validation, setValidation] = useState("");
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -30,18 +32,23 @@ export default function UpdatePasswordPage() {
   async function submit(e: FormEvent) {
     e.preventDefault();
     if (password !== confirm) {
-      setMessage("Passwords do not match.");
+      setValidation("Passwords do not match.");
       return;
     }
     setBusy(true);
-    setMessage("");
+    setValidation("");
     try {
       const { error } = await supabase().auth.updateUser({ password });
       if (error) throw error;
       router.replace("/login?reset=ok");
       router.refresh();
     } catch (error) {
-      setMessage(errorMessage(error));
+      toast({
+        message: errorMessage(error),
+        tone: "error",
+        durationMs: 6000,
+        dismissible: true,
+      });
     } finally {
       setBusy(false);
     }
@@ -91,13 +98,7 @@ export default function UpdatePasswordPage() {
             </Button>
           </form>
 
-          {message && (
-            <StatusBanner
-              tone={/error|invalid|failed|missing|required|match/i.test(message) ? "error" : "info"}
-            >
-              {message}
-            </StatusBanner>
-          )}
+          {validation && <StatusBanner tone="error">{validation}</StatusBanner>}
         </Stack>
       </Card>
     </section>

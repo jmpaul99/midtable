@@ -18,7 +18,7 @@ export function PayoutsEditor({
 }: {
   value: PayoutRow[];
   onChange: (next: PayoutRow[]) => void;
-  /** Phase key → friendly name. Always includes Full season (`season`). */
+  /** Phase key → friendly name. Always includes Overall (`season`). */
   phaseOptions?: Array<{ value: string; label: string }>;
 }) {
   function update(index: number, patch: Partial<PayoutRow>) {
@@ -26,7 +26,7 @@ export function PayoutsEditor({
   }
 
   const phases = [
-    { value: "season", label: "Full season" },
+    { value: "season", label: "Overall" },
     ...(phaseOptions || []).filter((p) => p.value && p.value !== "season"),
   ];
   // Keep orphan phase keys selectable so existing payouts remain editable.

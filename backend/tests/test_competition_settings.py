@@ -100,6 +100,129 @@ def test_update_settings_rejects_draft_style_after_draft_starts():
     assert "before the draft" in exc.value.detail
 
 
+def test_update_settings_rejects_slot_count_after_draft_starts():
+    league = _league(status="drafting")
+    member = SimpleNamespace(id=1, public_id=uuid4())
+    pool_public_id = uuid4()
+    pool = SimpleNamespace(
+        id=10,
+        public_id=pool_public_id,
+        league_id=league.id,
+        key="premier_league",
+        label="Premier League",
+        competition_code="PL",
+        season_year=2026,
+        sort_order=1,
+        slot_count=5,
+        scores_match_results=True,
+        provider="football-data.org",
+    )
+    db = MagicMock()
+    call_n = {"n": 0}
+
+    def scalars_side_effect(stmt):
+        out = MagicMock()
+        call_n["n"] += 1
+        if call_n["n"] == 1:
+            out.all.return_value = [member]
+        elif call_n["n"] == 2:
+            out.all.return_value = [pool]
+        else:
+            out.first.return_value = pool
+        return out
+
+    db.scalars.side_effect = scalars_side_effect
+    payload = LeagueSettingsUpdate(
+        pools=[PoolSettingsPatch(id=pool_public_id, slot_count=6)]
+    )
+    with pytest.raises(HTTPException) as exc:
+        update_settings(payload=payload, membership=(league, member), db=db)
+    assert exc.value.status_code == 409
+    assert "slots" in exc.value.detail.lower()
+
+
+def test_update_settings_rejects_competition_change_after_draft_starts():
+    league = _league(status="drafting")
+    member = SimpleNamespace(id=1, public_id=uuid4())
+    pool_public_id = uuid4()
+    pool = SimpleNamespace(
+        id=10,
+        public_id=pool_public_id,
+        league_id=league.id,
+        key="premier_league",
+        label="Premier League",
+        competition_code="PL",
+        season_year=2026,
+        sort_order=1,
+        slot_count=5,
+        scores_match_results=True,
+        provider="football-data.org",
+    )
+    db = MagicMock()
+    call_n = {"n": 0}
+
+    def scalars_side_effect(stmt):
+        out = MagicMock()
+        call_n["n"] += 1
+        if call_n["n"] == 1:
+            out.all.return_value = [member]
+        elif call_n["n"] == 2:
+            out.all.return_value = [pool]
+        else:
+            out.first.return_value = pool
+        return out
+
+    db.scalars.side_effect = scalars_side_effect
+    payload = LeagueSettingsUpdate(
+        pools=[PoolSettingsPatch(id=pool_public_id, competition_code="ELC")]
+    )
+    with pytest.raises(HTTPException) as exc:
+        update_settings(payload=payload, membership=(league, member), db=db)
+    assert exc.value.status_code == 409
+    assert "competition" in exc.value.detail.lower()
+
+
+def test_update_settings_rejects_season_year_after_draft_starts():
+    league = _league(status="drafting")
+    member = SimpleNamespace(id=1, public_id=uuid4())
+    pool_public_id = uuid4()
+    pool = SimpleNamespace(
+        id=10,
+        public_id=pool_public_id,
+        league_id=league.id,
+        key="premier_league",
+        label="Premier League",
+        competition_code="PL",
+        season_year=2026,
+        sort_order=1,
+        slot_count=5,
+        scores_match_results=True,
+        provider="football-data.org",
+    )
+    db = MagicMock()
+    call_n = {"n": 0}
+
+    def scalars_side_effect(stmt):
+        out = MagicMock()
+        call_n["n"] += 1
+        if call_n["n"] == 1:
+            out.all.return_value = [member]
+        elif call_n["n"] == 2:
+            out.all.return_value = [pool]
+        else:
+            out.first.return_value = pool
+        return out
+
+    db.scalars.side_effect = scalars_side_effect
+    payload = LeagueSettingsUpdate(
+        pools=[PoolSettingsPatch(id=pool_public_id, season_year=2025)]
+    )
+    with pytest.raises(HTTPException) as exc:
+        update_settings(payload=payload, membership=(league, member), db=db)
+    assert exc.value.status_code == 409
+    assert "season year" in exc.value.detail.lower()
+
+
 def test_update_settings_allows_draft_style_in_pre_draft():
     league = _league(status="pre_draft")
     league.draft_style = "linear"
@@ -269,7 +392,7 @@ def test_readiness_pools_check_errors_without_competitions():
 
     db.scalars.side_effect = scalars_side_effect
 
-    result = evaluate_readiness(db, league)
+    result = evaluate_readiness(db, league, purpose="draft")
     pools_check = next(c for c in result.checks if c.key == "pools")
     assert pools_check.status == "error"
     assert "League settings" in (pools_check.detail or "")
@@ -297,20 +420,128 @@ def test_readiness_pools_check_ok_with_competition():
     def scalars_side_effect(stmt):
         out = MagicMock()
         call_n["n"] += 1
-        # First: members, second: pools, then per-pool teams
+        # 1: pools, 2: members, then per-pool teams
         if call_n["n"] == 1:
-            out.all.return_value = [member]
-        elif call_n["n"] == 2:
             out.all.return_value = [pool]
+        elif call_n["n"] == 2:
+            out.all.return_value = [member]
         else:
             out.all.return_value = [SimpleNamespace(id=1)]  # teams
         return out
 
     db.scalars.side_effect = scalars_side_effect
-    # max_members configured via league.config
-    result = evaluate_readiness(db, league)
+    result = evaluate_readiness(db, league, purpose="draft")
     pools_check = next(c for c in result.checks if c.key == "pools")
     assert pools_check.status == "ok"
+
+
+def test_draft_readiness_provider_missing_is_warning_only():
+    from app.services.readiness import evaluate_readiness
+
+    league = _league(status="pre_draft")
+    league.config = {"max_members": 2}
+    members = [
+        SimpleNamespace(id=1, draft_slot=1),
+        SimpleNamespace(id=2, draft_slot=2),
+    ]
+    pool = SimpleNamespace(
+        id=1,
+        key="premier_league",
+        label="Premier League",
+        slot_count=5,
+        scores_match_results=True,
+        competition_code=None,
+        season_year=None,
+    )
+    db = MagicMock()
+    call_n = {"n": 0}
+
+    def scalars_side_effect(_stmt):
+        out = MagicMock()
+        call_n["n"] += 1
+        if call_n["n"] == 1:
+            out.all.return_value = [pool]
+        elif call_n["n"] == 2:
+            out.all.return_value = members
+        else:
+            out.all.return_value = [SimpleNamespace(id=1)]
+        return out
+
+    db.scalars.side_effect = scalars_side_effect
+    result = evaluate_readiness(db, league, purpose="draft")
+    provider = next(c for c in result.checks if c.key.startswith("provider:"))
+    assert provider.status == "warning"
+    assert result.ready is True
+    assert "members" in {c.key for c in result.checks}
+
+
+def test_sync_readiness_ignores_members_errors_on_provider():
+    from app.services.readiness import evaluate_readiness
+
+    league = _league(status="pre_draft")
+    # Incomplete roster would fail draft readiness
+    league.config = {"max_members": 4}
+    pool = SimpleNamespace(
+        id=1,
+        key="premier_league",
+        label="Premier League",
+        slot_count=5,
+        scores_match_results=True,
+        competition_code=None,
+        season_year=2026,
+    )
+    db = MagicMock()
+    call_n = {"n": 0}
+
+    def scalars_side_effect(_stmt):
+        out = MagicMock()
+        call_n["n"] += 1
+        if call_n["n"] == 1:
+            out.all.return_value = [pool]
+        else:
+            out.all.return_value = []  # no pool teams
+        return out
+
+    db.scalars.side_effect = scalars_side_effect
+    result = evaluate_readiness(db, league, purpose="sync")
+    assert "members" not in {c.key for c in result.checks}
+    assert "draft_order" not in {c.key for c in result.checks}
+    provider = next(c for c in result.checks if c.key.startswith("provider:"))
+    assert provider.status == "error"
+    assert result.ready is False
+
+
+def test_sync_readiness_ok_without_full_roster():
+    from app.services.readiness import evaluate_readiness
+
+    league = _league(status="pre_draft")
+    league.config = {"max_members": 8}
+    pool = SimpleNamespace(
+        id=1,
+        key="premier_league",
+        label="Premier League",
+        slot_count=5,
+        scores_match_results=True,
+        competition_code="PL",
+        season_year=2026,
+    )
+    db = MagicMock()
+    call_n = {"n": 0}
+
+    def scalars_side_effect(_stmt):
+        out = MagicMock()
+        call_n["n"] += 1
+        if call_n["n"] == 1:
+            out.all.return_value = [pool]
+        else:
+            out.all.return_value = []  # empty clubs = warning only for sync
+        return out
+
+    db.scalars.side_effect = scalars_side_effect
+    result = evaluate_readiness(db, league, purpose="sync")
+    teams = next(c for c in result.checks if c.key.startswith("teams:"))
+    assert teams.status == "warning"
+    assert result.ready is True
 
 
 def test_sync_fails_without_competitions():
@@ -324,6 +555,53 @@ def test_sync_fails_without_competitions():
     assert result["ok"] is False
     assert result["status_code"] == 400
     assert "No competitions" in result["error"]
+
+
+def test_sync_league_fixtures_skips_ranking_ensure_before_pull(monkeypatch):
+    from app.services import sync as sync_mod
+
+    league = _league()
+    league.upset_rules = {}
+    pool = SimpleNamespace(
+        id=1,
+        key="pl",
+        scores_match_results=True,
+        provider="football-data.org",
+        competition_code="PL",
+        season_year=2026,
+    )
+    db = MagicMock()
+    scalars = MagicMock()
+    scalars.all.return_value = [pool]
+    db.scalars.return_value = scalars
+
+    ensure_calls = {"n": 0}
+
+    def track_ensure(*_a, **_k):
+        ensure_calls["n"] += 1
+
+    monkeypatch.setattr(sync_mod, "ensure_fixed_ranking_for_league", track_ensure)
+    monkeypatch.setattr(
+        sync_mod,
+        "sync_competition_fixtures",
+        lambda *_a, **_k: {
+            "ok": True,
+            "created": 0,
+            "updated": 0,
+            "skipped_missing_teams": 0,
+            "changed_matches": [],
+        },
+    )
+    monkeypatch.setattr(
+        sync_mod,
+        "score_changed_matches",
+        lambda *_a, **_k: {"scored": 0, "cascaded": 0, "skipped_missing_snapshot": 0},
+    )
+
+    result = sync_league_fixtures(db, league, provider=MagicMock())
+    assert result["ok"] is True
+    # ensure runs inside score_changed_matches (mocked), not before competition pull
+    assert ensure_calls["n"] == 0
 
 
 def test_readiness_check_model():

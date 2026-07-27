@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { use, useEffect, useState } from "react";
 import { RequireAuth } from "@/lib/auth";
@@ -9,6 +8,7 @@ import type { CompetitionTemplate } from "@/lib/types";
 import { CreateLeagueForm } from "@/components/CreateLeagueForm";
 import { ErrorState, Loading } from "@/components/ui/State";
 import { PageHeader, Stack } from "@/components/ui/Card";
+import { Breadcrumbs } from "@/components/ui/Breadcrumbs";
 
 export default function CreateLeagueSetupPage({
   params,
@@ -52,17 +52,19 @@ function SetupBody({ templateId }: { templateId: string }) {
   return (
     <Stack gap="lg" className="animate-in">
       <PageHeader
-        eyebrow="Step 2"
+        breadcrumbs={
+          <Breadcrumbs
+            items={[
+              { label: "Templates", href: "/leagues/new" },
+              {
+                label: template?.label || "Template",
+                href: `/leagues/new/templates/${templateId}`,
+              },
+            ]}
+          />
+        }
         title="League setup"
         description="Confirm season details and load clubs from the template’s competitions."
-        actions={
-          <Link
-            href="/leagues/new"
-            className="inline-flex min-h-11 items-center justify-center rounded-xl border border-line bg-surface px-4 py-2.5 text-sm font-bold text-ink hover:bg-surface-2"
-          >
-            ← Templates
-          </Link>
-        }
       />
       <CreateLeagueForm template={template} templateId={templateId} />
     </Stack>

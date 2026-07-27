@@ -8,11 +8,13 @@ import type { CompetitionTemplate, Json, TemplateWrite } from "@/lib/types";
 import { ErrorState, Loading, StatusBanner } from "@/components/ui/State";
 import { IconButton } from "@/components/ui/IconButton";
 import { Button } from "@/components/ui/Button";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { CopyIcon, PencilIcon, PlayIcon, SaveIcon, TrashIcon, XIcon } from "@/components/ui/icons";
 import { Stack } from "@/components/ui/Card";
 import { Checkbox, Input, Label } from "@/components/ui/Field";
 import { FieldHelp, LabelRow } from "@/components/ui/FieldHelp";
 import { ChoiceToggle } from "@/components/ui/ChoiceToggle";
+import { useToast } from "@/components/ui/ToastProvider";
 import { cn } from "@/lib/cn";
 import {
   normalizeRosterClubOrder,
@@ -535,6 +537,7 @@ export function TemplateEditor({
   initialEditing?: boolean;
 }) {
   const { isAdmin } = useAuth();
+  const { toast } = useToast();
   const isNew = !templateId || templateId === "new";
   const [form, setForm] = useState<FormState>(structuredClone(blank));
   const [snapshot, setSnapshot] = useState<FormState | null>(null);
@@ -544,16 +547,19 @@ export function TemplateEditor({
   const [highestStep, setHighestStep] = useState(0);
   const [stepError, setStepError] = useState("");
   const [error, setError] = useState("");
-  const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(!isNew);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const readOnly = !isNew && (!canEdit || !editing);
   const viewing = !isNew && !editing;
+  /** Editing an existing template: free jump to any step (including Review). */
+  const freeStepNav = !isNew && editing;
 
   const tabs = BASE_TABS;
   const step = tabs[Math.min(stepIndex, tabs.length - 1)] ?? tabs[0];
   const isFirst = stepIndex === 0;
   const isLast = stepIndex >= tabs.length - 1;
+  const reviewIndex = tabs.findIndex((t) => t.id === "review");
 
   useEffect(() => {
     if (isNew) {
@@ -575,8 +581,8 @@ export function TemplateEditor({
         setCanEdit(Boolean(item.can_edit));
         setEditing(Boolean(item.can_edit) && initialEditing);
         setStepIndex(0);
-        // Viewing: free navigation across all sections
-        setHighestStep(Boolean(item.can_edit) && initialEditing ? 0 : tabs.length - 1);
+        // Existing templates: free navigation (viewing, or editing with initialEditing)
+        setHighestStep(tabs.length - 1);
       })
       .catch((e) => setError(errorMessage(e)))
       .finally(() => setLoading(false));
@@ -584,8 +590,8 @@ export function TemplateEditor({
 
   function goToStep(index: number) {
     if (index < 0 || index >= tabs.length) return;
-    // Progressive unlock while creating/editing; free jump while viewing
-    if (!viewing && index > stepIndex) return;
+    // Progressive unlock while creating; free jump when editing existing / viewing
+    if (!freeStepNav && !viewing && index > highestStep) return;
     setStepError("");
     setStepIndex(index);
   }
@@ -594,9 +600,8 @@ export function TemplateEditor({
     if (!canEdit) return;
     setEditing(true);
     setStepIndex(0);
-    setHighestStep(0);
+    setHighestStep(tabs.length - 1);
     setStepError("");
-    setMessage("");
   }
 
   function cancelEditing() {
@@ -604,7 +609,6 @@ export function TemplateEditor({
     setEditing(false);
     setStepIndex(0);
     setStepError("");
-    setMessage("");
     setHighestStep(tabs.length - 1);
   }
 
@@ -656,6 +660,26 @@ export function TemplateEditor({
     setStepIndex((i) => Math.max(i - 1, 0));
   }
 
+  function goToReview() {
+    const basicsErr = validateBasics();
+    if (basicsErr) {
+      setStepIndex(0);
+      setStepError(basicsErr);
+      return;
+    }
+    const competitionsErr = validateCompetitions();
+    if (competitionsErr) {
+      const poolsIndex = tabs.findIndex((t) => t.id === "pools");
+      setStepIndex(poolsIndex >= 0 ? poolsIndex : 0);
+      setStepError(competitionsErr);
+      return;
+    }
+    setStepError("");
+    if (reviewIndex < 0) return;
+    setStepIndex(reviewIndex);
+    setHighestStep((h) => Math.max(h, reviewIndex));
+  }
+
   async function save(e?: FormEvent) {
     e?.preventDefault();
     if (readOnly) return;
@@ -674,7 +698,6 @@ export function TemplateEditor({
     }
     setBusy(true);
     setError("");
-    setMessage("");
     try {
       const item = await api<CompetitionTemplate>(
         isNew ? "/templates" : `/templates/${templateId}`,
@@ -683,12 +706,31 @@ export function TemplateEditor({
       const next = fromTemplate(item);
       setForm(next);
       setSnapshot(next);
-      setMessage("Template saved.");
+      toast({
+        message: (
+          <span className="flex flex-wrap items-center justify-between gap-2">
+            <span>Template saved.</span>
+            <Link
+              href="/leagues/new"
+              className="font-bold text-ink underline decoration-brand/50 underline-offset-2 hover:decoration-brand"
+            >
+              Back to templates
+            </Link>
+          </span>
+        ),
+        durationMs: 6000,
+        dismissible: true,
+      });
       setCanEdit(Boolean(item.can_edit));
       if (!isNew) setEditing(false);
       onSaved?.(item);
     } catch (err) {
-      setError(errorMessage(err));
+      toast({
+        message: errorMessage(err),
+        tone: "error",
+        durationMs: 6000,
+        dismissible: true,
+      });
     } finally {
       setBusy(false);
     }
@@ -698,16 +740,20 @@ export function TemplateEditor({
     if (!templateId || isNew) return;
     setBusy(true);
     setError("");
-    setMessage("");
     try {
       const item = await api<CompetitionTemplate>(
         `/templates/${templateId}/duplicate`,
         json("POST"),
       );
-      setMessage(`Copied as ${item.label}.`);
+      toast({ message: `Copied as ${item.label}.` });
       onSaved?.(item);
     } catch (err) {
-      setError(errorMessage(err));
+      toast({
+        message: errorMessage(err),
+        tone: "error",
+        durationMs: 6000,
+        dismissible: true,
+      });
     } finally {
       setBusy(false);
     }
@@ -715,14 +761,19 @@ export function TemplateEditor({
 
   async function remove() {
     if (!templateId || isNew || readOnly) return;
-    if (!confirm("Delete this template?")) return;
     setBusy(true);
+    setDeleteConfirmOpen(false);
     try {
       await api(`/templates/${templateId}`, json("DELETE"));
-      setMessage("Deleted.");
+      toast({ message: "Deleted." });
       onSaved?.({ id: "" } as CompetitionTemplate);
     } catch (err) {
-      setError(errorMessage(err));
+      toast({
+        message: errorMessage(err),
+        tone: "error",
+        durationMs: 6000,
+        dismissible: true,
+      });
     } finally {
       setBusy(false);
     }
@@ -734,7 +785,6 @@ export function TemplateEditor({
     return (
       <div className="flex flex-col gap-4 animate-in">
         {error && <ErrorState error={error} />}
-        {message && <StatusBanner tone="success">{message}</StatusBanner>}
 
         <div className="flex flex-wrap items-center gap-2">
           {useHref && (
@@ -772,7 +822,6 @@ export function TemplateEditor({
       }}
     >
       {error && <ErrorState error={error} />}
-      {message && <StatusBanner tone="success">{message}</StatusBanner>}
 
       {!isNew && (
         <div className="flex flex-wrap items-center gap-2">
@@ -807,9 +856,9 @@ export function TemplateEditor({
         </div>
         <div className="flex gap-1 overflow-x-auto" aria-label="Template steps">
           {tabs.map((t, i) => {
-            const reached = i <= highestStep;
+            const reached = freeStepNav || i <= highestStep;
             const active = i === stepIndex;
-            const canJump = i < stepIndex;
+            const canJump = reached && !active;
             return (
               <button
                 key={t.id}
@@ -1135,33 +1184,53 @@ export function TemplateEditor({
       )}
 
       <Stack gap="sm">
-        <div className="flex flex-wrap items-center gap-2">
-          <Button type="button" variant="secondary" disabled={isFirst} onClick={goBack}>
-            Back
-          </Button>
-          {!isLast && (
-            <Button type="button" variant="primary" onClick={goNext}>
-              Next
+        <div className="flex items-center justify-between gap-4">
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <Button type="button" variant="secondary" disabled={isFirst} onClick={goBack}>
+              Back
             </Button>
-          )}
-          {isLast && !readOnly && (
-            <IconButton type="submit" label="Save template" variant="primary" busy={busy}>
-              <SaveIcon />
-            </IconButton>
-          )}
+            {!isLast && (
+              <Button type="button" variant="primary" onClick={goNext}>
+                Next
+              </Button>
+            )}
+            {freeStepNav && !isLast && (
+              <Button type="button" variant="secondary" onClick={goToReview}>
+                Review & save
+              </Button>
+            )}
+            {isLast && !readOnly && (
+              <IconButton type="submit" label="Save template" variant="primary" busy={busy}>
+                <SaveIcon />
+              </IconButton>
+            )}
+          </div>
           {!isNew && editing && (
             <IconButton
               type="button"
               label="Delete template"
               variant="danger"
               busy={busy}
-              onClick={remove}
+              onClick={() => setDeleteConfirmOpen(true)}
             >
               <TrashIcon />
             </IconButton>
           )}
         </div>
       </Stack>
+
+      <ConfirmDialog
+        open={deleteConfirmOpen}
+        title="Delete this template?"
+        description="This permanently removes the template. Leagues already created from it are not affected."
+        confirmLabel="Delete template"
+        cancelLabel="Keep template"
+        tone="danger"
+        onCancel={() => setDeleteConfirmOpen(false)}
+        onConfirm={() => {
+          void remove();
+        }}
+      />
     </form>
   );
 }

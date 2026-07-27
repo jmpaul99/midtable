@@ -15,9 +15,12 @@ from app.deps import require_platform_admin
 from app.services.sync import score_changed_matches, sync_league_fixtures
 
 
-def test_score_changed_matches_empty_logs(caplog: pytest.LogCaptureFixture):
-    league = SimpleNamespace(public_id=uuid4())
+def test_score_changed_matches_empty_logs(caplog: pytest.LogCaptureFixture, monkeypatch):
+    from app.services import sync as sync_mod
+
+    league = SimpleNamespace(public_id=uuid4(), upset_rules={})
     db = MagicMock()
+    monkeypatch.setattr(sync_mod, "ensure_fixed_ranking_for_league", lambda *_a, **_k: None)
     with caplog.at_level(logging.INFO, logger="app.services.sync"):
         summary = score_changed_matches(db, league, [])
     assert summary == {"scored": 0, "cascaded": 0, "skipped_missing_snapshot": 0}
@@ -35,23 +38,33 @@ def test_sync_soft_fail_no_pools_logs(caplog: pytest.LogCaptureFixture):
     assert any("reason=no_pools" in r.getMessage() for r in caplog.records)
 
 
-def test_sync_soft_fail_in_progress_logs(caplog: pytest.LogCaptureFixture):
+def test_sync_soft_fail_in_progress_logs(caplog: pytest.LogCaptureFixture, monkeypatch):
     from datetime import UTC, datetime
 
-    league = SimpleNamespace(public_id=uuid4(), id=1)
-    pool = SimpleNamespace(id=1)
+    from app.services import sync as sync_mod
+
+    league = SimpleNamespace(public_id=uuid4(), id=1, upset_rules={})
+    pool = SimpleNamespace(
+        id=1,
+        scores_match_results=True,
+        provider="football-data.org",
+        competition_code="PL",
+        season_year=2025,
+        key="pl",
+    )
     status = SimpleNamespace(
         in_progress=True,
         in_progress_since=datetime.now(UTC),
         last_error=None,
     )
     db = MagicMock()
-    # first scalars().all() -> pools; _ensure_sync_status uses scalars().first()/one()
     scalars_result = MagicMock()
     scalars_result.all.return_value = [pool]
     scalars_result.first.return_value = status
     scalars_result.one.return_value = status
     db.scalars.return_value = scalars_result
+
+    monkeypatch.setattr(sync_mod, "ensure_fixed_ranking_for_league", lambda *_a, **_k: None)
 
     with caplog.at_level(logging.WARNING, logger="app.services.sync"):
         result = sync_league_fixtures(db, league, MagicMock())

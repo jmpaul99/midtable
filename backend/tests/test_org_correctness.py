@@ -64,6 +64,6 @@ def test_match_to_input_adapter():
         scheduled_matchweek=1,
         stage=None,
     )
-    mi = match_to_input(match)
+    mi = match_to_input(match, pool_id=2)
     assert mi.match_id == 1
     assert mi.home_goals == 1

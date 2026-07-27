@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, Suspense, useState } from "react";
+import { FormEvent, Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { ApiError, errorMessage } from "@/lib/api";
@@ -11,6 +11,7 @@ import { LogInIcon, SendIcon, UserPlusIcon, SpinnerIcon } from "@/components/ui/
 import { Card, Eyebrow, Muted, Stack } from "@/components/ui/Card";
 import { Input, Label } from "@/components/ui/Field";
 import { TurnstileWidget, resetTurnstile } from "@/components/TurnstileWidget";
+import { useToast } from "@/components/ui/ToastProvider";
 
 export default function LoginPage() {
   return (
@@ -20,11 +21,12 @@ export default function LoginPage() {
   );
 }
 
-type Step = "email" | "existing" | "register" | "reset";
+type Step = "email" | "existing" | "register" | "reset" | "check-email";
 
 function LoginForm() {
   const search = useSearchParams();
   const router = useRouter();
+  const { toast } = useToast();
   const requestedNext = search.get("next");
   const next =
     requestedNext?.startsWith("/") && !requestedNext.startsWith("//") ? requestedNext : "/";
@@ -32,15 +34,37 @@ function LoginForm() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [displayName, setDisplayName] = useState("");
-  const [message, setMessage] = useState(
-    search.get("error") ||
-      (search.get("reset") === "ok" ? "Password updated. Sign in with your new password." : ""),
-  );
+  const [otp, setOtp] = useState("");
+  const [pendingDisplayName, setPendingDisplayName] = useState<string | null>(null);
+  const [validation, setValidation] = useState("");
   const [busy, setBusy] = useState(false);
   const [showPasswordSignIn, setShowPasswordSignIn] = useState(false);
   const [showPasswordRegister, setShowPasswordRegister] = useState(false);
   const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
   const [turnstileWidgetId, setTurnstileWidgetId] = useState<string | null>(null);
+
+  useEffect(() => {
+    const urlError = search.get("error");
+    if (urlError) {
+      toast({
+        message: urlError,
+        tone: "error",
+        durationMs: 6000,
+        dismissible: true,
+      });
+      return;
+    }
+    if (search.get("reset") === "ok") {
+      toast({
+        message: "Password updated. Sign in with your new password.",
+        tone: "info",
+        durationMs: 6000,
+        dismissible: true,
+      });
+    }
+    // Run once on mount for query-param feedback.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   function callbackUrl(path = next) {
     return `${window.location.origin}/auth/callback?next=${encodeURIComponent(path)}`;
@@ -48,17 +72,23 @@ function LoginForm() {
 
   function goToStep(nextStep: Step) {
     setStep(nextStep);
-    setMessage("");
+    setValidation("");
     setPassword("");
+    if (nextStep !== "check-email") {
+      setOtp("");
+      setPendingDisplayName(null);
+    }
     if (nextStep !== "register") setShowPasswordRegister(false);
     if (nextStep !== "existing" && nextStep !== "reset") setShowPasswordSignIn(false);
   }
 
   function useDifferentEmail() {
     setStep("email");
-    setMessage("");
+    setValidation("");
     setPassword("");
     setDisplayName("");
+    setOtp("");
+    setPendingDisplayName(null);
     setShowPasswordSignIn(false);
     setShowPasswordRegister(false);
   }
@@ -66,10 +96,10 @@ function LoginForm() {
   async function continueWithEmail(e: FormEvent) {
     e.preventDefault();
     setBusy(true);
-    setMessage("");
+    setValidation("");
     try {
       if (!turnstileToken) {
-        setMessage("Please complete the verification challenge.");
+        setValidation("Please complete the verification challenge.");
         return;
       }
       const normalized = email.trim().toLowerCase();
@@ -95,7 +125,12 @@ function LoginForm() {
       resetTurnstile(turnstileWidgetId);
       goToStep(payload.exists ? "existing" : "register");
     } catch (error) {
-      setMessage(errorMessage(error));
+      toast({
+        message: errorMessage(error),
+        tone: "error",
+        durationMs: 6000,
+        dismissible: true,
+      });
       setTurnstileToken(null);
       resetTurnstile(turnstileWidgetId);
     } finally {
@@ -106,22 +141,27 @@ function LoginForm() {
   async function signInWithPassword(e: FormEvent) {
     e.preventDefault();
     setBusy(true);
-    setMessage("");
+    setValidation("");
     try {
       const { error } = await supabase().auth.signInWithPassword({ email, password });
       if (error) throw error;
       router.replace(next);
       router.refresh();
     } catch (error) {
-      setMessage(errorMessage(error));
+      toast({
+        message: errorMessage(error),
+        tone: "error",
+        durationMs: 6000,
+        dismissible: true,
+      });
     } finally {
       setBusy(false);
     }
   }
 
-  async function sendMagicLink(options?: { displayName?: string }) {
+  async function sendMagicLink(options?: { displayName?: string; resend?: boolean }) {
     setBusy(true);
-    setMessage("");
+    setValidation("");
     try {
       const { error } = await supabase().auth.signInWithOtp({
         email,
@@ -133,9 +173,49 @@ function LoginForm() {
         },
       });
       if (error) throw error;
-      setMessage("Magic link sent. Check your inbox.");
+      setOtp("");
+      setPendingDisplayName(options?.displayName ?? null);
+      setStep("check-email");
+      if (options?.resend) {
+        toast({ message: "Code resent. Check your inbox.", tone: "info" });
+      }
     } catch (error) {
-      setMessage(errorMessage(error));
+      toast({
+        message: errorMessage(error),
+        tone: "error",
+        durationMs: 6000,
+        dismissible: true,
+      });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function verifyEmailOtp(e: FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setValidation("");
+    try {
+      const token = otp.trim();
+      if (!token) {
+        setValidation("Enter the one-time code from your email.");
+        return;
+      }
+      const { error } = await supabase().auth.verifyOtp({
+        email,
+        token,
+        type: "email",
+      });
+      if (error) throw error;
+      router.replace(next);
+      router.refresh();
+    } catch (error) {
+      toast({
+        message: errorMessage(error),
+        tone: "error",
+        durationMs: 6000,
+        dismissible: true,
+      });
     } finally {
       setBusy(false);
     }
@@ -144,11 +224,11 @@ function LoginForm() {
   async function registerWithPassword(e: FormEvent) {
     e.preventDefault();
     setBusy(true);
-    setMessage("");
+    setValidation("");
     try {
       const name = displayName.trim();
       if (!name) {
-        setMessage("Display name is required.");
+        setValidation("Display name is required.");
         return;
       }
       const { error } = await supabase().auth.signUp({
@@ -160,9 +240,19 @@ function LoginForm() {
         },
       });
       if (error) throw error;
-      setMessage("Account created. Check your email to confirm it.");
+      toast({
+        message: "Account created. Check your email to confirm it.",
+        tone: "info",
+        durationMs: 6000,
+        dismissible: true,
+      });
     } catch (error) {
-      setMessage(errorMessage(error));
+      toast({
+        message: errorMessage(error),
+        tone: "error",
+        durationMs: 6000,
+        dismissible: true,
+      });
     } finally {
       setBusy(false);
     }
@@ -171,24 +261,41 @@ function LoginForm() {
   async function registerWithMagicLink() {
     const name = displayName.trim();
     if (!name) {
-      setMessage("Display name is required.");
+      setValidation("Display name is required.");
       return;
     }
     await sendMagicLink({ displayName: name });
   }
 
+  async function resendMagicLink() {
+    await sendMagicLink({
+      ...(pendingDisplayName ? { displayName: pendingDisplayName } : {}),
+      resend: true,
+    });
+  }
+
   async function sendReset(e: FormEvent) {
     e.preventDefault();
     setBusy(true);
-    setMessage("");
+    setValidation("");
     try {
       const { error } = await supabase().auth.resetPasswordForEmail(email, {
         redirectTo: callbackUrl("/auth/update-password"),
       });
       if (error) throw error;
-      setMessage("Check your inbox for a reset link.");
+      toast({
+        message: "Check your inbox for a reset link.",
+        tone: "info",
+        durationMs: 6000,
+        dismissible: true,
+      });
     } catch (error) {
-      setMessage(errorMessage(error));
+      toast({
+        message: errorMessage(error),
+        tone: "error",
+        durationMs: 6000,
+        dismissible: true,
+      });
     } finally {
       setBusy(false);
     }
@@ -197,19 +304,23 @@ function LoginForm() {
   const heading =
     step === "reset"
       ? "Reset password"
-      : step === "register"
-        ? "Create account"
-        : step === "existing"
-          ? "Welcome back"
-          : "Sign in";
+      : step === "check-email"
+        ? "Check your email"
+        : step === "register"
+          ? "Create account"
+          : step === "existing"
+            ? "Welcome back"
+            : "Sign in";
   const muted =
     step === "reset"
       ? "We will email you a link to choose a new password."
-      : step === "register"
-        ? "Choose a display name, then we will email you a magic link to finish signing up."
-        : step === "existing"
-          ? "We will email you a magic link to sign in."
-          : "Enter your email to continue. Create a league, or join with an invite or shareable link.";
+      : step === "check-email"
+        ? "We emailed a magic link and a one-time code. Enter the code below, or open the link."
+        : step === "register"
+          ? "Choose a display name, then we will email a magic link or one-time code to finish signing up."
+          : step === "existing"
+            ? "We will email a magic link or one-time code to sign in."
+            : "Enter your email to continue. Create a league, or join with an invite or shareable link.";
 
   return (
     <section className="mx-auto flex min-h-[70dvh] max-w-md flex-col items-center justify-center gap-6 py-6 animate-in">
@@ -296,7 +407,7 @@ function LoginForm() {
                     onClick={() => {
                       setShowPasswordSignIn(false);
                       setPassword("");
-                      setMessage("");
+                      setValidation("");
                     }}
                     className="text-sm font-semibold text-muted hover:text-ink"
                   >
@@ -308,7 +419,7 @@ function LoginForm() {
                   type="button"
                   onClick={() => {
                     setShowPasswordSignIn(true);
-                    setMessage("");
+                    setValidation("");
                   }}
                   className="text-sm font-semibold text-muted hover:text-ink"
                 >
@@ -373,7 +484,7 @@ function LoginForm() {
                     onClick={() => {
                       setShowPasswordRegister(false);
                       setPassword("");
-                      setMessage("");
+                      setValidation("");
                     }}
                     className="text-sm font-semibold text-muted hover:text-ink"
                   >
@@ -385,13 +496,45 @@ function LoginForm() {
                   type="button"
                   onClick={() => {
                     setShowPasswordRegister(true);
-                    setMessage("");
+                    setValidation("");
                   }}
                   className="text-sm font-semibold text-muted hover:text-ink"
                 >
                   Or use a password
                 </button>
               )}
+            </form>
+          )}
+
+          {step === "check-email" && (
+            <form className="flex flex-col gap-3" onSubmit={verifyEmailOtp}>
+              <LockedEmail email={email} onChange={useDifferentEmail} />
+              <Label>
+                One-time code
+                <Input
+                  type="text"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  pattern="[0-9]*"
+                  maxLength={8}
+                  required
+                  value={otp}
+                  onChange={(e) => setOtp(e.target.value.replace(/\s/g, ""))}
+                  placeholder="Code from email"
+                />
+              </Label>
+              <Button type="submit" full disabled={busy || !otp.trim()}>
+                {busy ? <SpinnerIcon /> : <LogInIcon />}
+                {busy ? "Please wait…" : "Verify code"}
+              </Button>
+              <button
+                type="button"
+                onClick={() => void resendMagicLink()}
+                disabled={busy}
+                className="text-sm font-semibold text-muted hover:text-ink disabled:opacity-50"
+              >
+                Resend code
+              </button>
             </form>
           )}
 
@@ -412,13 +555,7 @@ function LoginForm() {
             </form>
           )}
 
-          {message && (
-            <StatusBanner
-              tone={/error|invalid|failed|missing|required/i.test(message) ? "error" : "info"}
-            >
-              {message}
-            </StatusBanner>
-          )}
+          {validation && <StatusBanner tone="error">{validation}</StatusBanner>}
         </Stack>
       </Card>
     </section>

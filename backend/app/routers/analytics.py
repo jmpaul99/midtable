@@ -6,9 +6,10 @@ from sqlalchemy.orm import Session
 
 from app.db import get_db
 from app.deps import require_league_member
-from app.models import League, LeagueMember, Match, ScoringEvent, StandingsSnapshot, Team, TeamPool
+from app.models import League, LeagueMember, Match, ScoringEvent, StandingsSnapshot, Team
 from app.services import analytics as analytics_service
 from app.services.analytics import phase_match_counts
+from app.services.match_queries import matches_for_league, pool_for_match, scoring_pools_for_league
 
 
 router = APIRouter(tags=["analytics"])
@@ -39,22 +40,19 @@ def standings(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    scoring_pool_ids = {
-        p.id
-        for p in db.scalars(
-            select(TeamPool).where(
-                TeamPool.league_id == league.id,
-                TeamPool.scores_match_results.is_(True),
-            )
-        ).all()
-    }
-    matches = list(
-        db.scalars(select(Match).where(Match.league_id == league.id)).all()
-    )
+    scoring_pools = scoring_pools_for_league(db, league)
+    scoring_pool_ids = {p.id for p in scoring_pools}
+    matches = matches_for_league(db, league)
+    pool_by_match_id: dict[int, int] = {}
+    for m in matches:
+        pool = pool_for_match(db, league, m)
+        if pool:
+            pool_by_match_id[m.id] = pool.id
     counts = phase_match_counts(
         matches,
         match_filter=match_filter,
         scoring_pool_ids=scoring_pool_ids or None,
+        pool_by_match_id=pool_by_match_id,
     )
     mf = (phase_meta or {}).get("match_filter") or {}
     matchweek_range = mf.get("matchweek_range")
@@ -160,12 +158,15 @@ def match_events(
     db: Session = Depends(get_db),
 ) -> dict:
     league, _ = membership
-    match = db.scalars(
-        select(Match).where(Match.public_id == match_id, Match.league_id == league.id)
-    ).first()
-    if match is None:
+    match = db.scalars(select(Match).where(Match.public_id == match_id)).first()
+    if match is None or pool_for_match(db, league, match) is None:
         raise HTTPException(status_code=404, detail="Match not found")
-    events = db.scalars(select(ScoringEvent).where(ScoringEvent.match_id == match.id)).all()
+    events = db.scalars(
+        select(ScoringEvent).where(
+            ScoringEvent.league_id == league.id,
+            ScoringEvent.match_id == match.id,
+        )
+    ).all()
     teams = {
         t.id: t
         for t in db.scalars(
@@ -174,7 +175,9 @@ def match_events(
     }
     snapshot = db.scalars(
         select(StandingsSnapshot).where(
-            StandingsSnapshot.pool_id == match.pool_id,
+            StandingsSnapshot.provider == match.provider,
+            StandingsSnapshot.competition_code == match.competition_code,
+            StandingsSnapshot.season_year == match.season_year,
             StandingsSnapshot.kickoff_at == match.kickoff_at,
         )
     ).first()

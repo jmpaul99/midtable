@@ -4,11 +4,12 @@ import { useCallback, useEffect, useState } from "react";
 import { api, errorMessage, json } from "@/lib/api";
 import type { League, RosterRow, UUID } from "@/lib/types";
 import { managerLabel } from "@/lib/types";
-import { StatusBanner } from "@/components/ui/State";
+import { Button } from "@/components/ui/Button";
 import { IconButton } from "@/components/ui/IconButton";
 import { EraserIcon, UndoIcon } from "@/components/ui/icons";
 import { Card, Muted, Stack } from "@/components/ui/Card";
 import { Label, Select } from "@/components/ui/Field";
+import { useToast } from "@/components/ui/ToastProvider";
 
 type HealthInfo = { dev_tools_enabled?: boolean };
 
@@ -20,15 +21,18 @@ export function RosterCorrectionsSection({
   onChanged?: () => void;
 }) {
   const [rows, setRows] = useState<RosterRow[]>([]);
-  const [error, setError] = useState("");
-  const [message, setMessage] = useState("");
+  const [loadError, setLoadError] = useState("");
   const [devTools, setDevTools] = useState(false);
   const [resetBusy, setResetBusy] = useState(false);
+  const { toast } = useToast();
 
   const load = useCallback(() => {
     api<RosterRow[]>(`/leagues/${league.id}/rosters`)
-      .then(setRows)
-      .catch((e) => setError(errorMessage(e)));
+      .then((data) => {
+        setRows(data);
+        setLoadError("");
+      })
+      .catch((e) => setLoadError(errorMessage(e)));
   }, [league.id]);
 
   useEffect(() => {
@@ -42,18 +46,21 @@ export function RosterCorrectionsSection({
   }, []);
 
   async function undoLast() {
-    setError("");
-    setMessage("");
     try {
       const res = await api<{ undone_pick_number: number }>(
         `/leagues/${league.id}/draft/picks/last`,
         { method: "DELETE" },
       );
-      setMessage(`Undid pick #${res.undone_pick_number}.`);
+      toast({ message: `Undid pick #${res.undone_pick_number}.` });
       load();
       onChanged?.();
     } catch (e) {
-      setError(errorMessage(e));
+      toast({
+        message: errorMessage(e),
+        tone: "error",
+        durationMs: 6000,
+        dismissible: true,
+      });
     }
   }
 
@@ -65,16 +72,19 @@ export function RosterCorrectionsSection({
     ) {
       return;
     }
-    setError("");
-    setMessage("");
     setResetBusy(true);
     try {
       await api(`/leagues/${league.id}/draft/reset`, { method: "POST" });
-      setMessage("Draft reset. League is back in pre-draft.");
+      toast({ message: "Draft reset. League is back in pre-draft." });
       load();
       onChanged?.();
     } catch (e) {
-      setError(errorMessage(e));
+      toast({
+        message: errorMessage(e),
+        tone: "error",
+        durationMs: 6000,
+        dismissible: true,
+      });
     } finally {
       setResetBusy(false);
     }
@@ -82,33 +92,47 @@ export function RosterCorrectionsSection({
 
   async function reassign(entryId: UUID, memberId: UUID) {
     if (!confirm("Reassign this team to a different manager?")) return;
-    setError("");
-    setMessage("");
     try {
       await api(`/leagues/${league.id}/rosters/${entryId}`, json("PATCH", { member_id: memberId }));
-      setMessage("Roster ownership updated.");
+      toast({ message: "Roster ownership updated." });
       load();
       onChanged?.();
     } catch (e) {
-      setError(errorMessage(e));
+      toast({
+        message: errorMessage(e),
+        tone: "error",
+        durationMs: 6000,
+        dismissible: true,
+      });
     }
   }
 
   const filled = rows.filter((r) => r.id && r.team_id);
+  const lastPick = filled
+    .filter((r) => r.draft_pick_number != null)
+    .sort((a, b) => (b.draft_pick_number ?? 0) - (a.draft_pick_number ?? 0))[0];
+  const canUndo = Boolean(lastPick);
 
   return (
     <Card>
       <Stack>
-        <Muted>
-          While drafting, undo the last pick. After the draft completes, reassign ownership (points
-          follow the roster).
-        </Muted>
-        {error && <StatusBanner tone="error">{error}</StatusBanner>}
-        {message && <StatusBanner tone="success">{message}</StatusBanner>}
-        <div className="flex justify-start gap-2">
-          <IconButton type="button" label="Undo last draft pick" variant="primary" onClick={undoLast}>
+        <div>
+          <h2>Fix picks</h2>
+          <Muted>
+            Undo reverses the most recent draft selection. After the draft, reassign ownership here
+            (points stay with the roster).
+          </Muted>
+        </div>
+        {loadError && (
+          <Muted className="text-danger">{loadError}</Muted>
+        )}
+        <div className="flex flex-wrap items-center justify-start gap-2">
+          <Button type="button" variant="primary" disabled={!canUndo} onClick={undoLast}>
             <UndoIcon />
-          </IconButton>
+            {lastPick?.team_name
+              ? `Undo pick #${lastPick.draft_pick_number}: ${lastPick.team_name}`
+              : "Undo last pick"}
+          </Button>
           {devTools && (
             <IconButton
               type="button"

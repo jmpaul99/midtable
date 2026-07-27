@@ -10,6 +10,7 @@ import { Loading, StatusBanner } from "@/components/ui/State";
 import { IconButton } from "@/components/ui/IconButton";
 import { CheckIcon } from "@/components/ui/icons";
 import { Card, Eyebrow, Muted } from "@/components/ui/Card";
+import { useToast } from "@/components/ui/ToastProvider";
 
 export default function AcceptInvitePage() {
   return (
@@ -24,19 +25,23 @@ export default function AcceptInvitePage() {
 function AcceptForm() {
   const search = useSearchParams();
   const router = useRouter();
+  const { toast } = useToast();
   const token = search.get("token") || "";
-  const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
   async function submit(e: FormEvent) {
     e.preventDefault();
     setBusy(true);
-    setError("");
     try {
       const out = await api<Manager & { league_id: string }>("/invites/accept", json("POST", { token }));
       router.replace(`/leagues/${out.league_id}`);
     } catch (err) {
-      setError(errorMessage(err));
+      toast({
+        message: errorMessage(err),
+        tone: "error",
+        durationMs: 6000,
+        dismissible: true,
+      });
     } finally {
       setBusy(false);
     }
@@ -64,7 +69,6 @@ function AcceptForm() {
               <CheckIcon />
             </IconButton>
           </div>
-          {error && <StatusBanner tone="error">{error}</StatusBanner>}
         </form>
       </Card>
     </section>

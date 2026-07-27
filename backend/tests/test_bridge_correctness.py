@@ -78,13 +78,13 @@ def test_snake_on_clock_reverses_even_rounds():
     assert member.id == 30
 
 
-def test_match_unique_constraint_includes_league():
+def test_match_unique_constraint_is_competition_scoped():
     from app.models.entities import Match
 
     args = Match.__table_args__
     assert any(
-        getattr(c, "name", None) is None
-        and tuple(c.columns.keys()) == ("league_id", "provider", "external_id")
+        tuple(c.columns.keys())
+        == ("provider", "competition_code", "season_year", "external_id")
         for c in (args if isinstance(args, tuple) else (args,))
     )
 
@@ -93,6 +93,10 @@ def test_standings_snapshot_has_rows_relationship():
     from app.models.entities import StandingsSnapshot
 
     assert "rows" in StandingsSnapshot.__mapper__.relationships
+    cols = StandingsSnapshot.__table__.c
+    assert "competition_code" in cols
+    assert "season_year" in cols
+    assert "pool_id" not in cols
 
 
 def test_league_config_and_idempotency_models():
@@ -125,7 +129,8 @@ def test_bootstrap_teams_requires_pools():
             provider=MagicMock(),
             pool_provider_params=[],
         )
-    assert "no pools" in str(exc.value.message).lower()
+    msg = str(exc.value.message).lower()
+    assert "competition" in msg or "pool" in msg
 
 
 def test_bootstrap_teams_response_schema():

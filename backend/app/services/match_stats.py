@@ -23,9 +23,14 @@ from app.models import (
     TeamPool,
 )
 from app.services.match_adapters import match_to_input
+from app.services.match_queries import matches_for_league, matches_for_pool
 from app.services.members import member_label
-from app.services.scoring import Result, ResultPoints, build_standings_before_kickoff, result_for
-from app.services.standings import initial_rows_for_pool
+from app.services.scoring import Result, build_standings_before_kickoff, result_for
+from app.services.standings import (
+    DEFAULT_TIEBREAKS,
+    FOOTBALL_TABLE_POINTS,
+    initial_rows_for_competition,
+)
 
 FINISHED = frozenset({"FINISHED", "AWARDED"})
 UPSET_TYPES = frozenset({"minor_upset", "major_upset", "major_upset_draw"})
@@ -155,20 +160,26 @@ def current_table_for_pool(
     pool: TeamPool,
     league: League,
 ) -> dict[int, Any]:
-    """Live table including all finished matches for the pool."""
+    """Live competition table including all finished matches for the pool's season."""
+    if not pool.competition_code or not pool.season_year:
+        return {}
     matches = [
-        match_to_input(m)
-        for m in db.scalars(select(Match).where(Match.pool_id == pool.id)).all()
+        match_to_input(m, pool_id=pool.id) for m in matches_for_pool(db, pool)
     ]
     finished = [m for m in matches if m.status in FINISHED]
     far_future = datetime(9999, 1, 1, tzinfo=UTC)
     ranked = build_standings_before_kickoff(
-        team_rows=initial_rows_for_pool(db, pool),
+        team_rows=initial_rows_for_competition(
+            db,
+            provider=pool.provider,
+            competition_code=pool.competition_code,
+            season_year=pool.season_year,
+        ),
         finished_matches=finished,
         kickoff_at=far_future,
         pool_id=pool.id,
-        result_points=ResultPoints.from_config(league.result_points),
-        tiebreaks=tuple(pool.tie_break_order or ["points", "gd", "gf", "name"]),
+        result_points=FOOTBALL_TABLE_POINTS,
+        tiebreaks=DEFAULT_TIEBREAKS,
     )
     return {
         row.team_id: {
@@ -230,14 +241,11 @@ def form_stats(
     team_ids = {r.team_id for r in roster}
     if not team_ids:
         return []
-    matches = list(
-        db.scalars(
-            select(Match).where(
-                Match.league_id == league.id,
-                (Match.home_team_id.in_(team_ids) | Match.away_team_id.in_(team_ids)),
-            )
-        ).all()
-    )
+    matches = [
+        m
+        for m in matches_for_league(db, league)
+        if m.home_team_id in team_ids or m.away_team_id in team_ids
+    ]
     members = {
         m.id: m
         for m in db.scalars(select(LeagueMember).where(LeagueMember.league_id == league.id)).all()
@@ -288,14 +296,11 @@ def venue_splits(
     if not team_ids:
         return []
 
-    matches = list(
-        db.scalars(
-            select(Match).where(
-                Match.league_id == league.id,
-                (Match.home_team_id.in_(team_ids) | Match.away_team_id.in_(team_ids)),
-            )
-        ).all()
-    )
+    matches = [
+        m
+        for m in matches_for_league(db, league)
+        if m.home_team_id in team_ids or m.away_team_id in team_ids
+    ]
     events = list(
         db.scalars(
             select(ScoringEvent).where(

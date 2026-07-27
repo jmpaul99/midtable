@@ -8,6 +8,7 @@ import { IconButton } from "@/components/ui/IconButton";
 import { CheckIcon, PencilIcon, XIcon } from "@/components/ui/icons";
 import { Muted } from "@/components/ui/Card";
 import { Input } from "@/components/ui/Field";
+import { useToast } from "@/components/ui/ToastProvider";
 import { cn } from "@/lib/cn";
 
 export function TeamNameEditor({
@@ -34,8 +35,8 @@ export function TeamNameEditor({
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(teamName);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const [message, setMessage] = useState("");
+  const [validation, setValidation] = useState("");
+  const { toast } = useToast();
 
   useEffect(() => {
     setDraft(teamName);
@@ -48,12 +49,12 @@ export function TeamNameEditor({
   async function save(e: FormEvent) {
     e.preventDefault();
     if (!canEdit) {
-      setError("Only you or a commissioner can rename this team.");
+      setValidation("Only you or a commissioner can rename this team.");
       return;
     }
     const next = draft.trim();
     if (!next) {
-      setError("Team name is required.");
+      setValidation("Team name is required.");
       return;
     }
     if (next === teamName) {
@@ -61,18 +62,22 @@ export function TeamNameEditor({
       return;
     }
     setBusy(true);
-    setError("");
-    setMessage("");
+    setValidation("");
     try {
       const updated = await api<Manager>(
         `/leagues/${leagueId}/members/${memberId}`,
         json("PATCH", { team_name: next }),
       );
       setEditing(false);
-      setMessage("Team name updated.");
+      toast({ message: "Team name updated." });
       onSaved?.(updated);
     } catch (err) {
-      setError(errorMessage(err));
+      toast({
+        message: errorMessage(err),
+        tone: "error",
+        durationMs: 6000,
+        dismissible: true,
+      });
     } finally {
       setBusy(false);
     }
@@ -80,9 +85,9 @@ export function TeamNameEditor({
 
   return (
     <div className="min-w-0">
-      {(message || error) && (
-        <StatusBanner tone={error ? "error" : "info"} className="mb-2">
-          {error || message}
+      {validation && (
+        <StatusBanner tone="error" className="mb-2">
+          {validation}
         </StatusBanner>
       )}
       {canEdit && editing ? (
@@ -116,7 +121,7 @@ export function TeamNameEditor({
               onClick={() => {
                 setEditing(false);
                 setDraft(teamName);
-                setError("");
+                setValidation("");
               }}
             >
               <XIcon className="size-4" />

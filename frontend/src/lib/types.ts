@@ -155,6 +155,16 @@ export interface RecentTemplateUsage {
   used_at: string;
 }
 
+export type TemplateNumericFilterOp = "eq" | "min" | "max";
+
+export interface TemplateListResponse {
+  items: CompetitionTemplate[];
+  total: number;
+  page: number;
+  page_size: number;
+  competition_codes: string[];
+}
+
 export interface Standing {
   member_id: UUID;
   display_name: string;
@@ -403,7 +413,12 @@ export interface TeamDetail {
   crest_url: string | null;
   pool_id: UUID | null;
   pool_name: string | null;
-  owner: { member_id: UUID | null; display_name: string | null; acquired_via: string } | null;
+  owner: {
+    member_id: UUID | null;
+    display_name: string | null;
+    team_name?: string | null;
+    acquired_via: string;
+  } | null;
   stats: {
     total_points: number;
     games_played: number;

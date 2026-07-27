@@ -4,9 +4,10 @@ from __future__ import annotations
 import logging
 import time
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+from typing import Literal
 
 from app.auth.jwt import get_current_profile
 from app.db import get_db
@@ -15,9 +16,7 @@ from app.models import (
     CompetitionTemplate,
     League,
     LeagueMember,
-    Match,
     Profile,
-    TeamPool,
 )
 from app.providers.football_data import FootballDataProvider
 from app.routers.league_mappers import _league_detail
@@ -69,22 +68,21 @@ def recompute_scores(
     membership: tuple[League, LeagueMember] = Depends(require_commissioner),
     db: Session = Depends(get_db),
 ) -> RecomputeResponse:
+    from app.services.match_queries import matches_for_league, pool_for_match, scoring_pools_for_league
     from app.services.sync import earliest_finished_seeds_per_pool, score_changed_matches
 
     league, _ = membership
     started = time.perf_counter()
-    scoring_pool_ids = {
-        p.id
-        for p in db.scalars(
-            select(TeamPool).where(
-                TeamPool.league_id == league.id,
-                TeamPool.scores_match_results.is_(True),
-            )
-        ).all()
-    }
-    matches = list(db.scalars(select(Match).where(Match.league_id == league.id)).all())
+    matches = matches_for_league(db, league)
+    scoring_pools = scoring_pools_for_league(db, league)
+    scoring_pool_ids = {p.id for p in scoring_pools}
+    pool_by_match_id: dict[int, int] = {}
+    for m in matches:
+        pool = pool_for_match(db, league, m)
+        if pool:
+            pool_by_match_id[m.id] = pool.id
     finished, seeds = earliest_finished_seeds_per_pool(
-        matches, scoring_pool_ids=scoring_pool_ids
+        matches, pool_by_match_id=pool_by_match_id, scoring_pool_ids=scoring_pool_ids
     )
     logger.info(
         "recompute_scores start league_id=%s finished=%s seeds=%s",
@@ -110,12 +108,15 @@ def recompute_scores(
 
 @router.get("/leagues/{league_id}/readiness", response_model=ReadinessResponse)
 def readiness(
+    purpose: Literal["draft", "sync"] = Query("draft"),
     membership: tuple[League, LeagueMember] = Depends(require_commissioner),
     db: Session = Depends(get_db),
 ) -> ReadinessResponse:
-    """Return every setup/sync gate as a checklist (all checks always evaluated)."""
+    """Return draft or sync readiness checklist (default: draft)."""
     league, _ = membership
-    return evaluate_readiness(db, league)
+    if purpose not in ("draft", "sync"):
+        raise HTTPException(status_code=400, detail="purpose must be 'draft' or 'sync'")
+    return evaluate_readiness(db, league, purpose=purpose)
 
 
 @router.get("/leagues/premier-league/bootstrap-gates")

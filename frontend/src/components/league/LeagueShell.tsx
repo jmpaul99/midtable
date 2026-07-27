@@ -1,5 +1,7 @@
 "use client";
 
+import Link from "next/link";
+import { usePathname } from "next/navigation";
 import {
   createContext,
   useCallback,
@@ -112,6 +114,8 @@ export function LeagueShell({
   }, [league?.id, league?.status, league?.current_member_id]);
 
   const isCommissioner = league?.role === "owner" || league?.role === "commissioner";
+  const pathname = usePathname();
+  const onSettingsPage = pathname?.includes(`/leagues/${leagueId}/settings`) ?? false;
 
   const value = useMemo(
     () =>
@@ -133,14 +137,29 @@ export function LeagueShell({
         <ErrorState error={error} retry={reload} />
       ) : value ? (
         <LeagueContext.Provider value={value}>
-          <Stack gap="lg" className="animate-in pb-[calc(5.5rem+env(safe-area-inset-bottom))] md:pb-0">
+          <Stack gap="lg" className="min-w-0 animate-in pb-[calc(5.5rem+env(safe-area-inset-bottom))] md:pb-0">
             {error && <ErrorState error={error} retry={reload} />}
             <header className="min-w-0">
               <Row className="gap-2">
                 <Eyebrow className="mb-0">{value.league.season_label}</Eyebrow>
                 <Status value={value.league.status} />
               </Row>
-              <h1 className="mt-1 truncate">{value.league.name}</h1>
+              <h1 className="mt-1 truncate">
+                <Link
+                  href={`/leagues/${value.league.id}`}
+                  className="hover:underline focus-visible:underline"
+                >
+                  {value.league.name}
+                </Link>
+              </h1>
+              {!onSettingsPage && (
+                <Link
+                  href={`/leagues/${value.league.id}/settings`}
+                  className="mt-1.5 inline-flex text-sm font-semibold text-muted hover:text-ink"
+                >
+                  View rules & settings →
+                </Link>
+              )}
             </header>
             <LeagueNav
               leagueId={value.league.id}
@@ -148,7 +167,7 @@ export function LeagueShell({
               status={value.league.status}
               onTheClock={onTheClock}
             />
-            <div className="animate-in">{children}</div>
+            <div className="min-w-0 animate-in">{children}</div>
           </Stack>
         </LeagueContext.Provider>
       ) : null}

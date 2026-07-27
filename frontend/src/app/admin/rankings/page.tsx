@@ -1,15 +1,16 @@
 "use client";
 
 import { useState } from "react";
-import Link from "next/link";
 import { RequireAuth, RequirePlatformAdmin } from "@/lib/auth";
 import { api, errorMessage, json } from "@/lib/api";
 import { defaultFootballSeasonYear } from "@/lib/availableCompetitions";
 import { PlatformAdminRematch } from "@/components/admin/PlatformAdminRematch";
-import { ErrorState, StatusBanner } from "@/components/ui/State";
+import { StatusBanner } from "@/components/ui/State";
 import { Button } from "@/components/ui/Button";
-import { Card, Muted, Stack } from "@/components/ui/Card";
+import { Card, Muted, PageHeader, Stack } from "@/components/ui/Card";
+import { Breadcrumbs } from "@/components/ui/Breadcrumbs";
 import { Input, Label } from "@/components/ui/Field";
+import { useToast } from "@/components/ui/ToastProvider";
 
 interface SyncResult {
   ok: boolean;
@@ -46,8 +47,8 @@ export default function AdminRankingsPage() {
 }
 
 function AdminRankingsContent() {
-  const [error, setError] = useState("");
-  const [message, setMessage] = useState("");
+  const { toast } = useToast();
+  const [validation, setValidation] = useState("");
   const [seasonYear, setSeasonYear] = useState(String(defaultFootballSeasonYear()));
   const [syncing, setSyncing] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
@@ -55,12 +56,11 @@ function AdminRankingsContent() {
   async function syncAll() {
     const year = Number(seasonYear);
     if (!Number.isInteger(year) || year < 1990 || year > 2100) {
-      setError("Enter a valid season year.");
+      setValidation("Enter a valid season year.");
       return;
     }
     setSyncing(true);
-    setError("");
-    setMessage("");
+    setValidation("");
     try {
       const result = await api<SyncResult>(
         "/admin/sync-teams-and-rankings",
@@ -85,17 +85,25 @@ function AdminRankingsContent() {
       const fallbackPart = fallbacks
         ? ` Latest-available used for: ${fallbacks}.`
         : "";
-      setMessage(
-        `Synced season ${result.season_year}: ` +
+      toast({
+        message:
+          `Synced season ${result.season_year}: ` +
           `${teams.created ?? 0} teams created, ${teams.updated ?? 0} updated ` +
           `(${teams.competitions_ok ?? 0}/${teams.competitions_total ?? 0} competitions). ` +
           rankingPart +
           "." +
           fallbackPart,
-      );
+        durationMs: null,
+        dismissible: true,
+      });
       setReloadKey((k) => k + 1);
     } catch (err) {
-      setError(errorMessage(err));
+      toast({
+        message: errorMessage(err),
+        tone: "error",
+        durationMs: 6000,
+        dismissible: true,
+      });
     } finally {
       setSyncing(false);
     }
@@ -103,19 +111,15 @@ function AdminRankingsContent() {
 
   return (
     <Stack gap="lg" className="animate-in">
-      <div>
-        <Muted className="text-xs font-semibold uppercase tracking-wide">
-          <Link href="/" className="hover:text-ink">
-            Home
-          </Link>
-          {" · Platform admin"}
-        </Muted>
-        <h1 className="mt-1 text-2xl sm:text-3xl">Ranking rematch</h1>
-        <Muted className="mt-1">
-          Review and correct men’s and women’s FIFA world ranking mappings without needing a
-          league commissioner seat.
-        </Muted>
-      </div>
+      <PageHeader
+        breadcrumbs={
+          <Breadcrumbs
+            items={[{ label: "Home", href: "/" }, { label: "Platform admin" }]}
+          />
+        }
+        title="Ranking rematch"
+        description="Review and correct men’s and women’s FIFA world ranking mappings without needing a league commissioner seat."
+      />
 
       <Card>
         <Stack>
@@ -147,18 +151,26 @@ function AdminRankingsContent() {
               {syncing ? "Syncing…" : "Sync all teams & rankings"}
             </Button>
           </div>
+          {validation && <StatusBanner tone="error">{validation}</StatusBanner>}
         </Stack>
       </Card>
 
-      {error && <ErrorState error={error} />}
-      {message && <StatusBanner>{message}</StatusBanner>}
       <PlatformAdminRematch
         key={reloadKey}
         onSaved={() => {
-          setMessage("Override saved. Unlocked leagues using this list were updated.");
-          setError("");
+          toast({
+            message: "Override saved. Unlocked leagues using this list were updated.",
+          });
         }}
-        onError={setError}
+        onError={(msg) => {
+          if (!msg) return;
+          toast({
+            message: msg,
+            tone: "error",
+            durationMs: 6000,
+            dismissible: true,
+          });
+        }}
       />
     </Stack>
   );

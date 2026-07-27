@@ -3,8 +3,9 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { api, errorMessage, json } from "@/lib/api";
 import type { League, PoolTeam, UUID } from "@/lib/types";
-import { ErrorState, StatusBanner } from "@/components/ui/State";
+import { ErrorState } from "@/components/ui/State";
 import { Stack } from "@/components/ui/Card";
+import { useToast } from "@/components/ui/ToastProvider";
 import { DraftOrderSection } from "@/components/admin/DraftOrderSection";
 import { RosterCorrectionsSection } from "@/components/admin/RosterCorrectionsSection";
 
@@ -27,6 +28,7 @@ export function DraftAdminPanel({
   league: League;
   onLeagueChange?: () => void;
 }) {
+  const { toast } = useToast();
   const [draftOrder, setDraftOrder] = useState<UUID[]>(() =>
     [...league.members]
       .sort((a, b) => (a.draft_slot ?? 999) - (b.draft_slot ?? 999))
@@ -40,14 +42,13 @@ export function DraftAdminPanel({
   );
   const [teamPool, setTeamPool] = useState(league.pools[0]?.id || "");
   const [poolTeams, setPoolTeams] = useState<Record<string, PoolTeam[]>>({});
-  const [error, setError] = useState("");
-  const [message, setMessage] = useState("");
+  const [loadError, setLoadError] = useState("");
   const [settingsBusy, setSettingsBusy] = useState(false);
 
   const settingsEditable = league.status === "pre_draft";
 
   const loadPoolTeams = useCallback(() => {
-    setError("");
+    setLoadError("");
     Promise.all(
       league.pools.map(async (p) => {
         try {
@@ -59,7 +60,7 @@ export function DraftAdminPanel({
       }),
     )
       .then((entries) => setPoolTeams(Object.fromEntries(entries)))
-      .catch((e) => setError(errorMessage(e)));
+      .catch((e) => setLoadError(errorMessage(e)));
   }, [league.id, league.pools]);
 
   useEffect(() => {
@@ -80,6 +81,7 @@ export function DraftAdminPanel({
   }, [league.draft_style, league.preassign_mode]);
 
   function moveMember(index: number, direction: -1 | 1) {
+    if (!settingsEditable) return;
     const target = index + direction;
     if (target < 0 || target >= draftOrder.length) return;
     const next = [...draftOrder];
@@ -88,15 +90,19 @@ export function DraftAdminPanel({
   }
 
   async function saveOrder() {
-    setError("");
-    setMessage("");
+    if (!settingsEditable) return;
     try {
       await api(`/leagues/${league.id}/draft-order`, json("PUT", { member_ids: draftOrder }));
-      setMessage("Draft order saved.");
+      toast({ message: "Draft order saved." });
       onLeagueChange?.();
       loadPoolTeams();
     } catch (e) {
-      setError(errorMessage(e));
+      toast({
+        message: errorMessage(e),
+        tone: "error",
+        durationMs: 6000,
+        dismissible: true,
+      });
     }
   }
 
@@ -110,15 +116,14 @@ export function DraftAdminPanel({
     if (patch.draft_style != null) setDraftStyle(patch.draft_style);
     if (patch.preassign_mode != null) setPreassignMode(patch.preassign_mode);
     setSettingsBusy(true);
-    setError("");
-    setMessage("");
     try {
       await api(`/leagues/${league.id}/settings`, json("PATCH", patch));
-      setMessage(
-        patch.preassign_mode === "none"
-          ? "Draft settings saved. Preassigned clubs were cleared."
-          : "Draft settings saved.",
-      );
+      toast({
+        message:
+          patch.preassign_mode === "none"
+            ? "Draft settings saved. Preassigned clubs were cleared."
+            : "Draft settings saved.",
+      });
       onLeagueChange?.();
       if (patch.preassign_mode === "none") {
         loadPoolTeams();
@@ -126,7 +131,12 @@ export function DraftAdminPanel({
     } catch (e) {
       setDraftStyle(prevStyle);
       setPreassignMode(prevMode);
-      setError(errorMessage(e));
+      toast({
+        message: errorMessage(e),
+        tone: "error",
+        durationMs: 6000,
+        dismissible: true,
+      });
     } finally {
       setSettingsBusy(false);
     }
@@ -136,26 +146,28 @@ export function DraftAdminPanel({
     e.preventDefault();
     if (!confirm("Preassign this team?")) return;
     const f = new FormData(e.currentTarget);
-    setError("");
-    setMessage("");
     try {
       await api(`/leagues/${league.id}/preassigns`, json("POST", {
         member_id: f.get("member"),
         team_id: f.get("team"),
         pool_id: f.get("pool"),
       }));
-      setMessage("Team preassigned.");
+      toast({ message: "Team preassigned." });
       onLeagueChange?.();
       loadPoolTeams();
     } catch (err) {
-      setError(errorMessage(err));
+      toast({
+        message: errorMessage(err),
+        tone: "error",
+        durationMs: 6000,
+        dismissible: true,
+      });
     }
   }
 
   return (
     <Stack gap="md">
-      {error && <ErrorState error={error} retry={loadPoolTeams} />}
-      {message && <StatusBanner>{message}</StatusBanner>}
+      {loadError && <ErrorState error={loadError} retry={loadPoolTeams} />}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <DraftOrderSection
           league={league}

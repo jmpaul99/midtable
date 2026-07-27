@@ -1,10 +1,12 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { api, errorMessage, formatNumber } from "@/lib/api";
 import type { MatchweekRow, PpgRow, UpsetRow, UUID } from "@/lib/types";
 import { Empty, ErrorState, Loading } from "@/components/ui/State";
 import { Card, Muted, Stack, StatTile } from "@/components/ui/Card";
+import { MatchLog } from "./MatchLog";
 import { TeamLink } from "./TeamLink";
 import { ManagerLink } from "./ManagerLink";
 
@@ -237,6 +239,21 @@ export function StatsDashboard({ leagueId }: { leagueId: UUID }) {
               })}
             </ul>
           )}
+        </Stack>
+      </Card>
+
+      <Card className="min-w-0 overflow-hidden">
+        <Stack>
+          <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between sm:gap-3">
+            <h2 className="text-lg sm:text-xl">Recent match log</h2>
+            <Link
+              href={`/leagues/${leagueId}/matches`}
+              className="text-sm font-bold text-brand hover:underline"
+            >
+              View all matches
+            </Link>
+          </div>
+          <MatchLog leagueId={leagueId} limit={20} compact />
         </Stack>
       </Card>
     </Stack>

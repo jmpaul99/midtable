@@ -10,12 +10,16 @@ from datetime import date
 from sqlalchemy import delete, or_, select
 from sqlalchemy.orm import Session
 
+from decimal import Decimal
+
 from app.models import (
     League,
     PoolTeam,
     RankingCatalog,
     RankingCatalogEntry,
     RankingCatalogTeamOverride,
+    RankingFreeze,
+    RankingFreezeEntry,
     RankingList,
     Team,
     TeamPool,
@@ -23,6 +27,7 @@ from app.models import (
 )
 from app.providers.fifa_rankings import FifaRankingRow, ParseFifaRankingsProvider
 from app.services.rankings import fuzzy_match_score, parse_ranking_text
+from app.services.scoring import RankedTeam, UpsetRules
 
 logger = logging.getLogger(__name__)
 
@@ -149,17 +154,16 @@ def sync_fifa_catalogs(db: Session, provider: ParseFifaRankingsProvider) -> dict
             db.add(catalog)
             db.flush()
         replace_catalog_entries(db, catalog, rows)
-        rematerialized = rematerialize_catalog_to_leagues(db, catalog)
+        # Unlocked leagues read catalogs live; no per-league rematerialize.
         results[key] = {
             "entries": len(rows),
             "as_of": catalog.as_of.isoformat() if catalog.as_of else None,
-            "leagues_updated": rematerialized,
+            "leagues_updated": 0,
         }
         logger.info(
-            "fifa catalog synced key=%s entries=%s leagues_updated=%s",
+            "fifa catalog synced key=%s entries=%s",
             key,
             len(rows),
-            rematerialized,
         )
     db.commit()
     return {"ok": True, "catalogs": results}
@@ -304,18 +308,13 @@ def ensure_league_ranking_list(
     return row
 
 
-def materialize_catalog_into_league(
-    db: Session, league: League, catalog: RankingCatalog
-) -> dict:
-    ranking_list = ensure_league_ranking_list(db, league, catalog)
-    if ranking_list.locked:
-        return {
-            "league_id": str(league.public_id),
-            "skipped": "locked",
-            "matched": 0,
-            "unmatched": 0,
-        }
-
+def resolve_catalog_team_ranks(
+    db: Session,
+    catalog: RankingCatalog,
+    *,
+    sample_league: League | None = None,
+) -> dict[int, int]:
+    """Map team_id -> rank from live catalog entries + overrides."""
     entries = list(
         db.scalars(
             select(RankingCatalogEntry)
@@ -331,16 +330,8 @@ def materialize_catalog_into_league(
         ).all()
     )
     by_code, by_name = _override_map(overrides)
-    teams = candidate_teams_for_catalog(db, catalog, sample_league=league)
-
-    for existing in db.scalars(
-        select(TeamRanking).where(TeamRanking.ranking_list_id == ranking_list.id)
-    ).all():
-        db.delete(existing)
-    db.flush()
-
-    matched = 0
-    seen_teams: set[int] = set()
+    teams = candidate_teams_for_catalog(db, catalog, sample_league=sample_league)
+    ranks: dict[int, int] = {}
     for entry in entries:
         team = match_team_for_entry(
             entry,
@@ -348,51 +339,112 @@ def materialize_catalog_into_league(
             overrides_by_code=by_code,
             overrides_by_name=by_name,
         )
-        if team is None or team.id in seen_teams:
+        if team is None or team.id in ranks:
             continue
-        seen_teams.add(team.id)
+        ranks[team.id] = entry.rank
+    return ranks
+
+
+def ensure_or_create_ranking_freeze(
+    db: Session,
+    catalog: RankingCatalog,
+    *,
+    as_of: date | None = None,
+    sample_league: League | None = None,
+) -> RankingFreeze:
+    """Create or reuse a shared freeze for catalog at as_of."""
+    freeze_as_of = as_of or catalog.as_of or date.today()
+    existing = db.scalars(
+        select(RankingFreeze).where(
+            RankingFreeze.catalog_id == catalog.id,
+            RankingFreeze.as_of == freeze_as_of,
+        )
+    ).first()
+    if existing is not None:
+        return existing
+
+    freeze = RankingFreeze(catalog_id=catalog.id, as_of=freeze_as_of)
+    db.add(freeze)
+    db.flush()
+    ranks = resolve_catalog_team_ranks(db, catalog, sample_league=sample_league)
+    for team_id, rank in ranks.items():
         db.add(
-            TeamRanking(
-                ranking_list_id=ranking_list.id,
-                team_id=team.id,
-                rank=entry.rank,
+            RankingFreezeEntry(
+                freeze_id=freeze.id,
+                team_id=team_id,
+                rank=rank,
             )
         )
-        matched += 1
-    # Unmatched = national competition teams in the league without a FIFA rank.
-    unmatched = sum(1 for t in teams if t.id not in seen_teams)
+    db.flush()
+    logger.info(
+        "ranking freeze created catalog=%s as_of=%s teams=%s",
+        catalog.key,
+        freeze_as_of.isoformat(),
+        len(ranks),
+    )
+    return freeze
+
+
+def materialize_catalog_into_league(
+    db: Session, league: League, catalog: RankingCatalog
+) -> dict:
+    """Ensure league ranking_list metadata exists; unlocked catalogs stay live."""
+    ranking_list = ensure_league_ranking_list(db, league, catalog)
+    if ranking_list.locked:
+        entry_count = 0
+        if ranking_list.freeze_id:
+            entry_count = len(
+                db.scalars(
+                    select(RankingFreezeEntry).where(
+                        RankingFreezeEntry.freeze_id == ranking_list.freeze_id
+                    )
+                ).all()
+            )
+        return {
+            "league_id": str(league.public_id),
+            "skipped": "locked",
+            "matched": entry_count,
+            "unmatched": 0,
+        }
+
+    # Drop any stale unlocked team_rankings copies for catalog-backed lists.
+    for existing in db.scalars(
+        select(TeamRanking).where(TeamRanking.ranking_list_id == ranking_list.id)
+    ).all():
+        db.delete(existing)
+    db.flush()
+
+    ranks = resolve_catalog_team_ranks(db, catalog, sample_league=league)
+    teams = candidate_teams_for_catalog(db, catalog, sample_league=league)
+    unmatched = sum(1 for t in teams if t.id not in ranks)
     return {
         "league_id": str(league.public_id),
-        "matched": matched,
+        "matched": len(ranks),
         "unmatched": unmatched,
     }
 
 
 def rematerialize_catalog_to_leagues(db: Session, catalog: RankingCatalog) -> int:
-    leagues_by_id: dict[int, League] = {}
+    """Refresh unlocked league list metadata for a catalog (no rank copies)."""
+    updated = 0
     for league in db.scalars(select(League)).all():
         rules = league.upset_rules or {}
-        if (
+        uses_catalog = (
             rules.get("rank_source") == "fixed_ranking_at_event_start"
             and rules.get("ranking_list_key") == catalog.key
-        ):
-            leagues_by_id[league.id] = league
-    for ranking_list in db.scalars(
-        select(RankingList).where(
-            RankingList.key == catalog.key,
-            RankingList.locked.is_(False),
         )
-    ).all():
-        if ranking_list.league_id not in leagues_by_id:
-            league = db.get(League, ranking_list.league_id)
-            if league is not None:
-                leagues_by_id[league.id] = league
-
-    updated = 0
-    for league in leagues_by_id.values():
-        result = materialize_catalog_into_league(db, league, catalog)
-        if result.get("skipped") != "locked":
-            updated += 1
+        ranking_list = db.scalars(
+            select(RankingList).where(
+                RankingList.league_id == league.id,
+                RankingList.key == catalog.key,
+            )
+        ).first()
+        if not uses_catalog and ranking_list is None:
+            continue
+        if ranking_list is not None and ranking_list.locked:
+            continue
+        materialize_catalog_into_league(db, league, catalog)
+        updated += 1
     return updated
 
 
@@ -428,6 +480,7 @@ def upsert_override(
     row.provider = provider
     row.external_team_id = external_team_id
     db.flush()
+    # Live catalog reads pick up overrides immediately; refresh list metadata only.
     rematerialize_catalog_to_leagues(db, catalog)
     db.commit()
     db.refresh(row)
@@ -625,11 +678,24 @@ def league_ranking_status(db: Session, league: League) -> list[dict]:
     status: list[dict] = []
     for row in rows:
         catalog = catalogs_by_key.get(row.key)
-        entry_count = len(
-            db.scalars(
-                select(TeamRanking).where(TeamRanking.ranking_list_id == row.id)
-            ).all()
-        )
+        if row.locked and row.freeze_id:
+            entry_count = len(
+                db.scalars(
+                    select(RankingFreezeEntry).where(
+                        RankingFreezeEntry.freeze_id == row.freeze_id
+                    )
+                ).all()
+            )
+        elif row.source == "manual" or catalog is None:
+            entry_count = len(
+                db.scalars(
+                    select(TeamRanking).where(TeamRanking.ranking_list_id == row.id)
+                ).all()
+            )
+        else:
+            entry_count = len(
+                resolve_catalog_team_ranks(db, catalog, sample_league=league)
+            )
         unmatched = 0
         if catalog is not None and not row.locked:
             unmatched = len(unmatched_for_catalog(db, catalog, sample_league=league))
@@ -649,6 +715,8 @@ def league_ranking_status(db: Session, league: League) -> list[dict]:
     if key and not any(s["key"] == key for s in status):
         catalog = catalogs_by_key.get(key)
         if catalog is not None:
+            ranks = resolve_catalog_team_ranks(db, catalog, sample_league=league)
+            unmatched = len(unmatched_for_catalog(db, catalog, sample_league=league))
             status.append(
                 {
                     "id": catalog.public_id,
@@ -657,16 +725,126 @@ def league_ranking_status(db: Session, league: League) -> list[dict]:
                     "source": catalog.source,
                     "as_of": catalog.as_of,
                     "locked": False,
-                    "entry_count": 0,
-                    "unmatched_count": 0,
+                    "entry_count": len(ranks),
+                    "unmatched_count": unmatched,
                     "is_selected": True,
                 }
             )
     return status
 
 
+def ranks_for_league(
+    db: Session,
+    league: League,
+    upset_rules: UpsetRules,
+) -> dict[int, RankedTeam] | None:
+    """Resolve fixed ranks: freeze if locked, else live catalog or manual list."""
+    if upset_rules.rank_source != "fixed_ranking_at_event_start":
+        return None
+    key = upset_rules.ranking_list_key
+    if not key:
+        return None
+
+    ranking_list = db.scalars(
+        select(RankingList).where(
+            RankingList.league_id == league.id,
+            RankingList.key == key,
+        )
+    ).first()
+    catalog = db.scalars(
+        select(RankingCatalog).where(RankingCatalog.key == key)
+    ).first()
+
+    team_ranks: dict[int, int] = {}
+    if ranking_list is not None and ranking_list.locked and ranking_list.freeze_id:
+        for row in db.scalars(
+            select(RankingFreezeEntry).where(
+                RankingFreezeEntry.freeze_id == ranking_list.freeze_id
+            )
+        ).all():
+            team_ranks[row.team_id] = row.rank
+    elif catalog is not None and (
+        ranking_list is None or ranking_list.source != "manual"
+    ):
+        team_ranks = resolve_catalog_team_ranks(db, catalog, sample_league=league)
+    elif ranking_list is not None:
+        for row in db.scalars(
+            select(TeamRanking).where(TeamRanking.ranking_list_id == ranking_list.id)
+        ).all():
+            team_ranks[row.team_id] = row.rank
+    else:
+        return None
+
+    if not team_ranks:
+        return None
+
+    played = max(upset_rules.min_played, 0)
+    return {
+        team_id: RankedTeam(
+            team_id=team_id,
+            rank=rank,
+            played=played,
+            points=Decimal(0),
+            goals_for=0,
+            goals_against=0,
+            goal_difference=0,
+        )
+        for team_id, rank in team_ranks.items()
+    }
+
+
+def freeze_catalog_for_league_lock(db: Session, league: League, key: str) -> int:
+    """Lock league ranking list and attach shared catalog freeze."""
+    catalog = db.scalars(
+        select(RankingCatalog).where(RankingCatalog.key == key)
+    ).first()
+    ranking_list = db.scalars(
+        select(RankingList).where(
+            RankingList.league_id == league.id,
+            RankingList.key == key,
+        )
+    ).first()
+
+    if ranking_list is not None and ranking_list.locked:
+        return 0
+
+    if catalog is not None:
+        if ranking_list is None:
+            ranking_list = ensure_league_ranking_list(db, league, catalog)
+        freeze = ensure_or_create_ranking_freeze(
+            db, catalog, as_of=catalog.as_of, sample_league=league
+        )
+        ranking_list.freeze_id = freeze.id
+        ranking_list.as_of = freeze.as_of
+        ranking_list.locked = True
+        # Catalog-backed lists should not keep unlocked team_rankings copies.
+        for existing in db.scalars(
+            select(TeamRanking).where(TeamRanking.ranking_list_id == ranking_list.id)
+        ).all():
+            db.delete(existing)
+        db.flush()
+        logger.info(
+            "auto-locked ranking via freeze league_id=%s key=%s freeze_id=%s",
+            league.public_id,
+            key,
+            freeze.id,
+        )
+        return 1
+
+    if ranking_list is None:
+        return 0
+    ranking_list.locked = True
+    db.flush()
+    logger.info(
+        "auto-locked manual ranking list league_id=%s key=%s",
+        league.public_id,
+        key,
+    )
+    return 1
+
+
 def ensure_fixed_ranking_for_league(db: Session, league: League) -> None:
-    """Materialize catalog ranks when league uses fixed ranking source."""
+    """Ensure catalog-backed ranking list metadata exists for fixed-rank leagues."""
     rules = league.upset_rules or {}
     if rules.get("rank_source") != "fixed_ranking_at_event_start":
         return

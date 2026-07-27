@@ -50,7 +50,7 @@ function phaseScopeParts(
   const parts: string[] = [];
 
   if (isSeason) {
-    parts.push("Full season");
+    parts.push("Overall");
   } else {
     const scope =
       formatMatchweekRange(source?.matchweek_range ?? selected?.matchweek_range) ||
@@ -139,7 +139,7 @@ export function Leaderboard({ league }: { league: League }) {
               variant={phase === SEASON_KEY ? "primary" : "secondary"}
               onClick={() => setPhase(SEASON_KEY)}
               className="shrink-0"
-              title="Full season standings"
+              title="Overall standings"
             >
               Season
             </Button>
@@ -174,7 +174,7 @@ export function Leaderboard({ league }: { league: League }) {
                 <tr>
                   <th className="px-3 py-2.5 font-bold">#</th>
                   <th className="px-3 py-2.5 font-bold">Team</th>
-                  <th className="px-3 py-2.5 font-bold">Owner</th>
+                  <th className="hidden px-3 py-2.5 font-bold sm:table-cell">Owner</th>
                   <th className="px-3 py-2.5 text-right font-bold">Pts</th>
                 </tr>
               </thead>
@@ -216,7 +216,7 @@ export function Leaderboard({ league }: { league: League }) {
                           {teamName}
                         </span>
                       </td>
-                      <td className="max-w-[7rem] truncate px-3 py-3 align-middle text-muted sm:max-w-[10rem]">
+                      <td className="hidden max-w-[7rem] truncate px-3 py-3 align-middle text-muted sm:table-cell sm:max-w-[10rem]">
                         {ownerName || "—"}
                       </td>
                       <td className="px-3 py-3 text-right align-middle">

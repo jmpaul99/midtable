@@ -150,7 +150,7 @@ export function DraftOrderSection({
                   variant="secondary"
                   size="icon-sm"
                   label="Move up"
-                  disabled={index === 0}
+                  disabled={!settingsEditable || index === 0}
                   onClick={() => onMove(index, -1)}
                 >
                   <ChevronUpIcon className="size-4" />
@@ -160,7 +160,7 @@ export function DraftOrderSection({
                   variant="secondary"
                   size="icon-sm"
                   label="Move down"
-                  disabled={index === draftOrder.length - 1}
+                  disabled={!settingsEditable || index === draftOrder.length - 1}
                   onClick={() => onMove(index, 1)}
                 >
                   <ChevronDownIcon className="size-4" />
@@ -169,12 +169,19 @@ export function DraftOrderSection({
             );
           })}
         </Stack>
-        <div className="flex justify-start">
-          <IconButton type="button" label="Save draft order" variant="primary" onClick={onSaveOrder}>
-            <SaveIcon />
-          </IconButton>
-        </div>
-        {showPreassignTools && (
+        {!settingsEditable && (
+          <Muted className="text-xs">
+            Draft order is locked after the draft opens.
+          </Muted>
+        )}
+        {settingsEditable && (
+          <div className="flex justify-start">
+            <IconButton type="button" label="Save draft order" variant="primary" onClick={onSaveOrder}>
+              <SaveIcon />
+            </IconButton>
+          </div>
+        )}
+        {showPreassignTools && settingsEditable && (
           <form className="flex flex-col gap-3" onSubmit={onPreassign}>
             <Label>
               Competition

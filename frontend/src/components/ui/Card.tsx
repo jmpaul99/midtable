@@ -75,11 +75,14 @@ export function Muted({ children, className }: { children?: ReactNode; className
 
 export function PageHeader({
   eyebrow,
+  breadcrumbs,
   title,
   description,
   actions,
 }: {
   eyebrow?: ReactNode;
+  /** Hierarchical eyebrow trail (prefer over plain eyebrow on drill-down pages). */
+  breadcrumbs?: ReactNode;
   title: ReactNode;
   description?: ReactNode;
   actions?: ReactNode;
@@ -87,7 +90,7 @@ export function PageHeader({
   return (
     <header className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
       <div className="min-w-0">
-        {eyebrow && <Eyebrow>{eyebrow}</Eyebrow>}
+        {breadcrumbs ? breadcrumbs : eyebrow ? <Eyebrow>{eyebrow}</Eyebrow> : null}
         <h1 className="truncate">{title}</h1>
         {description && <Muted className="mt-1">{description}</Muted>}
       </div>

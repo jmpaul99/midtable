@@ -430,8 +430,8 @@ export function normalizePoolDefinitions(raw: unknown): PoolDefinition[] {
   return arr(raw).map((item, i) => {
     const p = (item && typeof item === "object" ? item : {}) as Record<string, unknown>;
     return {
-      key: str(p.key, `pool_${i + 1}`),
-      label: str(p.label, str(p.key, `Pool ${i + 1}`)),
+      key: str(p.key, `competition_${i + 1}`),
+      label: str(p.label, str(p.key, `Competition ${i + 1}`)),
       scores_match_results: p.scores_match_results !== false,
       slot_count: num(p.slot_count, 1),
       sort_order: num(p.sort_order, i + 1),

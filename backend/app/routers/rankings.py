@@ -13,6 +13,7 @@ from app.schemas.ranking_catalog import LeagueRankingStatusResponse
 from app.schemas.rankings import RankingImportRequest, RankingListCreate, RankingListResponse
 from app.services.ranking_catalog import (
     ensure_fixed_ranking_for_league,
+    freeze_catalog_for_league_lock,
     league_ranking_status,
 )
 from app.services.rankings import parse_ranking_text, suggest_team_matches
@@ -189,12 +190,16 @@ def lock_ranking_list(
     ).first()
     if ranking_list is None:
         raise HTTPException(status_code=404, detail="Ranking list not found")
-    ranking_list.locked = True
+    if ranking_list.locked:
+        return {"id": str(ranking_list.public_id), "locked": True}
+    freeze_catalog_for_league_lock(db, league, ranking_list.key)
     db.commit()
+    db.refresh(ranking_list)
     logger.info(
-        "ranking list locked league_id=%s list_id=%s key=%s",
+        "ranking list locked league_id=%s list_id=%s key=%s freeze_id=%s",
         league.public_id,
         ranking_list.public_id,
         ranking_list.key,
+        ranking_list.freeze_id,
     )
     return {"id": str(ranking_list.public_id), "locked": True}

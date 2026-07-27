@@ -10,6 +10,7 @@ import { SaveIcon } from "@/components/ui/icons";
 import { Card, Eyebrow, Muted, Stack } from "@/components/ui/Card";
 import { Input, Label } from "@/components/ui/Field";
 import { ThemeSwitcher } from "@/components/ThemeSwitcher";
+import { useToast } from "@/components/ui/ToastProvider";
 
 export default function ProfilePage() {
   return (
@@ -22,18 +23,19 @@ export default function ProfilePage() {
 function ProfileForm() {
   const [me, setMe] = useState<Me>();
   const [displayName, setDisplayName] = useState("");
-  const [error, setError] = useState("");
-  const [message, setMessage] = useState("");
+  const [loadError, setLoadError] = useState("");
+  const [validation, setValidation] = useState("");
   const [busy, setBusy] = useState(false);
+  const { toast } = useToast();
 
   const load = useCallback(() => {
-    setError("");
+    setLoadError("");
     api<Me>("/auth/me")
       .then((profile) => {
         setMe(profile);
         setDisplayName(profile.display_name);
       })
-      .catch((e) => setError(errorMessage(e)));
+      .catch((e) => setLoadError(errorMessage(e)));
   }, []);
 
   useEffect(() => {
@@ -44,26 +46,30 @@ function ProfileForm() {
     e.preventDefault();
     const name = displayName.trim();
     if (!name) {
-      setMessage("Display name is required.");
+      setValidation("Display name is required.");
       return;
     }
     setBusy(true);
-    setMessage("");
-    setError("");
+    setValidation("");
     try {
       const updated = await api<Me>("/auth/me", json("PATCH", { display_name: name }));
       setMe(updated);
       setDisplayName(updated.display_name);
-      setMessage("Profile saved.");
+      toast({ message: "Profile saved." });
     } catch (err) {
-      setError(errorMessage(err));
+      toast({
+        message: errorMessage(err),
+        tone: "error",
+        durationMs: 6000,
+        dismissible: true,
+      });
     } finally {
       setBusy(false);
     }
   }
 
-  if (error && !me) {
-    return <ErrorState error={error} retry={load} />;
+  if (loadError && !me) {
+    return <ErrorState error={loadError} retry={load} />;
   }
 
   if (!me) {
@@ -121,11 +127,7 @@ function ProfileForm() {
             <ThemeSwitcher />
           </div>
 
-          {(message || error) && (
-            <StatusBanner tone={error || /required/i.test(message) ? "error" : "info"}>
-              {error || message}
-            </StatusBanner>
-          )}
+          {validation && <StatusBanner tone="error">{validation}</StatusBanner>}
         </Stack>
       </Card>
     </section>

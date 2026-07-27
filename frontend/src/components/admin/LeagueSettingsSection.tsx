@@ -3,10 +3,10 @@
 import { FormEvent, useState } from "react";
 import { api, errorMessage, json } from "@/lib/api";
 import type { Bonus, League, Manager, PoolTeam } from "@/lib/types";
-import { StatusBanner } from "@/components/ui/State";
 import { IconButton } from "@/components/ui/IconButton";
 import { SaveIcon } from "@/components/ui/icons";
 import { Card, Muted, Stack } from "@/components/ui/Card";
+import { useToast } from "@/components/ui/ToastProvider";
 import { cn } from "@/lib/cn";
 import { BonusesSection } from "./BonusesSection";
 import type { BonusTypeRow } from "./useAdminLeagueData";
@@ -61,15 +61,12 @@ export function LeagueSettingsSection({
   const [tiebreaks, setTiebreaks] = useState<TiebreakRung[]>(() =>
     normalizeTiebreaks(league.leaderboard_tiebreaks),
   );
-  const [message, setMessage] = useState("");
-  const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const { toast } = useToast();
 
   async function save(e: FormEvent) {
     e.preventDefault();
     setBusy(true);
-    setError("");
-    setMessage("");
     try {
       await api(
         `/leagues/${league.id}/settings`,
@@ -84,10 +81,19 @@ export function LeagueSettingsSection({
           })),
         }),
       );
-      setMessage("Scoring settings saved. If values changed, run Recompute scores.");
+      toast({
+        message: "Scoring settings saved. If values changed, run Recompute scores.",
+        durationMs: 6000,
+        dismissible: true,
+      });
       onSaved?.();
     } catch (err) {
-      setError(errorMessage(err));
+      toast({
+        message: errorMessage(err),
+        tone: "error",
+        durationMs: 6000,
+        dismissible: true,
+      });
     } finally {
       setBusy(false);
     }
@@ -100,8 +106,6 @@ export function LeagueSettingsSection({
           Points, upsets, tiebreaks, and bonuses. Changing scoring after matches exist requires a
           recompute.
         </Muted>
-        {error && <StatusBanner tone="error">{error}</StatusBanner>}
-        {message && <StatusBanner tone="success">{message}</StatusBanner>}
 
         <div
           className="flex gap-1 overflow-x-auto rounded-xl bg-surface-2 p-1"

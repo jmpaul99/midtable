@@ -39,7 +39,7 @@ function formatDetail(detail: unknown): string {
       if (Array.isArray(obj.blockers) && obj.blockers.length) {
         extras.push(`${obj.blockers.length} blocker(s)`);
       }
-      if (obj.pool_key) extras.push(`pool ${String(obj.pool_key)}`);
+      if (obj.pool_key) extras.push(`competition ${String(obj.pool_key)}`);
       if (obj.provider_message) extras.push(String(obj.provider_message));
       return extras.length ? `${obj.message} (${extras.join("; ")})` : obj.message;
     }

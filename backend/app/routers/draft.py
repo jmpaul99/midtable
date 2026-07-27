@@ -187,8 +187,11 @@ def set_draft_order(
     db: Session = Depends(get_db),
 ) -> list[MemberResponse]:
     league, _ = membership
-    if league.status == "drafting":
-        raise HTTPException(status_code=409, detail="Draft order locked once drafting")
+    if league.status != "pre_draft":
+        raise HTTPException(
+            status_code=409,
+            detail="Draft order can only be changed before the draft opens",
+        )
     members = {
         m.public_id: m
         for m in db.scalars(
@@ -241,13 +244,13 @@ def preassign_team(
         )
     ).first()
     if not member or not pool:
-        raise HTTPException(status_code=404, detail="Manager or pool not found")
+        raise HTTPException(status_code=404, detail="Manager or competition not found")
     team = team_in_league(db, league.id, payload.team_id)
     in_pool = db.scalars(
         select(PoolTeam).where(PoolTeam.pool_id == pool.id, PoolTeam.team_id == team.id)
     ).first()
     if in_pool is None:
-        raise HTTPException(status_code=400, detail="Team is not in the selected pool")
+        raise HTTPException(status_code=400, detail="Team is not in the selected competition")
     existing = db.scalars(
         select(RosterEntry).where(
             RosterEntry.league_id == league.id,

@@ -2,6 +2,8 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { cn } from "@/lib/cn";
 
 export type NavItem = {
@@ -33,7 +35,7 @@ export function leagueNavItems(
   };
   const core: NavItem[] = [
     { href: `/leagues/${leagueId}`, label: "Standings", exact: true },
-    { href: `/leagues/${leagueId}/roster`, label: "Roster" },
+    { href: `/leagues/${leagueId}/roster`, label: "Rosters" },
     { href: `/leagues/${leagueId}/matches`, label: "Matches" },
     { href: `/leagues/${leagueId}/stats`, label: "Stats" },
   ];
@@ -86,34 +88,53 @@ export function LeagueDesktopTabs({ items }: { items: NavItem[] }) {
 
 export function LeagueBottomNav({ items }: { items: NavItem[] }) {
   const pathname = usePathname();
-  return (
+  const [mounted, setMounted] = useState(false);
+  const activeRef = useRef<HTMLAnchorElement | null>(null);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  useEffect(() => {
+    activeRef.current?.scrollIntoView({
+      inline: "center",
+      block: "nearest",
+      behavior: "smooth",
+    });
+  }, [pathname, items]);
+
+  if (!mounted) return null;
+
+  return createPortal(
     <nav
       className="fixed inset-x-0 bottom-0 z-30 border-t border-line bg-bg/95 backdrop-blur-md md:hidden [padding-left:max(0.25rem,env(safe-area-inset-left))] [padding-right:max(0.25rem,env(safe-area-inset-right))]"
       style={{ paddingBottom: "max(0.5rem, env(safe-area-inset-bottom))" }}
       aria-label="League sections"
     >
-      <div className="mx-auto flex max-w-3xl items-stretch justify-around gap-0.5 px-1 pt-1.5">
+      <div className="mx-auto flex max-w-3xl gap-1 overflow-x-auto overscroll-x-contain px-2 pt-1.5 snap-x [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
         {items.map((item) => {
           const active = isActive(pathname, item);
           return (
             <Link
               key={item.href}
               href={item.href}
+              ref={active ? activeRef : undefined}
               className={cn(
-                "flex min-h-12 min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-xl px-1 py-1.5 text-[0.75rem] font-bold leading-tight transition",
+                "snap-start inline-flex min-h-12 shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-xl px-3 py-1.5 text-sm font-bold transition",
                 item.emphasized && "bg-brand text-on-brand shadow-sm",
                 !item.emphasized && active && "bg-brand/10 text-brand",
                 !item.emphasized && !active && "text-muted",
               )}
             >
               {item.emphasized && (
-                <span className="size-1.5 animate-pulse rounded-full bg-on-brand" aria-hidden />
+                <span className="size-1.5 shrink-0 animate-pulse rounded-full bg-on-brand" aria-hidden />
               )}
-              <span className="max-w-full truncate">{item.label}</span>
+              {item.label}
             </Link>
           );
         })}
       </div>
-    </nav>
+    </nav>,
+    document.body,
   );
 }

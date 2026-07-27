@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.auth.jwt import get_current_profile
 from app.db import get_db
-from app.deps import require_commissioner, team_in_league
+from app.deps import require_commissioner, require_league_member, team_in_league
 from app.logging_config import log_id
 from app.models import (
     BonusType,
@@ -21,6 +21,7 @@ from app.models import (
     Team,
 )
 from app.schemas.admin import BonusTypeCreate, BonusTypeUpdate, ManualBonusCreate
+from app.services.match_queries import pool_for_match
 from app.services.members import member_label
 
 logger = logging.getLogger(__name__)
@@ -30,7 +31,7 @@ router = APIRouter(tags=["admin"])
 
 @router.get("/leagues/{league_id}/bonus-types")
 def list_bonus_types(
-    membership: tuple[League, LeagueMember] = Depends(require_commissioner),
+    membership: tuple[League, LeagueMember] = Depends(require_league_member),
     db: Session = Depends(get_db),
 ) -> list[dict]:
     league, _ = membership
@@ -252,13 +253,8 @@ def award_manual_bonus(
 
     if payload.target == "match":
         assert payload.match_id is not None
-        match = db.scalars(
-            select(Match).where(
-                Match.public_id == payload.match_id,
-                Match.league_id == league.id,
-            )
-        ).first()
-        if match is None:
+        match = db.scalars(select(Match).where(Match.public_id == payload.match_id)).first()
+        if match is None or pool_for_match(db, league, match) is None:
             raise HTTPException(status_code=404, detail="match not found")
         assert team is not None
         if team.id not in (match.home_team_id, match.away_team_id):

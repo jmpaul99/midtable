@@ -1,10 +1,10 @@
 "use client";
 
-import Link from "next/link";
 import { use } from "react";
 import { useLeague } from "@/components/LeagueShell";
 import { SnapshotAudit } from "@/components/SnapshotAudit";
-import { Muted, Stack } from "@/components/ui/Card";
+import { PageHeader, Stack } from "@/components/ui/Card";
+import { Breadcrumbs } from "@/components/ui/Breadcrumbs";
 
 export default function MatchSnapshotPage({
   params,
@@ -15,15 +15,18 @@ export default function MatchSnapshotPage({
   const league = useLeague();
   return (
     <Stack gap="md" className="animate-in">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <Muted className="min-w-0 break-all">Snapshot audit for match {matchId}</Muted>
-        <Link
-          href={`/leagues/${league.id}/matches`}
-          className="inline-flex min-h-11 w-full shrink-0 items-center justify-center rounded-xl border border-line bg-surface px-4 py-2.5 text-sm font-bold hover:bg-surface-2 sm:w-auto"
-        >
-          Back to match log
-        </Link>
-      </div>
+      <PageHeader
+        breadcrumbs={
+          <Breadcrumbs
+            items={[
+              { label: "Matches", href: `/leagues/${league.id}/matches` },
+              { label: "Snapshot" },
+            ]}
+          />
+        }
+        title="Match snapshot"
+        description={`Snapshot audit for match ${matchId}`}
+      />
       <SnapshotAudit leagueId={league.id} matchId={matchId} />
     </Stack>
   );

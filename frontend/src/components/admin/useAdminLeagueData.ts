@@ -12,6 +12,7 @@ import type {
   SyncStatus,
   UUID,
 } from "@/lib/types";
+import { useToast } from "@/components/ui/ToastProvider";
 
 export interface BonusTypeRow {
   id: UUID;
@@ -23,6 +24,7 @@ export interface BonusTypeRow {
 }
 
 export function useAdminLeagueData(league: League, onLeagueChange?: () => void) {
+  const { toast } = useToast();
   const [invites, setInvites] = useState<Invite[]>();
   const [joinLink, setJoinLink] = useState<JoinLink>();
   const [bonuses, setBonuses] = useState<Bonus[]>();
@@ -31,7 +33,6 @@ export function useAdminLeagueData(league: League, onLeagueChange?: () => void) 
   const [poolTeams, setPoolTeams] = useState<Record<string, PoolTeam[]>>({});
   const [readiness, setReadiness] = useState<Readiness>();
   const [error, setError] = useState("");
-  const [message, setMessage] = useState("");
 
   const load = useCallback(() => {
     setError("");
@@ -46,7 +47,7 @@ export function useAdminLeagueData(league: League, onLeagueChange?: () => void) 
       safe(api<Bonus[]>(`/leagues/${league.id}/manual-bonuses`), []),
       safe(api<BonusTypeRow[]>(`/leagues/${league.id}/bonus-types`), []),
       safe(api<SyncStatus[]>(`/leagues/${league.id}/sync-status`), []),
-      safe(api<Readiness>(`/leagues/${league.id}/readiness`), {
+      safe(api<Readiness>(`/leagues/${league.id}/readiness?purpose=sync`), {
         ready: false,
         checks: [
           {
@@ -84,34 +85,86 @@ export function useAdminLeagueData(league: League, onLeagueChange?: () => void) 
     load();
   }, [load]);
 
-  async function action(path: string, method: string, body?: unknown) {
-    setError("");
-    setMessage("");
+  async function action(
+    path: string,
+    method: string,
+    body?: unknown,
+    opts?: { quiet?: boolean },
+  ) {
     try {
       const out = await api<Record<string, unknown>>(path, json(method, body));
-      setMessage(summarizeAction(out));
+      if (!opts?.quiet) {
+        const summary = summarizeAction(out);
+        const isLong = summary.length > 120;
+        toast({
+          message: summary,
+          durationMs: isLong ? null : 4000,
+          dismissible: isLong ? true : undefined,
+        });
+      }
       load();
       onLeagueChange?.();
       return out;
     } catch (e) {
-      setError(errorMessage(e));
+      toast({
+        message: errorMessage(e),
+        tone: "error",
+        durationMs: 6000,
+        dismissible: true,
+      });
+    }
+  }
+
+  const [joinLinkBusy, setJoinLinkBusy] = useState(false);
+
+  async function updateJoinLink(body: { enabled?: boolean; rotate?: boolean }) {
+    setJoinLinkBusy(true);
+    const previous = joinLink;
+    if (typeof body.enabled === "boolean") {
+      setJoinLink((current) =>
+        current
+          ? { ...current, enabled: body.enabled! }
+          : { enabled: body.enabled!, token: null, join_url: null },
+      );
+    }
+    try {
+      const out = await api<JoinLink>(`/leagues/${league.id}/join-link`, json("POST", body));
+      setJoinLink(out);
+      if (body.rotate) {
+        toast({ message: "Join link rotated." });
+      } else if (out.enabled) {
+        toast({ message: "Join link ready." });
+      } else {
+        toast({ message: "Join link disabled." });
+      }
+      return out;
+    } catch (e) {
+      setJoinLink(previous);
+      toast({
+        message: errorMessage(e),
+        tone: "error",
+        durationMs: 6000,
+        dismissible: true,
+      });
+    } finally {
+      setJoinLinkBusy(false);
     }
   }
 
   return {
     invites,
     joinLink,
+    joinLinkBusy,
     bonuses,
     bonusTypes,
     sync,
     poolTeams,
     readiness,
     error,
-    message,
-    setMessage,
-    setError,
     load,
     action,
+    updateJoinLink,
+    toast,
   };
 }
 

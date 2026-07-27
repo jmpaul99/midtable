@@ -6,6 +6,7 @@ import { formatDate } from "@/lib/format";
 import type { Invite, JoinLink, League, Manager, UUID } from "@/lib/types";
 import { managerLabel } from "@/lib/types";
 import { Status, StatusBanner } from "@/components/ui/State";
+import { useToast } from "@/components/ui/ToastProvider";
 import { IconButton } from "@/components/ui/IconButton";
 import {
   BanIcon,
@@ -95,6 +96,7 @@ export function LeagueMetaSettingsSection({
   bonusTypeOptions = [],
   invites,
   joinLink,
+  joinLinkBusy = false,
   atOrOverCap = false,
   maxMembers = null,
   onInvite,
@@ -111,12 +113,13 @@ export function LeagueMetaSettingsSection({
   bonusTypeOptions?: Array<{ value: string; label: string }>;
   invites?: Invite[];
   joinLink?: JoinLink;
+  joinLinkBusy?: boolean;
   atOrOverCap?: boolean;
   maxMembers?: number | null;
   onInvite?: (e: FormEvent<HTMLFormElement>) => void;
   onResendInvite?: (id: UUID) => void;
   onRevoke?: (id: UUID) => void;
-  onJoinLinkUpdate?: (body: { enabled?: boolean; rotate?: boolean }) => void;
+  onJoinLinkUpdate?: (body: { enabled?: boolean; rotate?: boolean }) => void | Promise<unknown>;
   onToggleCommissioner?: (memberId: UUID, isCommissioner: boolean) => void;
   onRemove?: (memberId: UUID) => void;
   onSaved?: () => void;
@@ -145,9 +148,9 @@ export function LeagueMetaSettingsSection({
   const [rosterClubOrder, setRosterClubOrder] = useState<RosterClubOrder>(() =>
     normalizeRosterClubOrder(league.roster_club_order),
   );
-  const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const { toast } = useToast();
 
   const serverPoolIds = (league.pools || []).map((p) => p.id).join(",");
   useEffect(() => {
@@ -161,6 +164,7 @@ export function LeagueMetaSettingsSection({
   }, [league.roster_club_order]);
 
   const memberCount = league.members?.length || 0;
+  const preDraft = league.status === "pre_draft";
 
   const managerCapacity = useMemo(() => {
     const parsed = Number(maxMembersValue);
@@ -198,7 +202,7 @@ export function LeagueMetaSettingsSection({
       setTab("basics");
       return;
     }
-    if (!Number.isInteger(parsedMax) || parsedMax < memberCount) {
+    if (preDraft && (!Number.isInteger(parsedMax) || parsedMax < memberCount)) {
       setError(
         memberCount > 0
           ? `Enter a whole number of managers at least ${memberCount} (current roster).`
@@ -227,7 +231,6 @@ export function LeagueMetaSettingsSection({
       competitionLoadSettingsChanged(league, pools, remove_pool_ids);
     setBusy(true);
     setError("");
-    setMessage("");
     try {
       await api(
         `/leagues/${league.id}/settings`,
@@ -235,7 +238,7 @@ export function LeagueMetaSettingsSection({
           name: trimmedName,
           season_label: trimmedSeason,
           buy_in: Number(buyIn),
-          max_members: parsedMax,
+          ...(preDraft ? { max_members: parsedMax } : {}),
           roster_club_order: rosterClubOrder,
           leaderboard_phases: phases,
           payouts,
@@ -274,19 +277,27 @@ export function LeagueMetaSettingsSection({
               season_year: Number(p.season_year),
             })),
           );
-          setMessage("League settings saved and clubs reloaded.");
+          toast({ message: "League settings saved and clubs reloaded." });
         } catch (reloadErr) {
-          setMessage("League settings saved.");
-          setError(
-            `Settings saved, but reloading clubs failed: ${errorMessage(reloadErr)}`,
-          );
+          toast({ message: "League settings saved." });
+          toast({
+            message: `Settings saved, but reloading clubs failed: ${errorMessage(reloadErr)}`,
+            tone: "error",
+            durationMs: 6000,
+            dismissible: true,
+          });
         }
       } else {
-        setMessage("League settings saved.");
+        toast({ message: "League settings saved." });
       }
       onSaved?.();
     } catch (err) {
-      setError(errorMessage(err));
+      toast({
+        message: errorMessage(err),
+        tone: "error",
+        durationMs: 6000,
+        dismissible: true,
+      });
     } finally {
       setBusy(false);
     }
@@ -297,7 +308,6 @@ export function LeagueMetaSettingsSection({
       <Stack>
         <Muted>Season identity, managers, competitions, phases, and payout structure.</Muted>
         {error && <StatusBanner tone="error">{error}</StatusBanner>}
-        {message && <StatusBanner tone="success">{message}</StatusBanner>}
 
         <div
           className="flex gap-1 overflow-x-auto rounded-xl bg-surface-2 p-1"
@@ -327,6 +337,7 @@ export function LeagueMetaSettingsSection({
               league={league}
               invites={invites}
               joinLink={joinLink}
+              joinLinkBusy={joinLinkBusy}
               atOrOverCap={atOrOverCap}
               maxMembers={maxMembers}
               onInvite={onInvite}
@@ -341,57 +352,49 @@ export function LeagueMetaSettingsSection({
           <form className="flex flex-col gap-4" onSubmit={save}>
             <div role="tabpanel">
               {tab === "basics" && (
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:items-start sm:gap-x-4 sm:gap-y-3">
-                  <Label className="min-w-0">
-                    League name
-                    <Input
-                      type="text"
-                      name="name"
-                      required
-                      maxLength={120}
-                      value={name}
-                      onChange={(e) => setName(e.target.value)}
-                    />
-                  </Label>
-                  <Label className="min-w-0">
-                    Season label
-                    <Input
-                      type="text"
-                      name="season_label"
-                      required
-                      maxLength={40}
-                      placeholder="2026-27"
-                      value={seasonLabel}
-                      onChange={(e) => setSeasonLabel(e.target.value)}
-                    />
-                  </Label>
-                  <Label className="min-w-0">
-                    Buy-in
-                    <Input
-                      type="number"
-                      step="0.01"
-                      value={buyIn}
-                      onChange={(e) => setBuyIn(e.target.value)}
-                    />
-                  </Label>
-                  <div className="min-w-0">
-                    <Label>
-                      Managers
-                    <Input
-                      type="number"
-                      name="max_members"
-                      min={Math.max(1, memberCount)}
-                      required
-                      value={maxMembersValue}
-                      onChange={(e) => setMaxMembersValue(e.target.value)}
-                    />
+                <div className="flex flex-col gap-3">
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 sm:items-start sm:gap-x-4">
+                    <Label className="min-w-0">
+                      League name
+                      <Input
+                        type="text"
+                        name="name"
+                        required
+                        maxLength={120}
+                        value={name}
+                        onChange={(e) => setName(e.target.value)}
+                      />
                     </Label>
-                    <Muted className="mt-1.5 font-normal text-[0.7rem] leading-snug">
-                      League size — how many managers (teams) this league holds. Draft opens
-                      when all have joined ({memberCount} of {Number(maxMembersValue) || "?"}{" "}
-                      now).
-                    </Muted>
+                    <Label className="min-w-0">
+                      Season label
+                      <Input
+                        type="text"
+                        name="season_label"
+                        required
+                        maxLength={40}
+                        placeholder="2026-27"
+                        value={seasonLabel}
+                        onChange={(e) => setSeasonLabel(e.target.value)}
+                      />
+                    </Label>
+                    <Label className="min-w-0">
+                      Managers
+                      <Input
+                        type="number"
+                        name="max_members"
+                        min={Math.max(1, memberCount)}
+                        required
+                        disabled={!preDraft}
+                        value={maxMembersValue}
+                        onChange={(e) => setMaxMembersValue(e.target.value)}
+                      />
+                    </Label>
                   </div>
+                  <Muted className="font-normal text-[0.7rem] leading-snug">
+                    {preDraft
+                      ? `League size — how many managers (teams) this league holds. Draft opens when all have joined (${memberCount} of ${Number(maxMembersValue) || "?"} now).`
+                      : `League size is locked after the draft opens (${memberCount} managers).`}
+                  </Muted>
                 </div>
               )}
               {tab === "pools" && (
@@ -423,14 +426,26 @@ export function LeagueMetaSettingsSection({
                 />
               )}
               {tab === "payouts" && (
-                <PayoutsEditor
-                  value={payouts}
-                  onChange={setPayouts}
-                  phaseOptions={phases.map((p) => ({
-                    value: p.key,
-                    label: p.label || p.key,
-                  }))}
-                />
+                <div className="flex flex-col gap-4">
+                  <Label className="max-w-xs">
+                    Buy-in
+                    <Input
+                      type="number"
+                      min={0}
+                      step="0.01"
+                      value={buyIn}
+                      onChange={(e) => setBuyIn(e.target.value)}
+                    />
+                  </Label>
+                  <PayoutsEditor
+                    value={payouts}
+                    onChange={setPayouts}
+                    phaseOptions={phases.map((p) => ({
+                      value: p.key,
+                      label: p.label || p.key,
+                    }))}
+                  />
+                </div>
               )}
             </div>
 
@@ -458,6 +473,7 @@ function ManagersInvitesPanel({
   league,
   invites,
   joinLink,
+  joinLinkBusy = false,
   atOrOverCap,
   maxMembers,
   onInvite,
@@ -470,17 +486,18 @@ function ManagersInvitesPanel({
   league: League;
   invites?: Invite[];
   joinLink?: JoinLink;
+  joinLinkBusy?: boolean;
   atOrOverCap: boolean;
   maxMembers: number | null;
   onInvite?: (e: FormEvent<HTMLFormElement>) => void;
   onResendInvite?: (id: UUID) => void;
   onRevoke?: (id: UUID) => void;
-  onJoinLinkUpdate?: (body: { enabled?: boolean; rotate?: boolean }) => void;
+  onJoinLinkUpdate?: (body: { enabled?: boolean; rotate?: boolean }) => void | Promise<unknown>;
   onToggleCommissioner?: (memberId: UUID, isCommissioner: boolean) => void;
   onRemove?: (memberId: UUID) => void;
 }) {
-  const preDraft = league.status === "pre_draft";
   const commissionerCount = league.members.filter((m) => m.is_commissioner).length;
+  const preDraft = league.status === "pre_draft";
   const sorted = [...league.members].sort((a, b) => {
     const sa = a.draft_slot ?? Number.POSITIVE_INFINITY;
     const sb = b.draft_slot ?? Number.POSITIVE_INFINITY;
@@ -488,6 +505,7 @@ function ManagersInvitesPanel({
     return managerLabel(a).localeCompare(managerLabel(b));
   });
   const [copied, setCopied] = useState(false);
+  const { toast } = useToast();
   const joinUrl =
     joinLink?.join_url ||
     (joinLink?.enabled && joinLink.token
@@ -510,6 +528,7 @@ function ManagersInvitesPanel({
     try {
       await navigator.clipboard.writeText(joinUrl);
       setCopied(true);
+      toast({ message: "Invite link copied", durationMs: 2000 });
       window.setTimeout(() => setCopied(false), 2000);
     } catch {
       /* ignore */
@@ -523,30 +542,42 @@ function ManagersInvitesPanel({
           <div className="min-w-0">
             <strong className="text-sm">Share join link</strong>
             <Muted className="mt-0.5 text-xs leading-snug">
-              Anyone with the link can sign up and claim a manager seat. Not tied to an email.
+              Anyone with this link can join your league.
             </Muted>
           </div>
           <label className="flex shrink-0 items-center gap-2">
             <Switch
               size="sm"
               checked={Boolean(joinLink?.enabled)}
+              disabled={joinLinkBusy}
               onChange={(e) => onJoinLinkUpdate?.({ enabled: e.target.checked })}
             />
             <span className="text-xs font-semibold text-muted">
-              {joinLink?.enabled ? "Enabled" : "Disabled"}
+              {joinLinkBusy ? "Updating…" : joinLink?.enabled ? "Enabled" : "Disabled"}
             </span>
           </label>
         </div>
-        {joinLink?.enabled && joinUrl && (
+        {joinLink?.enabled && (
           <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center">
-            <code className="min-w-0 flex-1 break-all rounded-lg border border-line bg-surface px-2.5 py-2 text-[0.7rem] text-muted">
-              {joinUrl}
-            </code>
+            {joinUrl ? (
+              <code className="min-w-0 flex-1 break-all rounded-lg border border-line bg-surface px-2.5 py-2 text-[0.7rem] text-muted">
+                {joinUrl}
+              </code>
+            ) : (
+              <div className="flex min-h-9 min-w-0 flex-1 items-center gap-2 rounded-lg border border-dashed border-line bg-surface px-2.5 py-2 text-xs font-semibold text-muted">
+                <span
+                  className="size-3.5 shrink-0 animate-spin rounded-full border-2 border-line border-t-brand"
+                  aria-hidden
+                />
+                Generating link…
+              </div>
+            )}
             <div className="flex flex-wrap gap-2">
               <IconButton
                 type="button"
                 size="icon-sm"
                 label={copied ? "Copied" : "Copy join link"}
+                disabled={!joinUrl || joinLinkBusy}
                 onClick={copyJoinLink}
               >
                 <CopyIcon className="size-4" />
@@ -555,13 +586,14 @@ function ManagersInvitesPanel({
                 type="button"
                 size="icon-sm"
                 label="Rotate join link"
+                busy={joinLinkBusy}
                 onClick={() => {
                   if (
                     confirm(
                       "Rotate the join link? The current link will stop working.",
                     )
                   ) {
-                    onJoinLinkUpdate?.({ rotate: true });
+                    void onJoinLinkUpdate?.({ rotate: true });
                   }
                 }}
               >

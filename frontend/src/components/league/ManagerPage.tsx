@@ -14,6 +14,7 @@ import {
   StatGrid,
   StatTile,
 } from "@/components/ui/Card";
+import { Breadcrumbs } from "@/components/ui/Breadcrumbs";
 import {
   compareRosterClubs,
   effectiveRosterClubOrder,
@@ -83,6 +84,12 @@ export function ManagerPage({
   return (
     <Stack gap="md" className="animate-in">
       <div className="min-w-0">
+        <Breadcrumbs
+          items={[
+            { label: "Rosters", href: `/leagues/${leagueId}/roster` },
+            { label: teamName },
+          ]}
+        />
         <div className="flex items-start gap-2.5 sm:items-center sm:gap-3">
           {detail.rank != null && (
             <RankBadge

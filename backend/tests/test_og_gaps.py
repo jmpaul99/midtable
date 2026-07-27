@@ -234,11 +234,11 @@ def test_open_draft_requires_manager_count_configured():
     assert "required number of managers" in str(exc.value.message).lower()
 
 
-def test_lock_ranking_lists_after_scoring():
+def test_lock_ranking_lists_after_scoring(monkeypatch):
+    from app.services import ranking_catalog as ranking_mod
     from app.services.sync import lock_ranking_lists_after_scoring
 
-    league = SimpleNamespace(id=1, upset_rules={"ranking_list_key": "fifa"})
-    unlocked = SimpleNamespace(key="fifa", locked=False)
+    league = SimpleNamespace(id=1, public_id="x", upset_rules={"ranking_list_key": "fifa"})
     db = MagicMock()
 
     def scalars(stmt):
@@ -247,16 +247,17 @@ def test_lock_ranking_lists_after_scoring():
         if "scoring_event" in sql:
             out.first.return_value = 1
             return out
-        if "ranking_list" in sql:
-            out.all.return_value = [unlocked]
-            return out
         out.first.return_value = None
         out.all.return_value = []
         return out
 
     db.scalars.side_effect = scalars
+    monkeypatch.setattr(
+        ranking_mod,
+        "freeze_catalog_for_league_lock",
+        lambda *_args, **_kwargs: 1,
+    )
     assert lock_ranking_lists_after_scoring(db, league) == 1
-    assert unlocked.locked is True
 
 
 def test_undo_last_pick_allows_complete_status():
@@ -294,42 +295,44 @@ def test_undo_last_pick_allows_complete_status():
     assert state.current_pick_number == 2
 
 
-def test_fixed_ranking_map_builds_ranks():
+def test_ranks_for_league_builds_from_manual_list():
+    from app.services.ranking_catalog import ranks_for_league
     from app.services.scoring import UpsetRules
-    from app.services.sync import _fixed_ranking_map
 
     league = SimpleNamespace(id=1)
     rules = UpsetRules.from_config(
         {
             "enabled": True,
             "rank_source": "fixed_ranking_at_event_start",
-            "ranking_list_key": "fifa",
+            "ranking_list_key": "custom",
             "eligibility": {"min_played": 0},
             "thresholds": [],
         }
     )
-    ranking_list = SimpleNamespace(id=10, key="fifa")
+    ranking_list = SimpleNamespace(
+        id=10, key="custom", locked=False, freeze_id=None, source="manual"
+    )
     rows = [
         SimpleNamespace(team_id=1, rank=1),
         SimpleNamespace(team_id=2, rank=5),
     ]
     db = MagicMock()
+    calls = {"n": 0}
 
-    def scalars(stmt):
-        sql = str(stmt).lower()
+    def scalars(_stmt):
+        calls["n"] += 1
         out = MagicMock()
-        if "ranking_list" in sql and "team_ranking" not in sql:
+        # 1) RankingList, 2) RankingCatalog, 3) TeamRanking
+        if calls["n"] == 1:
             out.first.return_value = ranking_list
-            return out
-        if "team_ranking" in sql:
+        elif calls["n"] == 2:
+            out.first.return_value = None
+        else:
             out.all.return_value = rows
-            return out
-        out.first.return_value = None
-        out.all.return_value = []
         return out
 
     db.scalars.side_effect = scalars
-    ranked = _fixed_ranking_map(db, league, rules)
+    ranked = ranks_for_league(db, league, rules)
     assert ranked is not None
     assert ranked[1].rank == 1
     assert ranked[2].rank == 5

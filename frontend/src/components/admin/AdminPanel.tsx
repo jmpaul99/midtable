@@ -3,7 +3,6 @@
 import { FormEvent, useState } from "react";
 import { formatDate } from "@/lib/format";
 import type { League, Readiness, SyncStatus } from "@/lib/types";
-import { MatchLog } from "@/components/league/MatchLog";
 import { ErrorState, Status, StatusBanner } from "@/components/ui/State";
 import { IconButton } from "@/components/ui/IconButton";
 import { DownloadIcon, RefreshIcon } from "@/components/ui/icons";
@@ -21,7 +20,6 @@ const SECTIONS = [
   { id: "settings", label: "Scoring" },
   { id: "sync", label: "Sync" },
   { id: "rankings", label: "Rankings" },
-  { id: "matches", label: "Matches" },
   { id: "season", label: "Season" },
 ] as const;
 
@@ -41,16 +39,17 @@ export function AdminPanel({
   const {
     invites,
     joinLink,
+    joinLinkBusy,
     bonuses,
     bonusTypes,
     sync,
     poolTeams,
     readiness,
     error,
-    message,
-    setMessage,
     load,
     action,
+    updateJoinLink,
+    toast,
   } = useAdminLeagueData(league, onLeagueChange);
 
   const [activeSection, setActiveSection] = useState<string>("league");
@@ -82,18 +81,34 @@ export function AdminPanel({
   async function loadTeams(
     pool_provider_params: Array<{ key: string; competition_code: string; season_year: number }>,
   ) {
-    const out = await action(`/leagues/${league.id}/bootstrap-teams`, "POST", {
-      pool_provider_params,
-    });
+    const out = await action(
+      `/leagues/${league.id}/bootstrap-teams`,
+      "POST",
+      {
+        pool_provider_params,
+      },
+      { quiet: true },
+    );
     if (!out) {
       throw new Error("Failed to reload teams from the provider.");
     }
     const pools = Array.isArray(out.pools) ? (out.pools as Array<Record<string, unknown>>) : [];
-    const poolErrors = pools
+    const competitionErrors = pools
       .filter((p) => typeof p.error === "string")
-      .map((p) => `${p.pool_key}: ${p.error}`);
+      .map((p) => {
+        const name = String(p.label || p.pool_key || "competition");
+        return `${name}: ${p.error}`;
+      });
     const base = `Teams loaded: ${out.linked ?? 0} linked, ${out.created_teams ?? 0} created, ${out.skipped_existing ?? 0} already present.`;
-    setMessage(poolErrors.length ? `${base} Issues — ${poolErrors.join("; ")}` : base);
+    const text = competitionErrors.length
+      ? `${base} Issues — ${competitionErrors.join("; ")}`
+      : base;
+    toast({
+      message: text,
+      tone: competitionErrors.length ? "error" : "success",
+      durationMs: null,
+      dismissible: true,
+    });
   }
 
   const allTeams = league.pools.flatMap((pool) =>
@@ -107,9 +122,6 @@ export function AdminPanel({
   return (
     <Stack gap="md" className="animate-in">
       {error && <ErrorState error={error} retry={load} />}
-      {message && (
-        <StatusBanner className="break-all font-mono text-xs sm:text-sm">{message}</StatusBanner>
-      )}
 
       <nav
         className="sticky top-[calc(3.5rem+env(safe-area-inset-top))] z-20 -mx-1 flex gap-1 overflow-x-auto bg-bg/90 px-1 py-2 backdrop-blur-md sm:top-[calc(4rem+env(safe-area-inset-top))]"
@@ -145,6 +157,7 @@ export function AdminPanel({
           }))}
           invites={invites}
           joinLink={joinLink}
+          joinLinkBusy={joinLinkBusy}
           atOrOverCap={atOrOverCap}
           maxMembers={maxMembers}
           onInvite={invite}
@@ -152,9 +165,7 @@ export function AdminPanel({
             action(`/leagues/${league.id}/invites/${id}/resend`, "POST")
           }
           onRevoke={(id) => action(`/leagues/${league.id}/invites/${id}`, "DELETE")}
-          onJoinLinkUpdate={(body) =>
-            action(`/leagues/${league.id}/join-link`, "POST", body)
-          }
+          onJoinLinkUpdate={(body) => updateJoinLink(body)}
           onToggleCommissioner={(memberId, isCommissioner) =>
             action(`/leagues/${league.id}/members/${memberId}`, "PATCH", {
               is_commissioner: isCommissioner,
@@ -199,13 +210,6 @@ export function AdminPanel({
         </div>
       )}
 
-      <Card id="admin-matches">
-        <Stack>
-          <h2>Recent match log</h2>
-          <MatchLog leagueId={league.id} limit={20} compact />
-        </Stack>
-      </Card>
-
       <details id="admin-season" open className="group">
         <summary className="mb-2 cursor-pointer list-none font-display text-lg font-extrabold [&::-webkit-details-marker]:hidden">
           Season actions
@@ -235,9 +239,10 @@ function SyncReadinessSection({
         <div>
           <h2>Readiness &amp; Sync</h2>
           <Muted className="mt-1 text-sm">
-            Checklist of every setup and sync gate. Errors block readiness; warnings should be fixed
-            before relying on live scores. Clubs reload when you save competitions that were added,
-            removed, or had their season year changed.
+            Competition and provider checks for fixture sync. Errors mean Sync will skip or find
+            nothing to pull. Manager roster and draft order are not required here — use the Draft
+            board for those. Clubs reload when you save competitions that were added, removed, or
+            had their season year changed.
           </Muted>
         </div>
 
@@ -253,7 +258,7 @@ function SyncReadinessSection({
             readiness={readiness}
             readyLabel="Ready to sync"
             readyWithWarningsDetail="warning(s) below — sync may skip some competitions."
-            checksSummaryLabel="Pre-sync checks"
+            checksSummaryLabel="Sync checks"
           />
 
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">

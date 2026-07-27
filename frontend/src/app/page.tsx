@@ -10,8 +10,10 @@ import type { LeagueSummary, Manager, PendingInvite } from "@/lib/types";
 import { Empty, ErrorState, Loading, Status } from "@/components/ui/State";
 import { Muted, Stack } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
+import { PlusIcon } from "@/components/ui/icons";
 import { MidtableLogo } from "@/components/MidtableLogo";
 import { LandingPage } from "@/components/LandingPage";
+import { useToast } from "@/components/ui/ToastProvider";
 
 function safeNext(value: string | null): string | null {
   if (!value?.startsWith("/") || value.startsWith("//")) return null;
@@ -108,11 +110,11 @@ function HomeContent() {
 
 function LeagueList() {
   const router = useRouter();
+  const { toast } = useToast();
   const [leagues, setLeagues] = useState<LeagueSummary[]>();
   const [invites, setInvites] = useState<PendingInvite[]>();
   const [error, setError] = useState("");
   const [acceptingId, setAcceptingId] = useState<string | null>(null);
-  const [acceptError, setAcceptError] = useState("");
 
   const load = useCallback(() => {
     setError("");
@@ -134,7 +136,6 @@ function LeagueList() {
   async function acceptInvite(invite: PendingInvite) {
     if (!invite.token) return;
     setAcceptingId(invite.id);
-    setAcceptError("");
     try {
       const out = await api<Manager & { league_id: string }>(
         "/invites/accept",
@@ -142,7 +143,12 @@ function LeagueList() {
       );
       router.push(`/leagues/${out.league_id}`);
     } catch (err) {
-      setAcceptError(errorMessage(err));
+      toast({
+        message: errorMessage(err),
+        tone: "error",
+        durationMs: 6000,
+        dismissible: true,
+      });
       setAcceptingId(null);
     }
   }
@@ -156,13 +162,23 @@ function LeagueList() {
       {error && <ErrorState error={error} retry={load} />}
 
       <section className="flex flex-col gap-3">
-        <h2 className="text-lg sm:text-xl">Your leagues</h2>
+        <div className="flex items-center justify-between gap-3">
+          <h2 className="text-lg sm:text-xl">Your leagues</h2>
+          <Link
+            href="/leagues/new"
+            className="inline-flex size-9 shrink-0 items-center justify-center rounded-lg text-brand transition hover:bg-brand/10 active:scale-[0.98]"
+            aria-label="Create a league"
+            title="Create a league"
+          >
+            <PlusIcon />
+          </Link>
+        </div>
 
         {!leagues ? (
           <Loading label="Loading leagues" />
         ) : !leagues.length ? (
           <Empty title="No leagues yet">
-            <p>Create a league below, or join via an invite or shareable link.</p>
+            <p>Use + to create a league, or join via an invite or shareable link.</p>
           </Empty>
         ) : (
           <ul className="flex flex-col gap-2">
@@ -189,7 +205,6 @@ function LeagueList() {
       {invites && invites.length > 0 && (
         <section className="flex flex-col gap-3">
           <h2 className="text-lg sm:text-xl">Pending invites</h2>
-          {acceptError && <ErrorState error={acceptError} />}
           <ul className="flex flex-col gap-2">
             {invites.map((invite) => (
               <li
@@ -215,15 +230,6 @@ function LeagueList() {
           </ul>
         </section>
       )}
-
-      <section className="flex flex-col gap-2">
-        <Link
-          href="/leagues/new"
-          className="inline-flex w-full min-h-11 items-center justify-center gap-2 rounded-xl bg-brand px-4 py-2.5 text-[0.95rem] font-bold text-on-brand shadow-sm transition hover:bg-brand-dark active:scale-[0.98]"
-        >
-          Create a league
-        </Link>
-      </section>
     </Stack>
   );
 }

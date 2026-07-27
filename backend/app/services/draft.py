@@ -202,12 +202,12 @@ def make_pick(
         .where(TeamPool.league_id == league.id, PoolTeam.team_id == team.id)
     ).first()
     if pool_team is None:
-        raise DomainError("Team is not in any pool for this league")
+        raise DomainError("Team is not in any competition for this league")
 
     pool = db.get(TeamPool, pool_team.pool_id)
     assert pool is not None
     if member_pool_filled(db, acting_member.id, pool.id, pool.slot_count):
-        raise ConflictError("Roster slot for this pool is full")
+        raise ConflictError("Roster slot for this competition is full")
 
     pick = DraftPick(
         league_id=league.id,
@@ -386,7 +386,9 @@ def reassign_roster_entry(
                 )
             ).all()
             if len(list(count)) >= pool.slot_count:
-                raise ConflictError("Destination manager has no open roster slots in this pool")
+                raise ConflictError(
+                    "Destination manager has no open roster slots in this competition"
+                )
         entry.member_id = new_member.id
     if new_team is not None:
         other = db.scalars(
@@ -405,7 +407,7 @@ def reassign_roster_entry(
             )
         ).first()
         if in_pool is None:
-            raise ConflictError("Replacement team is not in this pool")
+            raise ConflictError("Replacement team is not in this competition")
         entry.team_id = new_team.id
         entry.source = "commissioner"
     db.flush()

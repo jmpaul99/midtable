@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/Button";
 import { Input, Label } from "@/components/ui/Field";
 import { ErrorState, Loading } from "@/components/ui/State";
 import { Muted } from "@/components/ui/Card";
+import { useToast } from "@/components/ui/ToastProvider";
 import { TeamCrest } from "@/components/league/TeamCrest";
 import { ReorderButtons, RowItem, RowList } from "./chrome";
 
@@ -53,11 +54,11 @@ export function CustomRankingListModal({
 }) {
   const titleId = useId();
   const labelRef = useRef<HTMLInputElement>(null);
+  const { toast } = useToast();
   const [label, setLabel] = useState("");
   const [teams, setTeams] = useState<CompetitionTeam[]>([]);
   const [loadError, setLoadError] = useState("");
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
   const competitionsKey = competitions
@@ -86,7 +87,6 @@ export function CustomRankingListModal({
     setLabel("");
     setTeams([]);
     setLoadError("");
-    setError("");
     setLoading(true);
 
     const payload = {
@@ -131,7 +131,6 @@ export function CustomRankingListModal({
     e.preventDefault();
     if (!teams.length || loading || loadError) return;
     setBusy(true);
-    setError("");
     try {
       const created = await api<RankingCatalogOption>(
         "/ranking-catalogs",
@@ -140,7 +139,12 @@ export function CustomRankingListModal({
       onCreated(created);
       onClose();
     } catch (err) {
-      setError(errorMessage(err));
+      toast({
+        message: errorMessage(err),
+        tone: "error",
+        durationMs: 6000,
+        dismissible: true,
+      });
     } finally {
       setBusy(false);
     }
@@ -171,7 +175,6 @@ export function CustomRankingListModal({
         <p className="text-sm text-muted">
           Rank teams from your selected competitions with the arrows. Only you can reuse this list.
         </p>
-        {error && <ErrorState error={error} />}
         <Label>
           Name
           <Input

@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/Button";
 import { Card, Muted, Stack } from "@/components/ui/Card";
 import { Input, Label } from "@/components/ui/Field";
 import { FieldHelp, LabelRow } from "@/components/ui/FieldHelp";
+import { useToast } from "@/components/ui/ToastProvider";
 import { cn } from "@/lib/cn";
 import {
   AVAILABLE_COMPETITIONS,
@@ -50,9 +51,9 @@ export function CreateLeagueForm({
   templateId: string | null;
 }) {
   const router = useRouter();
+  const { toast } = useToast();
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState("");
-  const [message, setMessage] = useState("");
   const [gates, setGates] = useState<GateResponse>();
   const [gatesError, setGatesError] = useState("");
   const [step, setStep] = useState(0);
@@ -132,7 +133,6 @@ export function CreateLeagueForm({
       return;
     }
     setCreating(true);
-    setMessage("");
     setError("");
     const pool_provider_params = templatePools.map((p) => ({
       key: p.key,
@@ -155,7 +155,7 @@ export function CreateLeagueForm({
             pool_provider_params,
           }),
         );
-        setMessage(`Created ${created.name}.`);
+        toast({ message: `Created ${created.name}.` });
       } else {
         created = await api<League>(
           "/leagues",
@@ -176,16 +176,32 @@ export function CreateLeagueForm({
           `/leagues/${created.id}/bootstrap-teams`,
           json("POST", { pool_provider_params }),
         );
-        const poolErrors = (out.pools || [])
+        const competitionErrors = (out.pools || [])
           .filter((p) => typeof p.error === "string")
-          .map((p) => `${p.pool_key}: ${p.error}`);
+          .map((p) => {
+            const name = String(p.label || p.pool_key || "competition");
+            return `${name}: ${p.error}`;
+          });
         const base = `Created ${created.name}. Teams: ${out.linked ?? 0} linked, ${out.created_teams ?? 0} created.`;
-        setMessage(poolErrors.length ? `${base} Issues — ${poolErrors.join("; ")}` : base);
+        const text = competitionErrors.length
+          ? `${base} Issues — ${competitionErrors.join("; ")}`
+          : base;
+        toast({
+          message: text,
+          tone: competitionErrors.length ? "error" : "success",
+          durationMs: competitionErrors.length ? null : 4000,
+          dismissible: competitionErrors.length ? true : undefined,
+        });
       }
 
       router.push(`/leagues/${created.id}/admin`);
     } catch (err) {
-      setError(errorMessage(err));
+      toast({
+        message: errorMessage(err),
+        tone: "error",
+        durationMs: 6000,
+        dismissible: true,
+      });
     } finally {
       setCreating(false);
     }
@@ -226,8 +242,7 @@ export function CreateLeagueForm({
           ))}
         </div>
 
-        {error && <ErrorState error={error} />}
-        {message && <StatusBanner tone="success">{message}</StatusBanner>}
+        {error && <StatusBanner tone="error">{error}</StatusBanner>}
 
         <form className="grid grid-cols-1 gap-3 sm:grid-cols-2" onSubmit={createLeague}>
           {step === 0 && (

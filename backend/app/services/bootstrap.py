@@ -267,7 +267,7 @@ def bootstrap_teams_for_league(
     params_by_key = {p["key"]: p for p in (pool_provider_params or []) if "key" in p}
     pools = list(db.scalars(select(TeamPool).where(TeamPool.league_id == league.id)).all())
     if not pools:
-        raise ConflictError("League has no pools to bootstrap")
+        raise ConflictError("League has no competitions to bootstrap")
 
     created_teams = 0
     linked = 0

@@ -21,6 +21,7 @@ from app.models import (
     ScoringEvent,
     Team,
 )
+from app.services.match_queries import matches_for_league
 from app.services.members import member_label
 from app.services.payouts import apply_payouts
 from app.services.scoring import (
@@ -214,14 +215,21 @@ def phase_match_counts(
     *,
     match_filter: dict[str, Any] | None,
     scoring_pool_ids: set[int] | None = None,
+    pool_by_match_id: dict[int, int] | None = None,
 ) -> dict[str, Any]:
     """Count matches in a phase slice for completeness / payout readiness."""
     finished_statuses = {"FINISHED", "AWARDED"}
     matching = 0
     finished = 0
     for match in matches:
-        if scoring_pool_ids is not None and getattr(match, "pool_id", None) not in scoring_pool_ids:
-            continue
+        if scoring_pool_ids is not None:
+            pool_id = (
+                pool_by_match_id.get(match.id)
+                if pool_by_match_id is not None
+                else getattr(match, "pool_id", None)
+            )
+            if pool_id not in scoring_pool_ids:
+                continue
         if not match_passes_phase_filter(
             scheduled_matchweek=getattr(match, "scheduled_matchweek", None),
             stage=getattr(match, "stage", None),
@@ -268,13 +276,12 @@ def points_per_game(
             )
         ).all()
         points = sum((Decimal(e.points) for e in events), Decimal(0))
-        games = db.scalars(
-            select(Match).where(
-                Match.league_id == league.id,
-                Match.status.in_(("FINISHED", "AWARDED")),
-                ((Match.home_team_id == entry.team_id) | (Match.away_team_id == entry.team_id)),
-            )
-        ).all()
+        games = [
+            m
+            for m in matches_for_league(db, league)
+            if m.status in ("FINISHED", "AWARDED")
+            and (m.home_team_id == entry.team_id or m.away_team_id == entry.team_id)
+        ]
         gp = len(games)
         member = db.get(LeagueMember, entry.member_id)
         profile = db.get(Profile, member.profile_id) if member else None

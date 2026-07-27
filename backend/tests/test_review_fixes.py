@@ -57,7 +57,9 @@ def test_earliest_finished_seeds_per_pool():
         _match(pool_id=9, kickoff=t0, mid=90),  # non-scoring pool ignored
     ]
     finished, seeds = earliest_finished_seeds_per_pool(
-        matches, scoring_pool_ids={1, 2, 3}
+        matches,
+        pool_by_match_id={10: 1, 11: 1, 20: 2, 30: 3, 90: 9},
+        scoring_pool_ids={1, 2, 3},
     )
     assert {m.id for m in finished} == {10, 11, 20}
     assert {s.id for s in seeds} == {10, 20}

@@ -14,6 +14,7 @@ import {
   StatGrid,
   StatTile,
 } from "@/components/ui/Card";
+import { Breadcrumbs } from "@/components/ui/Breadcrumbs";
 import { TeamCrest } from "./TeamCrest";
 import { TeamLink } from "./TeamLink";
 import { TeamScoringBreakdown } from "./TeamScoringBreakdown";
@@ -119,10 +120,12 @@ function FixtureList({
 
 export function TeamPage({
   leagueId,
+  leagueName,
   teamId,
   eventTypeLabels,
 }: {
   leagueId: UUID;
+  leagueName: string;
   teamId: UUID;
   eventTypeLabels?: Record<string, string>;
 }) {
@@ -143,11 +146,30 @@ export function TeamPage({
   const s = team.stats;
   const bonuses = team.bonuses || [];
   const scoringEvents = team.scoring_events || [];
+  const ownerTeamName =
+    team.owner?.team_name?.trim() ||
+    team.owner?.display_name?.trim() ||
+    null;
 
   return (
     <Stack gap="md" className="animate-in">
       <div className="min-w-0">
-        <Eyebrow>{team.pool_name || "Team"}</Eyebrow>
+        <Breadcrumbs
+          items={[
+            { label: leagueName, href: `/leagues/${leagueId}` },
+            ...(ownerTeamName
+              ? [
+                  {
+                    label: ownerTeamName,
+                    href: team.owner?.member_id
+                      ? `/leagues/${leagueId}/managers/${team.owner.member_id}`
+                      : undefined,
+                  },
+                ]
+              : []),
+            { label: team.name },
+          ]}
+        />
         <div className="flex items-start gap-2.5 sm:items-center sm:gap-3">
           <TeamCrest
             name={team.name}

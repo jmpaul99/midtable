@@ -70,6 +70,14 @@ class TemplateUpdate(BaseModel):
     made_by_staff: bool | None = None
 
 
+class TemplateListResponse(BaseModel):
+    items: list[TemplateResponse]
+    total: int
+    page: int
+    page_size: int
+    competition_codes: list[str] = Field(default_factory=list)
+
+
 class RecentTemplateUsage(ORMModel):
     template: TemplateResponse
     league_id: UUID
