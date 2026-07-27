@@ -3,7 +3,7 @@
 import { useMemo, type ReactNode } from "react";
 import type { League } from "@/lib/types";
 import { formatDateTimeWithZone } from "@/lib/format";
-import { Card, Muted, Stack } from "@/components/ui/Card";
+import { Card, Stack } from "@/components/ui/Card";
 import {
   ReviewBlock,
   formatPhaseFilter,
@@ -187,8 +187,6 @@ export function LeagueSettingsView({ league }: { league: League }) {
   return (
     <Card className="min-w-0 max-w-full overflow-hidden">
       <Stack className="min-w-0">
-        <Muted>How this league is set up — scoring, competitions, and prizes.</Muted>
-
         <div className="flex min-w-0 flex-col gap-3 text-sm">
           <ReviewBlock title="Basics">
             <div className="text-base">{league.name || "—"}</div>

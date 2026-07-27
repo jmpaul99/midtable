@@ -32,7 +32,9 @@ export function EditorSection({
 
 export function RowList({ children }: { children: ReactNode }) {
   return (
-    <ul className="divide-y divide-line overflow-hidden rounded-xl border border-line">{children}</ul>
+    <ul className="divide-y divide-line rounded-xl border border-line [&_>li:first-child]:rounded-t-[calc(0.75rem-1px)] [&_>li:last-child]:rounded-b-[calc(0.75rem-1px)]">
+      {children}
+    </ul>
   );
 }
 
