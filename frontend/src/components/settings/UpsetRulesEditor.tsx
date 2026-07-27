@@ -11,6 +11,7 @@ import {
   type RankingCompetitionRef,
 } from "./CustomRankingListModal";
 import {
+  humanizeKey,
   slugifyKey,
   uniqueKey,
   type UpsetRules,
@@ -166,6 +167,10 @@ export function UpsetRulesEditor({
               className={compactInput}
             >
               <option value="">Select a list…</option>
+              {selectValue &&
+                !catalogs.some((c) => c.key === selectValue) && (
+                  <option value={selectValue}>{humanizeKey(selectValue)}</option>
+                )}
               {catalogs.map((c) => (
                 <option key={c.id} value={c.key}>
                   {c.label}
@@ -253,7 +258,7 @@ export function UpsetRulesEditor({
                     title="Largest rank gap that counts; leave blank for no upper limit"
                     aria-label="Max gap"
                   />
-                  <span className={cn(tip, "col-span-2")}>
+                  <span className={cn(tip, "col-span-2 text-center")}>
                     Places apart, inclusive · blank max = no limit
                   </span>
                 </div>

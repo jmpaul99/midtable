@@ -241,7 +241,7 @@ export function TiebreaksEditor({
 
   return (
     <EditorSection
-      title="Leaderboard tiebreaks"
+      title="Leaderboard tiebreakers"
       description="Each row is one ranking rule. Use the arrows to set order — e.g. Total points → Wins → Winner’s Bonus → Major upsets."
     >
       {value.length > 0 && (
@@ -255,7 +255,7 @@ export function TiebreaksEditor({
                     index={index}
                     total={value.length}
                     onMove={reorder}
-                    itemLabel="tiebreak"
+                    itemLabel="tiebreaker"
                   />
                   <div className="grid min-w-0 flex-1 grid-cols-1 gap-2 sm:grid-cols-[auto_1fr_8.5rem]">
                     <Muted className="self-center text-xs font-bold tabular-nums">#{index + 1}</Muted>
@@ -322,7 +322,10 @@ export function eventOptionsFromUpsetKeys(
     if (!key || seen.has(key)) continue;
     seen.add(key);
     const name = typeof item === "string" ? "" : item.name?.trim();
-    extras.push({ value: key, label: name || humanize(key) });
+    extras.push({
+      value: key,
+      label: name && name !== key ? name : humanize(key),
+    });
   }
   return [...base, ...extras];
 }

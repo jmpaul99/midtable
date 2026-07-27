@@ -294,6 +294,20 @@ export function slugifyKey(name: string): string {
     .slice(0, 40);
 }
 
+/** Customer-facing label from a machine key (never show raw keys in UI). */
+export function humanizeKey(key: string): string {
+  const cleaned = key.replace(/_/g, " ").trim();
+  if (!cleaned) return key;
+  return cleaned.replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+/** Display name for an upset threshold — never falls back to a raw key. */
+export function upsetThresholdLabel(t: { key: string; name?: string | null }): string {
+  const name = (t.name ?? "").trim();
+  if (name && name !== t.key) return name;
+  return humanizeKey(t.key);
+}
+
 /** Ensure a unique key among siblings. */
 export function uniqueKey(
   base: string,
@@ -313,7 +327,7 @@ export function uniqueKey(
 /** Map threshold key → display name. */
 export function upsetNameByKey(raw: unknown): Record<string, string> {
   return Object.fromEntries(
-    normalizeUpsetRules(raw).thresholds.map((t) => [t.key, t.name || t.key]),
+    normalizeUpsetRules(raw).thresholds.map((t) => [t.key, upsetThresholdLabel(t)]),
   );
 }
 
@@ -327,7 +341,9 @@ export function normalizeUpsetRules(raw: unknown): UpsetRules {
     const t = (item && typeof item === "object" ? item : {}) as Record<string, unknown>;
     const result = str(t.result, "win");
     const key = str(t.key, `threshold_${i + 1}`);
-    const name = str(t.name, "") || key;
+    const rawName = str(t.name, "");
+    // Never put the machine key in the name field customers edit.
+    const name = rawName && rawName !== key ? rawName : humanizeKey(key);
     return {
       key,
       name,

@@ -22,6 +22,8 @@ export {
   stageOverrideKeys,
   stageHasOvertimeOverrides,
   EMPTY_STAGE_RESULT_POINTS,
+  humanizeKey,
+  upsetThresholdLabel,
   normalizeUpsetRules,
   serializeUpsetRules,
   normalizePhases,

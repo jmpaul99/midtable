@@ -12,6 +12,7 @@ import { BonusesSection } from "./BonusesSection";
 import type { BonusTypeRow } from "./useAdminLeagueData";
 import {
   eventOptionsFromUpsetKeys,
+  humanizeKey,
   normalizeResultPoints,
   normalizeTiebreaks,
   normalizeUpsetRules,
@@ -25,13 +26,13 @@ import {
   type UpsetRules,
 } from "@/components/settings";
 
-type Tab = "points" | "upsets" | "tiebreaks" | "bonuses";
+type Tab = "points" | "upsets" | "bonuses" | "tiebreaks";
 
 const TABS: Array<{ id: Tab; label: string }> = [
   { id: "points", label: "Points" },
   { id: "upsets", label: "Upsets" },
-  { id: "tiebreaks", label: "Tiebreaks" },
   { id: "bonuses", label: "Bonuses" },
+  { id: "tiebreaks", label: "Tiebreakers" },
 ];
 
 export function LeagueSettingsSection({
@@ -103,7 +104,7 @@ export function LeagueSettingsSection({
     <Card>
       <Stack>
         <Muted>
-          Points, upsets, tiebreaks, and bonuses. Changing scoring after matches exist requires a
+          Points, upsets, bonuses, and tiebreakers. Changing scoring after matches exist requires a
           recompute.
         </Muted>
 
@@ -173,7 +174,7 @@ export function LeagueSettingsSection({
                   )}
                   bonusTypeOptions={bonusTypes.map((b) => ({
                     value: b.key,
-                    label: b.label || b.key,
+                    label: b.label || humanizeKey(b.key),
                   }))}
                 />
               )}
