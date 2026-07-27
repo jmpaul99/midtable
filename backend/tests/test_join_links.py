@@ -278,3 +278,74 @@ def test_get_or_create_profile_resolves_insert_race():
     assert profile.display_name == "Racer"
     db.add.assert_called_once()
     db.flush.assert_called_once()
+
+
+def test_get_or_create_profile_syncs_stale_email():
+    auth_id = uuid4()
+    existing = SimpleNamespace(
+        public_id=uuid4(),
+        email="old@example.com",
+        auth_user_id=auth_id,
+        display_name="Alex",
+    )
+    db = MagicMock()
+    db.scalars.return_value.first.return_value = existing
+
+    profile = get_or_create_profile(
+        db,
+        email="new@example.com",
+        auth_user_id=auth_id,
+        display_name=None,
+    )
+    assert profile is existing
+    assert profile.email == "new@example.com"
+    db.add.assert_not_called()
+
+
+def test_require_existing_profile_raises_when_missing():
+    from fastapi import HTTPException
+
+    from app.auth.jwt import AuthenticatedUser, require_existing_profile
+
+    db = MagicMock()
+    db.scalars.return_value.first.return_value = None
+    user = AuthenticatedUser(
+        auth_user_id=uuid4(),
+        email="gone@example.com",
+        role="authenticated",
+        claims={},
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        require_existing_profile(user=user, db=db)
+
+    assert exc.value.status_code == 404
+    db.commit.assert_not_called()
+    db.add.assert_not_called()
+
+
+def test_require_existing_profile_returns_without_creating():
+    from app.auth.jwt import AuthenticatedUser, require_existing_profile
+
+    auth_id = uuid4()
+    existing = SimpleNamespace(
+        public_id=uuid4(),
+        email="old@example.com",
+        auth_user_id=auth_id,
+        display_name="Alex",
+    )
+    db = MagicMock()
+    db.scalars.return_value.first.return_value = existing
+    user = AuthenticatedUser(
+        auth_user_id=auth_id,
+        email="new@example.com",
+        role="authenticated",
+        claims={},
+    )
+
+    profile = require_existing_profile(user=user, db=db)
+
+    assert profile is existing
+    assert profile.email == "new@example.com"
+    db.add.assert_not_called()
+    db.commit.assert_not_called()

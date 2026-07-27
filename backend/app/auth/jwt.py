@@ -155,9 +155,14 @@ def _apply_profile_updates(
     *,
     auth_user_id: UUID | None,
     display_name: str | None,
+    email: str | None = None,
 ) -> Profile:
     if auth_user_id and profile.auth_user_id is None:
         profile.auth_user_id = auth_user_id
+    if email is not None:
+        normalized_email = email.strip().lower()
+        if normalized_email and profile.email != normalized_email:
+            profile.email = normalized_email
     chosen = normalize_display_name(display_name)
     if chosen and profile.display_name == DEFAULT_DISPLAY_NAME:
         profile.display_name = chosen
@@ -183,6 +188,7 @@ def get_or_create_profile(
             existing,
             auth_user_id=auth_user_id,
             display_name=display_name,
+            email=normalized,
         )
 
     chosen = normalize_display_name(display_name) or DEFAULT_DISPLAY_NAME
@@ -207,6 +213,7 @@ def get_or_create_profile(
             raced,
             auth_user_id=auth_user_id,
             display_name=display_name,
+            email=normalized,
         )
 
     logger.info("profile created profile_id=%s", profile.public_id)
@@ -270,3 +277,27 @@ def get_current_profile(
     db.commit()
     db.refresh(profile)
     return profile
+
+
+def require_existing_profile(
+    user: AuthenticatedUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> Profile:
+    """Return the caller's profile without creating one.
+
+    Used by destructive endpoints (e.g. account deletion) so a valid JWT
+    cannot recreate a profile that was already removed.
+    """
+    normalized = user.email.strip().lower()
+    profile = _find_profile(db, email=normalized, auth_user_id=user.auth_user_id)
+    if profile is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Profile not found",
+        )
+    return _apply_profile_updates(
+        profile,
+        auth_user_id=user.auth_user_id,
+        display_name=display_name_from_claims(user.claims),
+        email=normalized,
+    )

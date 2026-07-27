@@ -69,7 +69,12 @@ def required_manager_count(league) -> int | None:
 
 
 def next_draft_slot(db: Session, league_id: int) -> int:
-    """Return the next append-only draft slot (max existing + 1, or 1)."""
+    """Return the next append-only draft slot (max existing + 1, or 1).
+
+    Locks the league row so concurrent join / invite-accept callers serialize
+    slot assignment and avoid colliding on the partial unique index.
+    """
+    db.get(League, league_id, with_for_update=True)
     max_slot = db.scalar(
         select(func.max(LeagueMember.draft_slot)).where(LeagueMember.league_id == league_id)
     )

@@ -4,7 +4,12 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy import delete, func, select, text
 from sqlalchemy.orm import Session
 
-from app.auth.jwt import AuthenticatedUser, get_current_profile, get_current_user
+from app.auth.jwt import (
+    AuthenticatedUser,
+    get_current_profile,
+    get_current_user,
+    require_existing_profile,
+)
 from app.config import Settings, get_settings
 from app.db import get_db
 from app.deps import is_platform_admin, require_internal_secret
@@ -99,7 +104,7 @@ def update_me(
 
 @router.delete("/auth/me", status_code=status.HTTP_204_NO_CONTENT)
 def delete_me(
-    profile: Profile = Depends(get_current_profile),
+    profile: Profile = Depends(require_existing_profile),
     db: Session = Depends(get_db),
 ) -> Response:
     """Permanently delete the current account, profile, and related app data."""

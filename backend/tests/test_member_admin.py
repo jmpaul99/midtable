@@ -11,6 +11,7 @@ from fastapi import HTTPException
 
 from app.routers.leagues_core import remove_member, update_member
 from app.schemas.leagues import MemberAdminUpdate
+from app.models import League
 from app.services.members import (
     count_commissioners,
     is_sole_commissioner,
@@ -52,12 +53,14 @@ def test_next_draft_slot_starts_at_one():
     db = MagicMock()
     db.scalar.return_value = None
     assert next_draft_slot(db, league_id=1) == 1
+    db.get.assert_called_once_with(League, 1, with_for_update=True)
 
 
 def test_next_draft_slot_appends_after_max():
     db = MagicMock()
     db.scalar.return_value = 3
     assert next_draft_slot(db, league_id=1) == 4
+    db.get.assert_called_once_with(League, 1, with_for_update=True)
 
 
 def test_join_assigns_next_draft_slot():
@@ -72,6 +75,7 @@ def test_join_assigns_next_draft_slot():
     assert created is True
     assert member.draft_slot == 2
     db.add.assert_called_once_with(member)
+    db.get.assert_called_once_with(League, 1, with_for_update=True)
 
 
 def test_join_keeps_explicit_draft_slot():
@@ -85,6 +89,7 @@ def test_join_keeps_explicit_draft_slot():
     assert created is True
     assert member.draft_slot == 3
     db.scalar.assert_not_called()
+    db.get.assert_not_called()
 
 
 def test_is_sole_commissioner():
