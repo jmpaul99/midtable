@@ -7,13 +7,18 @@ import { cn } from "@/lib/cn";
 export type AutocompleteOption = {
   value: string;
   label: string;
+  /** Extra strings matched by search (not shown in the list). */
+  keywords?: string[];
 };
 
 function filterOptions(query: string, options: AutocompleteOption[]): AutocompleteOption[] {
   const q = query.trim().toLowerCase();
   if (!q) return options;
   return options.filter(
-    (o) => o.label.toLowerCase().includes(q) || o.value.toLowerCase().includes(q),
+    (o) =>
+      o.label.toLowerCase().includes(q) ||
+      o.value.toLowerCase().includes(q) ||
+      (o.keywords?.some((k) => k.toLowerCase().includes(q)) ?? false),
   );
 }
 

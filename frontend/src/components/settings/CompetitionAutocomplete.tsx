@@ -29,7 +29,11 @@ export function CompetitionAutocomplete({
   className?: string;
 }) {
   const autocompleteOptions = useMemo(() => {
-    const mapped = options.map((o) => ({ value: o.code, label: o.label }));
+    const mapped = options.map((o) => ({
+      value: o.code,
+      label: o.label,
+      keywords: [o.key],
+    }));
     if (!value) return mapped;
     if (mapped.some((o) => o.value === value)) return mapped;
     const label = competitionDisplayLabel(value);
