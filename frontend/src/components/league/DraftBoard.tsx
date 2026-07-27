@@ -4,11 +4,11 @@ import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "re
 import { api, errorMessage, json } from "@/lib/api";
 import type { DraftState, League, PoolTeam, Readiness } from "@/lib/types";
 import { managerLabel } from "@/lib/types";
-import { formatDate } from "@/lib/format";
-import { Empty, ErrorState, Loading, Status, StatusBanner } from "@/components/ui/State";
+import { formatDateTimeWithZone } from "@/lib/format";
+import { Empty, ErrorState, Loading, StatusBanner } from "@/components/ui/State";
 import { IconButton } from "@/components/ui/IconButton";
 import { CheckIcon, PlayIcon, RefreshIcon } from "@/components/ui/icons";
-import { Card, Eyebrow, Muted, RankBadge, Row, Stack } from "@/components/ui/Card";
+import { Card, Eyebrow, Muted, RankBadge, Stack } from "@/components/ui/Card";
 import { Label, Select } from "@/components/ui/Field";
 import { cn } from "@/lib/cn";
 import { ReadinessChecklist } from "@/components/ReadinessChecklist";
@@ -289,40 +289,30 @@ export function DraftBoard({
     }
   }
 
-  function renderPickHistory(opts?: { emptyTitle?: string; showOnClock?: boolean }) {
+  function renderPickHistory(opts?: { emptyTitle?: string }) {
     if (!state) return null;
     const emptyTitle = opts?.emptyTitle ?? "No picks made";
-    const showOnClock = opts?.showOnClock ?? false;
     return (
       <Card>
         <Stack>
-          <Row between>
-            <div>
-              {phase === "done" ? (
-                <>
-                  <Eyebrow>Finished</Eyebrow>
-                  <h2>Pick history</h2>
-                </>
-              ) : phase === "pre" ? (
-                <>
-                  <Eyebrow>Not started</Eyebrow>
-                  <h2>Picks</h2>
-                </>
-              ) : (
-                <>
-                  <Eyebrow>Round {state.current_round}</Eyebrow>
-                  <h2>Pick {state.current_pick_number}</h2>
-                </>
-              )}
-            </div>
-            <Status value={state.status} />
-          </Row>
-          {showOnClock && (
-            <StatusBanner>
-              <strong>On the clock: </strong>
-              {onClock ? renderManagerName(onClock) : "Not started"}
-            </StatusBanner>
-          )}
+          <div>
+            {phase === "done" ? (
+              <>
+                <Eyebrow>Finished</Eyebrow>
+                <h2>Pick history</h2>
+              </>
+            ) : phase === "pre" ? (
+              <>
+                <Eyebrow>Not started</Eyebrow>
+                <h2>Picks</h2>
+              </>
+            ) : (
+              <>
+                <Eyebrow>Round {state.current_round}</Eyebrow>
+                <h2>Pick {state.current_pick_number}</h2>
+              </>
+            )}
+          </div>
           {!state.picks.length ? (
             <Empty title={emptyTitle} />
           ) : (
@@ -404,44 +394,23 @@ export function DraftBoard({
   }
 
   function renderPreControls() {
-    if (!showOpenControls && !scheduledAt && !pickTimerSeconds) return null;
+    if (!commissioner) return null;
+    if (!showOpenControls && !scheduleOverdue) return null;
     return (
       <Card>
         <Stack>
           <h2>Draft controls</h2>
-          {scheduledAt && (
-            <StatusBanner tone={scheduleOverdue ? "error" : undefined}>
-              {scheduleOverdue ? (
-                <>
-                  <strong>Scheduled start has passed</strong>
-                  <div className="mt-1">
-                    Auto-open is waiting until all pre-draft checks pass (
-                    {formatDate(scheduledAt)}).
-                  </div>
-                </>
-              ) : (
-                <>
-                  <strong>Scheduled start</strong>
-                  <div className="mt-1">{formatDate(scheduledAt)}</div>
-                </>
-              )}
+          {scheduleOverdue && scheduledAt && (
+            <StatusBanner tone="error">
+              <strong>Scheduled start has passed</strong>
+              <div className="mt-1">
+                Auto-open is waiting until all pre-draft checks pass (
+                {formatDateTimeWithZone(scheduledAt)}).
+              </div>
             </StatusBanner>
           )}
-          {pickTimerSeconds ? (
-            <Muted className="text-xs">
-              Pick timer: {pickTimerSeconds}s per pick (auto-picks a random available club
-              when time runs out).
-            </Muted>
-          ) : null}
           {showOpenControls && (
             <>
-              <Muted>
-                Opens one league draft ({league.draft_style}
-                {league.pools.length > 1
-                  ? ") covering all competitions — managers pick clubs from any of them."
-                  : ")."}
-                {scheduledAt ? " You can still open manually once checks pass." : ""}
-              </Muted>
               <ReadinessChecklist
                 readiness={readiness}
                 readyLabel={
@@ -599,13 +568,16 @@ export function DraftBoard({
           <>
             {phase === "pre" && (
               <Stack gap="md">
-                <DraftSettingsSummary
-                  league={league}
-                  scheduledAt={scheduledAt}
-                  pickTimerSeconds={pickTimerSeconds}
-                />
+                {!commissioner && (
+                  <DraftSettingsSummary
+                    league={league}
+                    scheduledAt={scheduledAt}
+                    pickTimerSeconds={pickTimerSeconds}
+                  />
+                )}
                 {renderPreControls()}
-                {renderPickHistory({ emptyTitle: "Draft hasn’t started" })}
+                {state.picks.length > 0 &&
+                  renderPickHistory({ emptyTitle: "Draft hasn’t started" })}
               </Stack>
             )}
 
@@ -613,14 +585,15 @@ export function DraftBoard({
               <div className="grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
                 {renderLiveControls()}
                 <Stack gap="md" className="order-2 lg:order-1 min-w-0">
-                  {renderPickHistory({ showOnClock: true })}
-                  <DraftSettingsSummary
-                    league={league}
-                    scheduledAt={scheduledAt}
-                    pickTimerSeconds={pickTimerSeconds}
-                    onClockMemberId={onClock}
-                    compact
-                  />
+                  {renderPickHistory()}
+                  {!commissioner && (
+                    <DraftSettingsSummary
+                      league={league}
+                      scheduledAt={scheduledAt}
+                      pickTimerSeconds={pickTimerSeconds}
+                      onClockMemberId={onClock}
+                    />
+                  )}
                 </Stack>
               </div>
             )}
@@ -632,11 +605,13 @@ export function DraftBoard({
                   <div className="mt-1">All picks are in. Rosters are locked in.</div>
                 </StatusBanner>
                 {renderPickHistory()}
-                <DraftSettingsSummary
-                  league={league}
-                  scheduledAt={scheduledAt}
-                  pickTimerSeconds={pickTimerSeconds}
-                />
+                {!commissioner && (
+                  <DraftSettingsSummary
+                    league={league}
+                    scheduledAt={scheduledAt}
+                    pickTimerSeconds={pickTimerSeconds}
+                  />
+                )}
               </Stack>
             )}
           </>

@@ -69,6 +69,13 @@ export function DraftTimingFields({
             disabled={scheduleDisabled}
             onChange={(e) => onScheduledLocalChange(e.target.value)}
           />
+          <Muted className="mt-1 text-xs">
+            Times use your local timezone (
+            {new Intl.DateTimeFormat(undefined, { timeZoneName: "short" })
+              .formatToParts(new Date())
+              .find((p) => p.type === "timeZoneName")?.value ?? "local"}
+            ).
+          </Muted>
           {!scheduleDisabled && scheduledLocal ? (
             <button
               type="button"

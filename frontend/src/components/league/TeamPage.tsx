@@ -340,6 +340,9 @@ export function TeamPage({
         leagueId={leagueId}
         events={scoringEvents}
         bonuses={bonuses}
+        bonusPoints={s.bonus_points}
+        eventPointsByType={s.event_points_by_type}
+        eventCountsByType={s.event_counts_by_type}
         eventTypeLabels={eventTypeLabels}
       />
 

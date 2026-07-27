@@ -74,6 +74,8 @@ export function DraftAdminPanel({
   const [loadError, setLoadError] = useState("");
   const [settingsBusy, setSettingsBusy] = useState(false);
   const [preassignConfirmOpen, setPreassignConfirmOpen] = useState(false);
+  const [preassignOffConfirmOpen, setPreassignOffConfirmOpen] = useState(false);
+  const [preassignOffCount, setPreassignOffCount] = useState(0);
   const pendingPreassignForm = useRef<HTMLFormElement | null>(null);
 
   const settingsEditable = league.status === "pre_draft";
@@ -128,6 +130,29 @@ export function DraftAdminPanel({
     const next = [...draftOrder];
     [next[index], next[target]] = [next[target], next[index]];
     setDraftOrder(next);
+  }
+
+  function countPreassigns(): number {
+    let count = 0;
+    for (const teams of Object.values(poolTeams)) {
+      for (const team of teams) {
+        const owner = team.current_owner;
+        if (owner && owner.acquired_via === "preassigned") count += 1;
+      }
+    }
+    return count;
+  }
+
+  function requestPreassignModeChange(value: PreassignMode) {
+    if (value === "none") {
+      const count = countPreassigns();
+      if (count > 0) {
+        setPreassignOffCount(count);
+        setPreassignOffConfirmOpen(true);
+        return;
+      }
+    }
+    void saveDraftSetting({ preassign_mode: value });
   }
 
   async function saveDraftSetting(patch: {
@@ -283,7 +308,7 @@ export function DraftAdminPanel({
           onMove={moveMember}
           onTeamPool={setTeamPool}
           onDraftStyleChange={(value) => void saveDraftSetting({ draft_style: value })}
-          onPreassignModeChange={(value) => void saveDraftSetting({ preassign_mode: value })}
+          onPreassignModeChange={requestPreassignModeChange}
           onPreassign={preassign}
           onScheduledLocalChange={setScheduledLocal}
           onPickTimerSecondsChange={setPickTimerSeconds}
@@ -309,6 +334,19 @@ export function DraftAdminPanel({
           setPreassignConfirmOpen(false);
         }}
         onConfirm={() => void confirmPreassign()}
+      />
+      <ConfirmDialog
+        open={preassignOffConfirmOpen}
+        title="Turn off preassign?"
+        description={`Switching to None will clear ${preassignOffCount} preassigned club${preassignOffCount === 1 ? "" : "s"}. Managers will lose those clubs.`}
+        confirmLabel="Clear preassigns"
+        cancelLabel="Cancel"
+        tone="warning"
+        onCancel={() => setPreassignOffConfirmOpen(false)}
+        onConfirm={() => {
+          setPreassignOffConfirmOpen(false);
+          void saveDraftSetting({ preassign_mode: "none" });
+        }}
       />
     </Stack>
   );
