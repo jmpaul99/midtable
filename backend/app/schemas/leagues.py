@@ -373,8 +373,16 @@ class MatchLogRow(BaseModel):
     home_goals: int | None = None
     away_goals: int | None = None
     pool_id: UUID
+    pool_label: str | None = None
     home_points: float | None = None
     away_points: float | None = None
+    home_owner: dict[str, Any] | None = None
+    away_owner: dict[str, Any] | None = None
+
+
+class MatchLogPage(BaseModel):
+    items: list[MatchLogRow]
+    has_more: bool
 
 
 class TeamFixtureRow(MatchLogRow):

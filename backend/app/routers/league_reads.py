@@ -4,7 +4,7 @@ from __future__ import annotations
 from typing import Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session
 
@@ -29,14 +29,19 @@ from app.routers.league_mappers import effective_roster_club_order
 from app.services import analytics as analytics_service
 from app.services import match_stats as match_stats_service
 from app.services.match_queries import (
+    FINISHED_STATUSES,
+    competition_key_predicate,
     competition_keys_from_pools,
     matches_for_league,
     pool_for_match,
+    pool_lookup_for_league,
     scoring_pools_for_league,
 )
 from app.services.members import member_label
+from app.services.roster_owners import owner_by_team_id_for_league, team_ids_for_member
 from app.schemas.leagues import (
     BonusAwardRow,
+    MatchLogPage,
     MatchLogRow,
     MemberClubRow,
     MemberDetailResponse,
@@ -51,7 +56,7 @@ from app.schemas.leagues import (
 
 router = APIRouter(tags=["league-reads"])
 
-_FINISHED = frozenset({"FINISHED", "AWARDED"})
+_FINISHED = FINISHED_STATUSES
 
 
 def _bonus_target(bonus: ManualBonus) -> str:
@@ -313,24 +318,106 @@ def list_rosters(
     return rows
 
 
-@router.get("/leagues/{league_id}/match-log", response_model=list[MatchLogRow])
+@router.get("/leagues/{league_id}/match-log", response_model=MatchLogPage)
 def match_log(
     membership: tuple[League, LeagueMember] = Depends(require_league_member),
     db: Session = Depends(get_db),
-) -> list[MatchLogRow]:
-    league, _ = membership
-    matches = matches_for_league(db, league)
-    matches.sort(key=lambda m: m.kickoff_at, reverse=True)
+    section: str | None = Query(default=None, pattern="^(upcoming|results)$"),
+    limit: int = Query(default=20, ge=1, le=50),
+    offset: int = Query(default=0, ge=0),
+    pool_id: UUID | None = None,
+    team_id: UUID | None = None,
+    member_id: UUID | None = None,
+    mine: bool = False,
+    sort: str = Query(default="kickoff", pattern="^(kickoff|points)$"),
+) -> MatchLogPage:
+    league, current_member = membership
+    pools = scoring_pools_for_league(db, league)
+    pool_by_key = pool_lookup_for_league(db, league)
+
+    if pool_id is not None:
+        pool = next((p for p in pools if p.public_id == pool_id), None)
+        if pool is None:
+            raise HTTPException(status_code=404, detail="Competition not found")
+        if pool.competition_code is None or pool.season_year is None:
+            return MatchLogPage(items=[], has_more=False)
+        keys = [(pool.provider, pool.competition_code, pool.season_year)]
+    else:
+        keys = competition_keys_from_pools(pools)
+
+    key_pred = competition_key_predicate(keys)
+    if key_pred is None:
+        return MatchLogPage(items=[], has_more=False)
+
+    filters: list[Any] = [key_pred]
+    if section == "results":
+        filters.append(Match.status.in_(list(_FINISHED)))
+    elif section == "upcoming":
+        filters.append(Match.status.notin_(list(_FINISHED)))
+
+    if team_id is not None:
+        club = team_in_league(db, league.id, team_id)
+        filters.append(or_(Match.home_team_id == club.id, Match.away_team_id == club.id))
+
+    owner_member: LeagueMember | None = None
+    if mine:
+        owner_member = current_member
+    elif member_id is not None:
+        owner_member = db.scalars(
+            select(LeagueMember).where(
+                LeagueMember.league_id == league.id,
+                LeagueMember.public_id == member_id,
+            )
+        ).first()
+        if owner_member is None:
+            raise HTTPException(status_code=404, detail="Manager not found")
+    if owner_member is not None:
+        owned_team_ids = team_ids_for_member(
+            db, league_id=league.id, member_id=owner_member.id
+        )
+        if not owned_team_ids:
+            return MatchLogPage(items=[], has_more=False)
+        filters.append(
+            or_(
+                Match.home_team_id.in_(owned_team_ids),
+                Match.away_team_id.in_(owned_team_ids),
+            )
+        )
+
+    use_points_sort = sort == "points" and section == "results"
+    if use_points_sort:
+        matches = list(db.scalars(select(Match).where(*filters)).all())
+    else:
+        order = (
+            (Match.kickoff_at.asc(), Match.id.asc())
+            if section == "upcoming"
+            else (Match.kickoff_at.desc(), Match.id.desc())
+        )
+        matches = list(
+            db.scalars(
+                select(Match)
+                .where(*filters)
+                .order_by(*order)
+                .offset(offset)
+                .limit(limit + 1)
+            ).all()
+        )
+
+    has_more = False
+    if use_points_sort:
+        # Points sort needs scores before paging; kickoff path pages in SQL.
+        pass
+    else:
+        has_more = len(matches) > limit
+        matches = matches[:limit]
+
     team_ids = {m.home_team_id for m in matches} | {m.away_team_id for m in matches}
     teams = {
         t.id: t
-        for t in db.scalars(select(Team).where(Team.id.in_(team_ids))).all()
-    } if team_ids else {}
-    pool_by_match_id: dict[int, TeamPool] = {}
-    for m in matches:
-        pool = pool_for_match(db, league, m)
-        if pool:
-            pool_by_match_id[m.id] = pool
+        for t in (
+            db.scalars(select(Team).where(Team.id.in_(team_ids))).all() if team_ids else []
+        )
+    }
     match_ids = [m.id for m in matches]
     events = (
         list(
@@ -348,25 +435,46 @@ def match_log(
     for event in events:
         key = (event.match_id, event.team_id)
         points_by_match_team[key] = points_by_match_team.get(key, 0.0) + float(event.points)
-    return [
-        MatchLogRow(
-            id=m.public_id,
-            kickoff_at=m.kickoff_at,
-            status=m.status,
-            scheduled_matchweek=m.scheduled_matchweek,
-            home_team_id=teams[m.home_team_id].public_id,
-            away_team_id=teams[m.away_team_id].public_id,
-            home_team_name=teams[m.home_team_id].name,
-            away_team_name=teams[m.away_team_id].name,
-            home_goals=m.home_goals,
-            away_goals=m.away_goals,
-            pool_id=pool_by_match_id[m.id].public_id,
-            home_points=points_by_match_team.get((m.id, m.home_team_id)),
-            away_points=points_by_match_team.get((m.id, m.away_team_id)),
+
+    owner_by_team_id = owner_by_team_id_for_league(db, league)
+
+    rows: list[MatchLogRow] = []
+    for m in matches:
+        pool = pool_by_key.get((m.provider, m.competition_code, m.season_year))
+        if pool is None or m.home_team_id not in teams or m.away_team_id not in teams:
+            continue
+        home_pts = points_by_match_team.get((m.id, m.home_team_id))
+        away_pts = points_by_match_team.get((m.id, m.away_team_id))
+        rows.append(
+            MatchLogRow(
+                id=m.public_id,
+                kickoff_at=m.kickoff_at,
+                status=m.status,
+                scheduled_matchweek=m.scheduled_matchweek,
+                home_team_id=teams[m.home_team_id].public_id,
+                away_team_id=teams[m.away_team_id].public_id,
+                home_team_name=teams[m.home_team_id].name,
+                away_team_name=teams[m.away_team_id].name,
+                home_goals=m.home_goals,
+                away_goals=m.away_goals,
+                pool_id=pool.public_id,
+                pool_label=pool.label,
+                home_points=home_pts,
+                away_points=away_pts,
+                home_owner=owner_by_team_id.get(m.home_team_id),
+                away_owner=owner_by_team_id.get(m.away_team_id),
+            )
         )
-        for m in matches
-        if m.home_team_id in teams and m.away_team_id in teams and m.id in pool_by_match_id
-    ]
+
+    if use_points_sort:
+        def _max_pts(row: MatchLogRow) -> float:
+            return max(row.home_points or 0.0, row.away_points or 0.0)
+
+        rows.sort(key=lambda r: (_max_pts(r), r.kickoff_at), reverse=True)
+        has_more = len(rows) > offset + limit
+        rows = rows[offset : offset + limit]
+
+    return MatchLogPage(items=rows, has_more=has_more)
 
 
 def _fixture_row(
@@ -628,39 +736,7 @@ def team_detail(
             "acquired_via": entry.source,
         }
 
-    roster_entries = list(
-        db.scalars(select(RosterEntry).where(RosterEntry.league_id == league.id)).all()
-    )
-    member_ids = {e.member_id for e in roster_entries}
-    members_by_id = {
-        m.id: m
-        for m in (
-            db.scalars(select(LeagueMember).where(LeagueMember.id.in_(member_ids))).all()
-            if member_ids
-            else []
-        )
-    }
-    profile_ids = {m.profile_id for m in members_by_id.values() if m.profile_id}
-    profiles_by_id = {
-        p.id: p
-        for p in (
-            db.scalars(select(Profile).where(Profile.id.in_(profile_ids))).all()
-            if profile_ids
-            else []
-        )
-    }
-    owner_by_team_id: dict[int, dict[str, Any]] = {}
-    for roster_entry in roster_entries:
-        member = members_by_id.get(roster_entry.member_id)
-        if not member:
-            continue
-        profile = profiles_by_id.get(member.profile_id) if member.profile_id else None
-        owner_by_team_id[roster_entry.team_id] = {
-            "member_id": str(member.public_id),
-            "display_name": member_label(member, profile),
-            "team_name": (member.team_name.strip() if member.team_name else None),
-            "acquired_via": roster_entry.source,
-        }
+    owner_by_team_id = owner_by_team_id_for_league(db, league)
 
     events = db.scalars(
         select(ScoringEvent).where(

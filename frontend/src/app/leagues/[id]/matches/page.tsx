@@ -5,5 +5,5 @@ import { MatchLog } from "@/components/MatchLog";
 
 export default function LeagueMatchesPage() {
   const league = useLeague();
-  return <MatchLog leagueId={league.id} />;
+  return <MatchLog leagueId={league.id} league={league} />;
 }

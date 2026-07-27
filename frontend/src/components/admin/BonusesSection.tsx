@@ -3,7 +3,7 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "@/lib/api";
 import { formatNumber } from "@/lib/format";
-import type { Bonus, BonusTarget, League, Manager, MatchLogRow, PoolTeam, UUID } from "@/lib/types";
+import type { Bonus, BonusTarget, League, Manager, MatchLogPage, MatchLogRow, PoolTeam, UUID } from "@/lib/types";
 import { managerLabel } from "@/lib/types";
 import { Empty, StatusBanner } from "@/components/ui/State";
 import { IconButton } from "@/components/ui/IconButton";
@@ -102,9 +102,9 @@ export function BonusesSection({
     if (tab !== "award" || target !== "match") return;
     let cancelled = false;
     setMatchesLoading(true);
-    api<MatchLogRow[]>(`/leagues/${leagueId}/match-log`)
-      .then((rows) => {
-        if (!cancelled) setMatches(rows);
+    api<MatchLogPage>(`/leagues/${leagueId}/match-log?section=results&limit=50`)
+      .then((page) => {
+        if (!cancelled) setMatches(page.items);
       })
       .catch(() => {
         if (!cancelled) setMatches([]);
