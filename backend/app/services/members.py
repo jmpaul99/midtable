@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from fastapi import HTTPException
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.auth.jwt import MAX_DISPLAY_NAME_LEN
@@ -69,26 +69,39 @@ def required_manager_count(league) -> int | None:
 
 
 def next_draft_slot(db: Session, league_id: int) -> int:
-    """Return the next append-only draft slot (max existing + 1, or 1).
+    """Return the lowest free draft slot (1, 2, …) for this league.
 
     Considers both current members and pending invites that already reserved a
-    slot, so join-link auto-assignment cannot steal a reserved invite slot.
+    slot, so join-link auto-assignment cannot steal a reserved invite slot or
+    create gaps that break open_draft's contiguous 1..N requirement.
 
     Locks the league row so concurrent join / invite-accept callers serialize
     slot assignment and avoid colliding on the partial unique index.
     """
     db.get(League, league_id, with_for_update=True)
-    member_max = db.scalar(
-        select(func.max(LeagueMember.draft_slot)).where(LeagueMember.league_id == league_id)
+    used = {
+        int(slot)
+        for slot in db.scalars(
+            select(LeagueMember.draft_slot).where(
+                LeagueMember.league_id == league_id,
+                LeagueMember.draft_slot.is_not(None),
+            )
+        ).all()
+    }
+    used.update(
+        int(slot)
+        for slot in db.scalars(
+            select(Invite.draft_slot).where(
+                Invite.league_id == league_id,
+                Invite.status == "pending",
+                Invite.draft_slot.is_not(None),
+            )
+        ).all()
     )
-    invite_max = db.scalar(
-        select(func.max(Invite.draft_slot)).where(
-            Invite.league_id == league_id,
-            Invite.status == "pending",
-            Invite.draft_slot.is_not(None),
-        )
-    )
-    return max(int(member_max or 0), int(invite_max or 0)) + 1
+    slot = 1
+    while slot in used:
+        slot += 1
+    return slot
 
 
 def join_or_return_member(

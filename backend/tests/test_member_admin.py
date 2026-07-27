@@ -51,33 +51,50 @@ def test_renumber_draft_slots_contiguous_preserving_order():
 
 def test_next_draft_slot_starts_at_one():
     db = MagicMock()
-    db.scalar.side_effect = [None, None]
+    member_slots = MagicMock()
+    member_slots.all.return_value = []
+    invite_slots = MagicMock()
+    invite_slots.all.return_value = []
+    db.scalars.side_effect = [member_slots, invite_slots]
     assert next_draft_slot(db, league_id=1) == 1
     db.get.assert_called_once_with(League, 1, with_for_update=True)
-    assert db.scalar.call_count == 2
 
 
-def test_next_draft_slot_appends_after_max():
+def test_next_draft_slot_appends_after_contiguous():
     db = MagicMock()
-    db.scalar.side_effect = [3, None]
+    member_slots = MagicMock()
+    member_slots.all.return_value = [1, 2, 3]
+    invite_slots = MagicMock()
+    invite_slots.all.return_value = []
+    db.scalars.side_effect = [member_slots, invite_slots]
     assert next_draft_slot(db, league_id=1) == 4
     db.get.assert_called_once_with(League, 1, with_for_update=True)
 
 
-def test_next_draft_slot_respects_pending_invite_reservations():
+def test_next_draft_slot_fills_gap_without_stealing_invite():
     db = MagicMock()
-    # Members occupy up to 2; a pending invite reserves slot 5.
-    db.scalar.side_effect = [2, 5]
-    assert next_draft_slot(db, league_id=1) == 6
+    # Members occupy 1-2; a pending invite reserves slot 5 → fill gap at 3.
+    member_slots = MagicMock()
+    member_slots.all.return_value = [1, 2]
+    invite_slots = MagicMock()
+    invite_slots.all.return_value = [5]
+    db.scalars.side_effect = [member_slots, invite_slots]
+    assert next_draft_slot(db, league_id=1) == 3
 
 
 def test_join_assigns_next_draft_slot():
     league = SimpleNamespace(id=1, status="pre_draft", config={"max_members": 4})
     profile = SimpleNamespace(id=7, display_name="Joiner")
     db = MagicMock()
-    db.scalars.return_value.first.return_value = None
-    db.scalars.return_value.all.return_value = [SimpleNamespace()]
-    db.scalar.side_effect = [1, None]
+    existing_q = MagicMock()
+    existing_q.first.return_value = None
+    count_q = MagicMock()
+    count_q.all.return_value = [SimpleNamespace()]
+    member_slots = MagicMock()
+    member_slots.all.return_value = [1]
+    invite_slots = MagicMock()
+    invite_slots.all.return_value = []
+    db.scalars.side_effect = [existing_q, count_q, member_slots, invite_slots]
 
     member, created = join_or_return_member(db, league, profile)
     assert created is True
@@ -97,7 +114,6 @@ def test_join_during_drafting_leaves_slot_unset():
     assert created is True
     assert member.draft_slot is None
     db.get.assert_not_called()
-    db.scalar.assert_not_called()
 
 
 def test_join_keeps_explicit_draft_slot():
@@ -110,7 +126,6 @@ def test_join_keeps_explicit_draft_slot():
     member, created = join_or_return_member(db, league, profile, draft_slot=3)
     assert created is True
     assert member.draft_slot == 3
-    db.scalar.assert_not_called()
     db.get.assert_not_called()
 
 
