@@ -315,6 +315,72 @@ def test_match_log_points_sort(
     assert page.has_more is False
 
 
+@patch("app.routers.league_reads.owner_by_team_id_for_league")
+@patch("app.routers.league_reads.pool_lookup_for_league")
+@patch("app.routers.league_reads.scoring_pools_for_league")
+@patch("app.routers.league_reads.competition_keys_from_pools")
+def test_match_log_points_sort_stable_ties(
+    keys_mock, pools_mock, lookup_mock, owners_mock
+):
+    """Tied points+kickoff must paginate without repeats/skips (Bugbot finding)."""
+    pool = _pool()
+    pools_mock.return_value = [pool]
+    keys_mock.return_value = [(pool.provider, pool.competition_code, pool.season_year)]
+    lookup_mock.return_value = {
+        (pool.provider, pool.competition_code, pool.season_year): pool
+    }
+    owners_mock.return_value = {}
+    home = _team(tid=10, name="Arsenal")
+    away = _team(tid=20, name="Chelsea")
+    kickoff = datetime(2026, 8, 1, 12, tzinfo=UTC)
+    a = _match(mid=1, home=10, away=20, status="FINISHED", kickoff=kickoff, home_goals=1, away_goals=0)
+    b = _match(mid=2, home=10, away=20, status="FINISHED", kickoff=kickoff, home_goals=1, away_goals=0)
+    c = _match(mid=3, home=10, away=20, status="FINISHED", kickoff=kickoff, home_goals=1, away_goals=0)
+    events = [
+        SimpleNamespace(match_id=1, team_id=10, points=5.0),
+        SimpleNamespace(match_id=2, team_id=10, points=5.0),
+        SimpleNamespace(match_id=3, team_id=10, points=5.0),
+    ]
+    league = SimpleNamespace(id=1)
+    member = SimpleNamespace(id=99, public_id=uuid4())
+    db = _db_for_matches([a, b, c], [home, away], events=events)
+
+    page0 = match_log(
+        membership=(league, member),
+        db=db,
+        section="results",
+        limit=2,
+        offset=0,
+        pool_id=None,
+        team_id=None,
+        member_id=None,
+        mine=False,
+        sort="points",
+        q=None,
+    )
+    page1 = match_log(
+        membership=(league, member),
+        db=db,
+        section="results",
+        limit=2,
+        offset=2,
+        pool_id=None,
+        team_id=None,
+        member_id=None,
+        mine=False,
+        sort="points",
+        q=None,
+    )
+    ids0 = {row.id for row in page0.items}
+    ids1 = {row.id for row in page1.items}
+    assert len(page0.items) == 2
+    assert page0.has_more is True
+    assert len(page1.items) == 1
+    assert page1.has_more is False
+    assert ids0.isdisjoint(ids1)
+    assert ids0 | ids1 == {a.public_id, b.public_id, c.public_id}
+
+
 @patch("app.routers.league_reads.scoring_pools_for_league")
 def test_match_log_unknown_pool_404(pools_mock):
     pools_mock.return_value = [_pool()]

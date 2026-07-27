@@ -406,7 +406,9 @@ def match_log(
     # Load the full filtered set before paging. Rows may be dropped after the
     # SQL query (missing pool / teams), so offset/limit must apply to final rows.
     if use_points_sort:
-        matches = list(db.scalars(select(Match).where(*filters)).all())
+        matches = list(
+            db.scalars(select(Match).where(*filters).order_by(Match.id.asc())).all()
+        )
     else:
         order = (
             (Match.kickoff_at.asc(), Match.id.asc())
@@ -476,7 +478,8 @@ def match_log(
         def _max_pts(row: MatchLogRow) -> float:
             return max(row.home_points or 0.0, row.away_points or 0.0)
 
-        rows.sort(key=lambda r: (_max_pts(r), r.kickoff_at), reverse=True)
+        # Include match id so equal points/kickoff ties stay stable across pages.
+        rows.sort(key=lambda r: (_max_pts(r), r.kickoff_at, str(r.id)), reverse=True)
 
     has_more = len(rows) > offset + limit
     rows = rows[offset : offset + limit]
