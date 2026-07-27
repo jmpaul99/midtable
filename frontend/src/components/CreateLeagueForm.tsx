@@ -293,7 +293,7 @@ export function CreateLeagueForm({
                 <LabelRow>
                   Managers
                   <FieldHelp label="Managers">
-                    Maximum number of manager seats in the league (including you).
+                    Maximum number of managers in the league (including you).
                   </FieldHelp>
                 </LabelRow>
                 <Input

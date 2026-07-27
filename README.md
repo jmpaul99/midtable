@@ -15,7 +15,7 @@ Python **3.14+**, Node **26.5.0+**.
 
 ## What’s in the box
 
-- **Competition templates** — reusable rules (draft style, roster slots, pools, result points, upset rules, leaderboard phases/tiebreaks, buy-in, payouts, bonus types)
+- **Competition templates** — reusable rules (draft style, roster slots, pools, result points, upset rules, leaderboard phases/tiebreakers, buy-in, payouts, bonus types)
 - **Leagues** — invite- or join-link membership, commissioner settings, readiness checks, team bootstrap from the provider
 - **Draft** — linear/snake order, preassigns, picks, undo last pick, roster tweaks (draft reset only when `APP_ENV=development`)
 - **Sync & scoring** — pull fixtures/results, recompute standings, match events, sync status

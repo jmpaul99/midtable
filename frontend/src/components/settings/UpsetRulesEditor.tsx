@@ -11,6 +11,7 @@ import {
   type RankingCompetitionRef,
 } from "./CustomRankingListModal";
 import {
+  humanizeKey,
   slugifyKey,
   uniqueKey,
   type UpsetRules,
@@ -99,8 +100,8 @@ export function UpsetRulesEditor({
       title="Upset rules"
       description="Bonus points when a lower-ranked club beats (or draws) a higher-ranked one. Gap is how many places separate them in the table (underdog rank − favorite rank)."
     >
-      <div className="flex flex-wrap items-end gap-x-3 gap-y-2">
-        <label className="flex h-10 items-center gap-2 text-sm font-semibold text-muted">
+      <div className="flex min-w-0 flex-col gap-3">
+        <label className="flex items-center gap-2 text-sm font-semibold text-muted">
           <Checkbox
             className="size-4"
             checked={value.enabled}
@@ -108,48 +109,50 @@ export function UpsetRulesEditor({
           />
           Enabled
         </label>
-        <Label className="min-w-[12rem] flex-1 gap-1">
-          Rank source
-          <Select
-            value={value.rank_source}
-            onChange={(e) =>
-              onChange({
-                ...value,
-                rank_source: e.target.value,
-                ranking_list_key:
-                  e.target.value === "fixed_ranking_at_event_start"
-                    ? value.ranking_list_key || "fifa_men"
-                    : null,
-              })
-            }
-            className={compactInput}
-          >
-            <option value="league_table_at_kickoff">League table at kickoff</option>
-            <option value="fixed_ranking_at_event_start">Fixed ranking list</option>
-          </Select>
-        </Label>
-        <Label className="max-w-[11rem] gap-1">
-          Min GP
-          <span className={tip}>
-            Both clubs must have completed this many games before upset points are awarded
-          </span>
-          <Input
-            type="number"
-            min={0}
-            value={value.min_played || ""}
-            placeholder="0"
-            onChange={(e) =>
-              onChange({
-                ...value,
-                min_played: e.target.value === "" ? 0 : Number(e.target.value),
-              })
-            }
-            className={cn(compactInput, "w-[5.5rem]")}
-            title="Both clubs need this many league games played before an upset can score"
-          />
-        </Label>
+        <div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-[minmax(0,1fr)_auto]">
+          <Label className="min-w-0 gap-1">
+            Rank source
+            <Select
+              value={value.rank_source}
+              onChange={(e) =>
+                onChange({
+                  ...value,
+                  rank_source: e.target.value,
+                  ranking_list_key:
+                    e.target.value === "fixed_ranking_at_event_start"
+                      ? value.ranking_list_key || "fifa_men"
+                      : null,
+                })
+              }
+              className={compactInput}
+            >
+              <option value="league_table_at_kickoff">League table at kickoff</option>
+              <option value="fixed_ranking_at_event_start">Fixed ranking list</option>
+            </Select>
+          </Label>
+          <Label className="min-w-0 gap-1 sm:max-w-[7rem]">
+            Min GP
+            <Input
+              type="number"
+              min={0}
+              value={value.min_played || ""}
+              placeholder="0"
+              onChange={(e) =>
+                onChange({
+                  ...value,
+                  min_played: e.target.value === "" ? 0 : Number(e.target.value),
+                })
+              }
+              className={cn(compactInput, "w-full sm:w-[5.5rem]")}
+              title="Both clubs need this many league games played before an upset can score"
+            />
+          </Label>
+        </div>
+        <p className={tip}>
+          Min GP: both clubs must have completed this many games before upset points are awarded.
+        </p>
         {fixed && (
-          <Label className="min-w-[12rem] flex-1 gap-1">
+          <Label className="min-w-0 gap-1">
             Ranking list
             <Select
               value={selectValue}
@@ -164,6 +167,10 @@ export function UpsetRulesEditor({
               className={compactInput}
             >
               <option value="">Select a list…</option>
+              {selectValue &&
+                !catalogs.some((c) => c.key === selectValue) && (
+                  <option value={selectValue}>{humanizeKey(selectValue)}</option>
+                )}
               {catalogs.map((c) => (
                 <option key={c.id} value={c.key}>
                   {c.label}
@@ -185,85 +192,78 @@ export function UpsetRulesEditor({
         <RowList>
           {value.thresholds.map((t, index) => (
             <RowItem key={t.key || index} className="p-2.5 sm:p-3">
-              <div className="min-w-0 overflow-x-auto">
-                <div
-                  className={cn(
-                    "grid min-w-[34rem] items-start gap-2",
-                    "grid-cols-[minmax(0,1.2fr)_5.5rem_4rem_minmax(10rem,auto)_auto]",
-                  )}
-                >
-                  <Label className="min-w-0 gap-1">
-                    Name
-                    <Input
-                      value={t.name ?? ""}
-                      onChange={(e) => updateName(index, e.target.value)}
-                      className={compactInput}
-                      required
-                    />
-                  </Label>
-                  <Label className="gap-1">
-                    Result
-                    <Select
-                      value={t.result}
-                      onChange={(e) =>
-                        updateThreshold(index, {
-                          result: e.target.value as UpsetThreshold["result"],
-                        })
-                      }
-                      className={compactInput}
-                    >
-                      <option value="win">Win</option>
-                      <option value="draw">Draw</option>
-                      <option value="loss">Loss</option>
-                    </Select>
-                  </Label>
-                  <Label className="gap-1">
-                    Pts
-                    <Input
-                      type="number"
-                      step="0.5"
-                      value={t.points}
-                      onChange={(e) =>
-                        updateThreshold(index, { points: Number(e.target.value) })
-                      }
-                      className={compactInput}
-                    />
-                  </Label>
-                  <div className="grid grid-cols-2 gap-x-2 gap-y-1">
-                    <span className="text-sm font-semibold text-muted">Min gap</span>
-                    <span className="text-sm font-semibold text-muted">Max gap</span>
-                    <Input
-                      type="number"
-                      min={0}
-                      value={t.min_gap}
-                      onChange={(e) =>
-                        updateThreshold(index, { min_gap: Number(e.target.value) })
-                      }
-                      className={compactInput}
-                      title="Smallest rank gap that counts for this threshold"
-                      aria-label="Min gap"
-                    />
-                    <Input
-                      type="number"
-                      min={0}
-                      value={t.max_gap ?? ""}
-                      placeholder="∞"
-                      onChange={(e) =>
-                        updateThreshold(index, {
-                          max_gap: e.target.value === "" ? null : Number(e.target.value),
-                        })
-                      }
-                      className={compactInput}
-                      title="Largest rank gap that counts; leave blank for no upper limit"
-                      aria-label="Max gap"
-                    />
-                    <span className={cn(tip, "col-span-2 text-center")}>
-                      Places apart, inclusive · blank max = no limit
-                    </span>
-                  </div>
-                  <div className="pt-[1.375rem]">
-                    <RemoveButton onClick={() => removeThreshold(index)} />
-                  </div>
+              <div className="grid min-w-0 grid-cols-2 gap-2 sm:grid-cols-[minmax(0,1.2fr)_5.5rem_4rem_minmax(9rem,1fr)_auto] sm:items-start">
+                <Label className="col-span-2 min-w-0 gap-1 sm:col-span-1">
+                  Name
+                  <Input
+                    value={t.name ?? ""}
+                    onChange={(e) => updateName(index, e.target.value)}
+                    className={compactInput}
+                    required
+                  />
+                </Label>
+                <Label className="min-w-0 gap-1">
+                  Result
+                  <Select
+                    value={t.result}
+                    onChange={(e) =>
+                      updateThreshold(index, {
+                        result: e.target.value as UpsetThreshold["result"],
+                      })
+                    }
+                    className={compactInput}
+                  >
+                    <option value="win">Win</option>
+                    <option value="draw">Draw</option>
+                    <option value="loss">Loss</option>
+                  </Select>
+                </Label>
+                <Label className="min-w-0 gap-1">
+                  Pts
+                  <Input
+                    type="number"
+                    step="0.5"
+                    value={t.points}
+                    onChange={(e) =>
+                      updateThreshold(index, { points: Number(e.target.value) })
+                    }
+                    className={compactInput}
+                  />
+                </Label>
+                <div className="col-span-2 grid min-w-0 grid-cols-2 gap-x-2 gap-y-1 sm:col-span-1">
+                  <span className="text-sm font-semibold text-muted">Min gap</span>
+                  <span className="text-sm font-semibold text-muted">Max gap</span>
+                  <Input
+                    type="number"
+                    min={0}
+                    value={t.min_gap}
+                    onChange={(e) =>
+                      updateThreshold(index, { min_gap: Number(e.target.value) })
+                    }
+                    className={compactInput}
+                    title="Smallest rank gap that counts for this threshold"
+                    aria-label="Min gap"
+                  />
+                  <Input
+                    type="number"
+                    min={0}
+                    value={t.max_gap ?? ""}
+                    placeholder="∞"
+                    onChange={(e) =>
+                      updateThreshold(index, {
+                        max_gap: e.target.value === "" ? null : Number(e.target.value),
+                      })
+                    }
+                    className={compactInput}
+                    title="Largest rank gap that counts; leave blank for no upper limit"
+                    aria-label="Max gap"
+                  />
+                  <span className={cn(tip, "col-span-2 text-center")}>
+                    Places apart, inclusive · blank max = no limit
+                  </span>
+                </div>
+                <div className="col-span-2 flex justify-end sm:col-span-1 sm:justify-start sm:pt-[1.375rem]">
+                  <RemoveButton onClick={() => removeThreshold(index)} />
                 </div>
               </div>
             </RowItem>

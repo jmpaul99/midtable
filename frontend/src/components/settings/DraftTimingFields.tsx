@@ -49,12 +49,12 @@ export function DraftTimingFields({
   const hasTimer = Number.isFinite(timerNum) && timerNum > 0;
 
   return (
-    <div className={cn("flex flex-col gap-3 sm:col-span-2", className)}>
+    <div className={cn("flex min-w-0 max-w-full flex-col gap-3 sm:col-span-2", className)}>
       <Muted className="text-xs leading-snug">
         {hint ??
           "Optional draft timing — not required to create the league. You can set or change these later on the Draft page."}
       </Muted>
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+      <div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
         <Label className="min-w-0">
           <LabelRow>
             Draft start
@@ -65,6 +65,7 @@ export function DraftTimingFields({
           </LabelRow>
           <Input
             type="datetime-local"
+            className="min-w-0 max-w-full"
             value={scheduledLocal}
             disabled={scheduleDisabled}
             onChange={(e) => onScheduledLocalChange(e.target.value)}

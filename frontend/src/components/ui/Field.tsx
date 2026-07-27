@@ -7,7 +7,7 @@ import {
 import { cn } from "@/lib/cn";
 
 const field =
-  "w-full min-h-11 rounded-xl border border-line bg-surface px-3.5 py-2.5 text-base text-ink transition placeholder:text-muted/70 disabled:opacity-50";
+  "w-full min-w-0 max-w-full min-h-11 rounded-xl border border-line bg-surface px-3.5 py-2.5 text-base text-ink transition placeholder:text-muted/70 disabled:opacity-50";
 
 export function Label({
   children,

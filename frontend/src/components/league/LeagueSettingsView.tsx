@@ -12,6 +12,7 @@ import {
   normalizeResultPoints,
   normalizeTiebreaks,
   normalizeUpsetRules,
+  upsetThresholdLabel,
   type TiebreakRung,
 } from "@/components/settings";
 import { useApiQuery } from "@/lib/useApiQuery";
@@ -331,7 +332,7 @@ export function LeagueSettingsView({ league }: { league: League }) {
                         key={t.key}
                         className="border-t border-line/60 pt-1.5 first:border-0 first:pt-0"
                       >
-                        <div>{t.name || humanizeKey(t.key)}</div>
+                        <div>{upsetThresholdLabel(t)}</div>
                         <div className="text-muted">
                           {humanizeKey(t.result)}
                           {upsetRules.rank_source === "fixed_ranking_at_event_start"

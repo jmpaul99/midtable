@@ -84,8 +84,8 @@ export function JoinForm() {
             </h1>
             <Muted className="mt-1">
               {preview?.season_label
-                ? `${preview.season_label}. Sign in, then claim a manager seat.`
-                : "Use a shareable league link to claim a manager seat."}
+                ? `${preview.season_label}. Sign in, then claim a place in the dugout.`
+                : "Use a shareable league link to claim a place in the dugout."}
             </Muted>
           </div>
           {!token && <StatusBanner tone="error">Missing join token.</StatusBanner>}

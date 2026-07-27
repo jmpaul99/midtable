@@ -113,7 +113,7 @@ const BASE_TABS: Array<{ id: Tab; label: string }> = [
   { id: "upsets", label: "Upsets" },
   { id: "phases", label: "Phases" },
   { id: "bonuses", label: "Bonuses" },
-  { id: "tiebreaks", label: "Tiebreaks" },
+  { id: "tiebreaks", label: "Tiebreakers" },
   { id: "payouts", label: "Payouts" },
   { id: "review", label: "Review" },
 ];
@@ -420,7 +420,7 @@ function TemplateSettingsSummary({ form }: { form: FormState }) {
               <ul className="mt-1 space-y-1.5">
                 {form.upset_rules.thresholds.map((t) => (
                   <li key={t.key} className="border-t border-line/60 pt-1.5 first:border-0 first:pt-0">
-                    <div>{t.name || humanizeKey(t.key)}</div>
+                    <div>{t.name && t.name !== t.key ? t.name : humanizeKey(t.key)}</div>
                     <div className="text-muted">
                       {humanizeKey(t.result)}
                       {" · gap "}
@@ -476,7 +476,7 @@ function TemplateSettingsSummary({ form }: { form: FormState }) {
         )}
       </ReviewBlock>
 
-      <ReviewBlock title="Tiebreaks">
+      <ReviewBlock title="Tiebreakers">
         {form.leaderboard_tiebreaks.length === 0 ? (
           <div className="text-muted">None</div>
         ) : (
@@ -898,7 +898,7 @@ export function TemplateEditor({
                 <LabelRow>
                   Managers
                   <FieldHelp label="Managers">
-                    Default number of manager seats for leagues created from this template
+                    Default number of managers for leagues created from this template
                     (including the commissioner).
                   </FieldHelp>
                 </LabelRow>
@@ -1143,7 +1143,7 @@ export function TemplateEditor({
           )}
           {step.id === "tiebreaks" && (
             <>
-              <StepTip label="Tiebreaks">
+              <StepTip label="Tiebreakers">
                 Order used when managers are level on points — for example total points, then upset
                 points, then bonuses.
               </StepTip>

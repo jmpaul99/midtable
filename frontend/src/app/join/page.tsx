@@ -47,13 +47,13 @@ function joinCopy(preview: JoinPreview | null) {
     return {
       title: `Join ${preview.league_name} on Midtable`,
       description: season
-        ? `${season}. You're invited to claim a manager seat and draft with the group.`
-        : "You're invited to claim a manager seat and draft with the group.",
+        ? `${season}. You're invited to claim a place in the dugout and draft with the group.`
+        : "You're invited to claim a place in the dugout and draft with the group.",
     };
   }
   return {
     title: "Join a league on Midtable",
-    description: "Use a shareable Midtable link to claim a manager seat and start drafting.",
+    description: "Use a shareable Midtable link to claim a place in the dugout and start drafting.",
   };
 }
 
