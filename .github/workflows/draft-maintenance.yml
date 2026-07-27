@@ -6,8 +6,8 @@ name: Draft maintenance
 on:
   workflow_dispatch:
   schedule:
-    # Every minute — auto-open scheduled drafts and catch expired pick clocks
-    - cron: "* * * * *"
+    # Every 5 minutes (GitHub Actions schedule minimum) — auto-open drafts / catch expired picks
+    - cron: "*/5 * * * *"
 
 jobs:
   draft-maintenance:
