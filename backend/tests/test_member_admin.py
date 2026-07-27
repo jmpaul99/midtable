@@ -51,16 +51,24 @@ def test_renumber_draft_slots_contiguous_preserving_order():
 
 def test_next_draft_slot_starts_at_one():
     db = MagicMock()
-    db.scalar.return_value = None
+    db.scalar.side_effect = [None, None]
     assert next_draft_slot(db, league_id=1) == 1
     db.get.assert_called_once_with(League, 1, with_for_update=True)
+    assert db.scalar.call_count == 2
 
 
 def test_next_draft_slot_appends_after_max():
     db = MagicMock()
-    db.scalar.return_value = 3
+    db.scalar.side_effect = [3, None]
     assert next_draft_slot(db, league_id=1) == 4
     db.get.assert_called_once_with(League, 1, with_for_update=True)
+
+
+def test_next_draft_slot_respects_pending_invite_reservations():
+    db = MagicMock()
+    # Members occupy up to 2; a pending invite reserves slot 5.
+    db.scalar.side_effect = [2, 5]
+    assert next_draft_slot(db, league_id=1) == 6
 
 
 def test_join_assigns_next_draft_slot():
@@ -69,7 +77,7 @@ def test_join_assigns_next_draft_slot():
     db = MagicMock()
     db.scalars.return_value.first.return_value = None
     db.scalars.return_value.all.return_value = [SimpleNamespace()]
-    db.scalar.return_value = 1
+    db.scalar.side_effect = [1, None]
 
     member, created = join_or_return_member(db, league, profile)
     assert created is True
