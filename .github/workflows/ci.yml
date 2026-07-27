@@ -1,11 +1,8 @@
 name: CI
 
 on:
-  # Skip standalone CI on master pushes — deploy-frontend / deploy-backend
-  # already call this workflow via workflow_call before deploying.
-  push:
-    branches-ignore:
-      - master
+  # PRs only (not push) so a branch update doesn't run CI twice.
+  # Master deploys call this via workflow_call from deploy-frontend / deploy-backend.
   pull_request:
   workflow_dispatch:
   workflow_call:
