@@ -129,6 +129,8 @@ def test_delete_me_deletes_pre_draft_sole_comm_league_profile_and_auth_user():
     sole = _member(mid=1, league_id=1, profile_id=profile.id, is_commissioner=True)
     # Other managers must be loaded for sole-comm checks; deleting the league
     # must rely on DB CASCADE (passive_deletes), not ORM nullification of league_id.
+    # Profile.memberships also uses passive_deletes so deleting the profile does
+    # not null member.profile_id while memberships remain in session.
     other = _member(mid=2, league_id=1, profile_id=99, is_commissioner=False)
     db = _db_with_memberships(
         memberships=[sole],

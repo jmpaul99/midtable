@@ -42,6 +42,12 @@ class Profile(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
+    # DB FK uses ON DELETE CASCADE; passive_deletes keeps the ORM from SETting
+    # member.profile_id to NULL when a Profile is deleted while members are loaded.
+    memberships: Mapped[list["LeagueMember"]] = relationship(
+        back_populates="profile",
+        passive_deletes=True,
+    )
 
 class CompetitionTemplate(Base):
     __tablename__ = "competition_templates"
@@ -164,7 +170,7 @@ class LeagueMember(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     league: Mapped[League] = relationship(back_populates="members")
-    profile: Mapped[Profile] = relationship()
+    profile: Mapped[Profile] = relationship(back_populates="memberships")
 
 
 class TeamPool(Base):
