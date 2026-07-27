@@ -101,7 +101,9 @@ def join_or_return_member(
 ) -> tuple[LeagueMember, bool]:
     """Return existing membership or create one. Does not commit.
 
-    New members without an explicit draft_slot get the next available slot.
+    New members in pre_draft without an explicit draft_slot get the next
+    available slot. Mid-draft joiners keep a null slot so they are not folded
+    into the active turn order.
     Raises HTTPException 409 when the league is closed or full.
     Caller owns draft_slot uniqueness checks and invite/audit side effects.
     """
@@ -127,7 +129,10 @@ def join_or_return_member(
             detail=f"League is full ({max_members} managers)",
         )
 
-    if draft_slot is None:
+    if draft_slot is None and league.status == "pre_draft":
+        # Auto-append only before the draft starts. Mid-draft assignment would
+        # expand turn order while current_pick_number still reflects the
+        # earlier manager count.
         draft_slot = next_draft_slot(db, league.id)
 
     member = LeagueMember(

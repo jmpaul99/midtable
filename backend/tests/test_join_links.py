@@ -280,6 +280,41 @@ def test_get_or_create_profile_resolves_insert_race():
     db.flush.assert_called_once()
 
 
+def test_get_or_create_profile_retries_when_winner_not_yet_visible():
+    from sqlalchemy.exc import IntegrityError
+
+    auth_id = uuid4()
+    existing = SimpleNamespace(
+        public_id=uuid4(),
+        email="racer@example.com",
+        auth_user_id=auth_id,
+        display_name="Display Name",
+    )
+    db = MagicMock()
+    # Initial find miss; after IntegrityError, first recovery miss then hit.
+    db.scalars.return_value.first.side_effect = [
+        None,
+        None,
+        None,
+        None,
+        existing,
+    ]
+    nested = MagicMock()
+    nested.__enter__.return_value = nested
+    nested.__exit__.return_value = None
+    db.begin_nested.return_value = nested
+    db.flush.side_effect = IntegrityError("stmt", {}, Exception("duplicate"))
+
+    profile = get_or_create_profile(
+        db,
+        email="racer@example.com",
+        auth_user_id=auth_id,
+        display_name="Racer",
+    )
+    assert profile is existing
+    assert db.expire_all.call_count >= 1
+
+
 def test_get_or_create_profile_syncs_stale_email():
     auth_id = uuid4()
     existing = SimpleNamespace(

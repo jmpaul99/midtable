@@ -19,12 +19,13 @@ function useLoginHref() {
   const pathname = usePathname();
   const search = useSearchParams();
   const existingNext = safeNext(search.get("next"));
-  if (existingNext) {
+  const nextIsLogin = Boolean(existingNext?.split("?", 1)[0] === "/login");
+  if (existingNext && !nextIsLogin) {
     return `/login?next=${encodeURIComponent(existingNext)}`;
   }
   const query = search.toString();
   const current = `${pathname}${query ? `?${query}` : ""}`;
-  if (current === "/" || current === "") return "/login";
+  if (pathname === "/login" || current === "/" || current === "") return "/login";
   return `/login?next=${encodeURIComponent(current)}`;
 }
 

@@ -86,6 +86,20 @@ def test_join_assigns_next_draft_slot():
     db.get.assert_called_once_with(League, 1, with_for_update=True)
 
 
+def test_join_during_drafting_leaves_slot_unset():
+    league = SimpleNamespace(id=1, status="drafting", config=None)
+    profile = SimpleNamespace(id=7, display_name="Late Joiner")
+    db = MagicMock()
+    db.scalars.return_value.first.return_value = None
+    db.scalars.return_value.all.return_value = [SimpleNamespace()]
+
+    member, created = join_or_return_member(db, league, profile)
+    assert created is True
+    assert member.draft_slot is None
+    db.get.assert_not_called()
+    db.scalar.assert_not_called()
+
+
 def test_join_keeps_explicit_draft_slot():
     league = SimpleNamespace(id=1, status="pre_draft", config=None)
     profile = SimpleNamespace(id=7, display_name="Joiner")

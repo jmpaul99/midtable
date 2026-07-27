@@ -233,7 +233,14 @@ def get_or_create_profile(
             db.add(profile)
             db.flush()
     except IntegrityError:
-        raced = _find_profile(db, email=normalized, auth_user_id=auth_user_id)
+        # Loser of a concurrent insert may not see the winner immediately;
+        # retry the lookup briefly before surfacing the conflict.
+        raced: Profile | None = None
+        for _ in range(3):
+            raced = _find_profile(db, email=normalized, auth_user_id=auth_user_id)
+            if raced is not None:
+                break
+            db.expire_all()
         if raced is None:
             raise
         logger.info(
