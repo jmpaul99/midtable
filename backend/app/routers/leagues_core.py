@@ -354,17 +354,19 @@ def update_settings(
                 status_code=409,
                 detail="Pick timer cannot be changed after the draft is complete.",
             )
+        new_timer = data.get("pick_timer_seconds")
         # Clearing the timer mid-draft stops the current clock immediately.
-        if data.get("pick_timer_seconds") is None and draft_state is not None:
+        if new_timer is None and draft_state is not None:
             draft_state.pick_deadline_at = None
         elif (
-            data.get("pick_timer_seconds") is not None
+            new_timer is not None
             and draft_state is not None
             and draft_state.status == "open"
+            and new_timer != league.pick_timer_seconds
         ):
             # Enabling or changing duration: restart the clock for the current pick.
             draft_state.pick_deadline_at = datetime.now(UTC) + timedelta(
-                seconds=int(data["pick_timer_seconds"])
+                seconds=int(new_timer)
             )
     clear_preassigns = (
         preassign_mode is not None and str(preassign_mode).lower() == "none"

@@ -4,11 +4,13 @@ import { FormEvent } from "react";
 import type { League, PoolTeam, UUID } from "@/lib/types";
 import { managerLabel } from "@/lib/types";
 import { IconButton } from "@/components/ui/IconButton";
+import { Button } from "@/components/ui/Button";
 import { ChevronDownIcon, ChevronUpIcon, SaveIcon, UserPlusIcon } from "@/components/ui/icons";
 import { Card, Muted, RankBadge, Stack } from "@/components/ui/Card";
 import { Label, Select } from "@/components/ui/Field";
 import { FieldHelp, LabelRow } from "@/components/ui/FieldHelp";
 import { ChoiceToggle } from "@/components/ui/ChoiceToggle";
+import { DraftTimingFields } from "@/components/settings/DraftTimingFields";
 
 export function DraftOrderSection({
   league,
@@ -19,12 +21,18 @@ export function DraftOrderSection({
   settingsBusy,
   teamPool,
   poolTeams,
+  scheduledLocal,
+  pickTimerSeconds,
+  scheduleEditable,
+  timerEditable,
   onMove,
   onTeamPool,
-  onSaveOrder,
   onDraftStyleChange,
   onPreassignModeChange,
   onPreassign,
+  onScheduledLocalChange,
+  onPickTimerSecondsChange,
+  onSave,
 }: {
   league: League;
   draftOrder: UUID[];
@@ -34,12 +42,18 @@ export function DraftOrderSection({
   settingsBusy?: boolean;
   teamPool: string;
   poolTeams: Record<string, PoolTeam[]>;
+  scheduledLocal: string;
+  pickTimerSeconds: string;
+  scheduleEditable: boolean;
+  timerEditable: boolean;
   onMove: (index: number, direction: -1 | 1) => void;
   onTeamPool: (id: string) => void;
-  onSaveOrder: () => void;
   onDraftStyleChange: (value: "linear" | "snake") => void;
   onPreassignModeChange: (value: "none" | "supported" | "optional") => void;
   onPreassign: (e: FormEvent<HTMLFormElement>) => void;
+  onScheduledLocalChange: (value: string) => void;
+  onPickTimerSecondsChange: (value: string) => void;
+  onSave: () => void;
 }) {
   const multiPool = league.pools.length > 1;
   const showPreassignTools = preassignMode !== "none";
@@ -58,77 +72,55 @@ export function DraftOrderSection({
     }
   }
 
+  const timingEditable = scheduleEditable || timerEditable;
+
   return (
     <Card>
       <Stack>
-        <h2>{showPreassignTools ? "Draft order & preassigns" : "Draft order"}</h2>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <div className="flex flex-col gap-1.5 text-sm font-semibold text-muted sm:items-start">
-            <LabelRow>
-              Draft style
-              <FieldHelp label="Draft style">
-                <p className="mb-2">Controls pick order across draft rounds.</p>
-                <ul className="list-disc space-y-1 pl-4">
-                  <li>
-                    <strong className="text-ink">Linear</strong> — same order every round
-                    (1→N).
-                  </li>
-                  <li>
-                    <strong className="text-ink">Snake</strong> — order reverses each round
-                    (1→N, then N→1).
-                  </li>
-                </ul>
-              </FieldHelp>
-            </LabelRow>
-            <ChoiceToggle
-              label="Draft style"
-              value={draftStyle}
-              disabled={!settingsEditable || settingsBusy}
-              options={
-                [
-                  { id: "linear", label: "Linear" },
-                  { id: "snake", label: "Snake" },
-                ] as const
-              }
-              onChange={onDraftStyleChange}
-            />
-          </div>
-          <div className="flex flex-col gap-1.5 text-sm font-semibold text-muted sm:items-start">
-            <LabelRow>
-              Preassign mode
-              <FieldHelp label="Preassign mode">
-                <p className="mb-2">Whether clubs can be assigned before the live draft.</p>
-                <ul className="list-disc space-y-1 pl-4">
-                  <li>
-                    <strong className="text-ink">None</strong> — no pre-draft assignments.
-                  </li>
-                  <li>
-                    <strong className="text-ink">Supported</strong> — commissioners can
-                    preassign clubs; every manager must have one before the draft opens.
-                  </li>
-                  <li>
-                    <strong className="text-ink">Optional</strong> — preassign is available but
-                    not required.
-                  </li>
-                </ul>
-              </FieldHelp>
-            </LabelRow>
-            <ChoiceToggle
-              label="Preassign mode"
-              value={preassignMode}
-              disabled={!settingsEditable || settingsBusy}
-              options={
-                [
-                  { id: "none", label: "None" },
-                  { id: "supported", label: "Supported" },
-                  { id: "optional", label: "Optional" },
-                ] as const
-              }
-              onChange={onPreassignModeChange}
-            />
-          </div>
+        <h2>Draft settings</h2>
+        <div className="flex flex-col gap-1.5 text-sm font-semibold text-muted sm:items-start">
+          <LabelRow>
+            Draft style
+            <FieldHelp label="Draft style">
+              <p className="mb-2">Controls pick order across draft rounds.</p>
+              <ul className="list-disc space-y-1 pl-4">
+                <li>
+                  <strong className="text-ink">Linear</strong> — same order every round
+                  (1→N).
+                </li>
+                <li>
+                  <strong className="text-ink">Snake</strong> — order reverses each round
+                  (1→N, then N→1).
+                </li>
+              </ul>
+            </FieldHelp>
+          </LabelRow>
+          <ChoiceToggle
+            label="Draft style"
+            value={draftStyle}
+            disabled={!settingsEditable || settingsBusy}
+            options={
+              [
+                { id: "linear", label: "Linear" },
+                { id: "snake", label: "Snake" },
+              ] as const
+            }
+            onChange={onDraftStyleChange}
+          />
         </div>
+
+        <DraftTimingFields
+          scheduledLocal={scheduledLocal}
+          onScheduledLocalChange={onScheduledLocalChange}
+          pickTimerSeconds={pickTimerSeconds}
+          onPickTimerSecondsChange={onPickTimerSecondsChange}
+          scheduleDisabled={!scheduleEditable || settingsBusy}
+          timerDisabled={!timerEditable || settingsBusy}
+          hint="Schedule auto-open and the pick clock. Schedule can only be changed before the draft opens."
+        />
+
         <Stack gap="sm">
+          <h3 className="text-sm font-bold text-ink">Draft order</h3>
           {draftOrder.map((id, index) => {
             const preassigned = preassignsByMember.get(id);
             return (
@@ -174,81 +166,146 @@ export function DraftOrderSection({
             Draft order is locked after the draft opens.
           </Muted>
         )}
-        {settingsEditable && (
+        {(settingsEditable || timingEditable) && (
           <div className="flex justify-start">
-            <IconButton type="button" label="Save draft order" variant="primary" onClick={onSaveOrder}>
+            <IconButton
+              type="button"
+              label="Save draft settings"
+              variant="primary"
+              busy={settingsBusy}
+              onClick={onSave}
+            >
               <SaveIcon />
             </IconButton>
           </div>
         )}
-        {showPreassignTools && settingsEditable && (
-          <form className="flex flex-col gap-3" onSubmit={onPreassign}>
-            {multiPool ? (
-              <Label>
-                Competition
-                <Select name="pool" value={teamPool} onChange={(e) => onTeamPool(e.target.value)}>
-                  <option value="">All competitions</option>
-                  {league.pools.map((p) => (
-                    <option value={p.id} key={p.id}>
-                      {p.label}
-                    </option>
-                  ))}
-                </Select>
-              </Label>
-            ) : (
-              league.pools[0] && <input type="hidden" name="pool" value={league.pools[0].id} />
-            )}
-            <Label>
-              Manager
-              <Select name="member">
-                {league.members.map((m) => (
-                  <option value={m.id} key={m.id}>
-                    {managerLabel(m)}
-                  </option>
-                ))}
-              </Select>
-            </Label>
-            <Label>
-              Available team
-              <Select name="team" required key={teamPool || "all"}>
-                <option value="">Choose…</option>
-                {(teamPool
-                  ? (poolTeams[teamPool] || []).map((t) => ({
-                      ...t,
-                      pool_id: teamPool,
-                      pool_label:
-                        league.pools.find((p) => p.id === teamPool)?.label ||
-                        league.pools.find((p) => p.id === teamPool)?.key ||
-                        "",
-                    }))
-                  : league.pools.flatMap((pool) =>
-                      (poolTeams[pool.id] || []).map((t) => ({
-                        ...t,
-                        pool_id: pool.id,
-                        pool_label: pool.label || pool.key,
-                      })),
-                    )
-                )
-                  .filter((t) => t.available)
-                  .sort((a, b) => a.name.localeCompare(b.name))
-                  .map((t) => {
-                    const encodePool = multiPool && !teamPool;
-                    const value = encodePool ? `${t.pool_id}:${t.id}` : t.id;
-                    const label = multiPool ? `${t.name} (${t.pool_label})` : t.name;
-                    return (
-                      <option value={value} key={`${t.pool_id}:${t.id}`}>
-                        {label}
-                      </option>
-                    );
-                  })}
-              </Select>
-            </Label>
-            <div className="flex justify-start">
-              <IconButton type="submit" label="Preassign team" variant="primary">
-                <UserPlusIcon />
-              </IconButton>
+
+        {settingsEditable && (
+          <div className="flex flex-col gap-3 border-t border-line pt-3">
+            <div>
+              <h3 className="text-sm font-bold text-ink">Preassign</h3>
+              <Muted className="mt-1 text-xs leading-snug">
+                Optionally give managers clubs before the live draft. Preassigned clubs skip the
+                draft and count toward that manager’s roster.
+              </Muted>
             </div>
-          </form>
+            <div className="flex flex-col gap-1.5 text-sm font-semibold text-muted sm:items-start">
+              <LabelRow>
+                Preassign mode
+                <FieldHelp label="Preassign mode">
+                  <p className="mb-2">Whether clubs can be assigned before the live draft.</p>
+                  <ul className="list-disc space-y-1 pl-4">
+                    <li>
+                      <strong className="text-ink">None</strong> — no pre-draft assignments.
+                    </li>
+                    <li>
+                      <strong className="text-ink">Supported</strong> — commissioners can
+                      preassign clubs; every manager must have one before the draft opens.
+                    </li>
+                    <li>
+                      <strong className="text-ink">Optional</strong> — preassign is available but
+                      not required.
+                    </li>
+                  </ul>
+                </FieldHelp>
+              </LabelRow>
+              <ChoiceToggle
+                label="Preassign mode"
+                value={preassignMode}
+                disabled={settingsBusy}
+                options={
+                  [
+                    { id: "none", label: "None" },
+                    { id: "supported", label: "Supported" },
+                    { id: "optional", label: "Optional" },
+                  ] as const
+                }
+                onChange={onPreassignModeChange}
+              />
+            </div>
+            {showPreassignTools && (
+              <form className="flex flex-col gap-3" onSubmit={onPreassign}>
+                {multiPool ? (
+                  <Label>
+                    Competition
+                    <Select
+                      name="pool"
+                      value={teamPool}
+                      onChange={(e) => onTeamPool(e.target.value)}
+                    >
+                      <option value="">All competitions</option>
+                      {league.pools.map((p) => (
+                        <option value={p.id} key={p.id}>
+                          {p.label}
+                        </option>
+                      ))}
+                    </Select>
+                  </Label>
+                ) : (
+                  league.pools[0] && (
+                    <input type="hidden" name="pool" value={league.pools[0].id} />
+                  )
+                )}
+                <Label>
+                  Team
+                  <Select name="member">
+                    {league.members.map((m) => {
+                      const team = m.team_name?.trim() || managerLabel(m);
+                      const person = m.display_name?.trim() || m.email || null;
+                      const label =
+                        person && person !== team ? `${team} (${person})` : team;
+                      return (
+                        <option value={m.id} key={m.id}>
+                          {label}
+                        </option>
+                      );
+                    })}
+                  </Select>
+                </Label>
+                <Label>
+                  Available club
+                  <Select name="team" required key={teamPool || "all"}>
+                    <option value="">Choose…</option>
+                    {(teamPool
+                      ? (poolTeams[teamPool] || []).map((t) => ({
+                          ...t,
+                          pool_id: teamPool,
+                          pool_label:
+                            league.pools.find((p) => p.id === teamPool)?.label ||
+                            league.pools.find((p) => p.id === teamPool)?.key ||
+                            "",
+                        }))
+                      : league.pools.flatMap((pool) =>
+                          (poolTeams[pool.id] || []).map((t) => ({
+                            ...t,
+                            pool_id: pool.id,
+                            pool_label: pool.label || pool.key,
+                          })),
+                        )
+                    )
+                      .filter((t) => t.available)
+                      .sort((a, b) => a.name.localeCompare(b.name))
+                      .map((t) => {
+                        const encodePool = multiPool && !teamPool;
+                        const value = encodePool ? `${t.pool_id}:${t.id}` : t.id;
+                        const label = multiPool ? `${t.name} (${t.pool_label})` : t.name;
+                        return (
+                          <option value={value} key={`${t.pool_id}:${t.id}`}>
+                            {label}
+                          </option>
+                        );
+                      })}
+                  </Select>
+                </Label>
+                <div className="flex justify-start">
+                  <Button type="submit" variant="primary">
+                    <UserPlusIcon className="size-4" />
+                    Assign club
+                  </Button>
+                </div>
+              </form>
+            )}
+          </div>
         )}
       </Stack>
     </Card>

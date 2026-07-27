@@ -373,6 +373,7 @@ class TeamFixtureRow(MatchLogRow):
     opponent_name: str
     opponent_id: UUID
     opponent_table_position: int | None = None
+    opponent_owner: dict[str, Any] | None = None
 
 
 class MemberClubRow(BaseModel):

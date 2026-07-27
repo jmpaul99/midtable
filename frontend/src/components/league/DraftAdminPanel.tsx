@@ -2,13 +2,18 @@
 
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { api, errorMessage, json } from "@/lib/api";
-import type { League, PoolTeam, UUID } from "@/lib/types";
+import type { League, PoolTeam, RosterRow, UUID } from "@/lib/types";
 import { ErrorState } from "@/components/ui/State";
 import { Stack } from "@/components/ui/Card";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { useToast } from "@/components/ui/ToastProvider";
 import { DraftOrderSection } from "@/components/admin/DraftOrderSection";
 import { RosterCorrectionsSection } from "@/components/admin/RosterCorrectionsSection";
+import {
+  fromDatetimeLocalValue,
+  parsePickTimerSeconds,
+  toDatetimeLocalValue,
+} from "@/components/settings/DraftTimingFields";
 
 type DraftStyle = "linear" | "snake";
 type PreassignMode = "none" | "supported" | "optional";
@@ -20,6 +25,33 @@ function normalizeDraftStyle(value: string | undefined): DraftStyle {
 function normalizePreassignMode(value: string | undefined): PreassignMode {
   if (value === "supported" || value === "optional") return value;
   return "none";
+}
+
+function initialScheduledLocal(league: League): string {
+  return toDatetimeLocalValue(
+    league.draft_scheduled_at ??
+      (typeof league.settings?.draft_scheduled_at === "string"
+        ? league.settings.draft_scheduled_at
+        : null),
+  );
+}
+
+function initialPickTimerSeconds(league: League): string {
+  const existing =
+    league.pick_timer_seconds ??
+    (typeof league.settings?.pick_timer_seconds === "number"
+      ? league.settings.pick_timer_seconds
+      : null);
+  return existing != null && existing > 0 ? String(existing) : "";
+}
+
+function currentPickTimerSeconds(league: League): number | null {
+  const existing =
+    league.pick_timer_seconds ??
+    (typeof league.settings?.pick_timer_seconds === "number"
+      ? league.settings.pick_timer_seconds
+      : null);
+  return existing != null && existing > 0 ? existing : null;
 }
 
 export function DraftAdminPanel({
@@ -41,15 +73,23 @@ export function DraftAdminPanel({
   const [preassignMode, setPreassignMode] = useState<PreassignMode>(() =>
     normalizePreassignMode(league.preassign_mode),
   );
+  const [scheduledLocal, setScheduledLocal] = useState(() => initialScheduledLocal(league));
+  const [pickTimerSeconds, setPickTimerSeconds] = useState(() =>
+    initialPickTimerSeconds(league),
+  );
   /** Empty = all competitions for the preassign team list. */
   const [teamPool, setTeamPool] = useState("");
   const [poolTeams, setPoolTeams] = useState<Record<string, PoolTeam[]>>({});
   const [loadError, setLoadError] = useState("");
   const [settingsBusy, setSettingsBusy] = useState(false);
   const [preassignConfirmOpen, setPreassignConfirmOpen] = useState(false);
+  const [preassignOffConfirmOpen, setPreassignOffConfirmOpen] = useState(false);
+  const [preassignOffCount, setPreassignOffCount] = useState<number | null>(null);
   const pendingPreassignForm = useRef<HTMLFormElement | null>(null);
 
   const settingsEditable = league.status === "pre_draft";
+  const scheduleEditable = league.status === "pre_draft";
+  const timerEditable = league.status !== "complete";
 
   const loadPoolTeams = useCallback(() => {
     setLoadError("");
@@ -84,6 +124,14 @@ export function DraftAdminPanel({
     setPreassignMode(normalizePreassignMode(league.preassign_mode));
   }, [league.draft_style, league.preassign_mode]);
 
+  useEffect(() => {
+    setScheduledLocal(initialScheduledLocal(league));
+  }, [league.draft_scheduled_at, league.settings?.draft_scheduled_at]);
+
+  useEffect(() => {
+    setPickTimerSeconds(initialPickTimerSeconds(league));
+  }, [league.pick_timer_seconds, league.settings?.pick_timer_seconds]);
+
   function moveMember(index: number, direction: -1 | 1) {
     if (!settingsEditable) return;
     const target = index + direction;
@@ -93,21 +141,33 @@ export function DraftAdminPanel({
     setDraftOrder(next);
   }
 
-  async function saveOrder() {
-    if (!settingsEditable) return;
-    try {
-      await api(`/leagues/${league.id}/draft-order`, json("PUT", { member_ids: draftOrder }));
-      toast({ message: "Draft order saved." });
-      onLeagueChange?.();
-      loadPoolTeams();
-    } catch (e) {
-      toast({
-        message: errorMessage(e),
-        tone: "error",
-        durationMs: 6000,
-        dismissible: true,
-      });
+  async function requestPreassignModeChange(value: PreassignMode) {
+    if (value !== "none") {
+      void saveDraftSetting({ preassign_mode: value });
+      return;
     }
+    if (settingsBusy) return;
+
+    // Count from the server roster — local poolTeams may still be loading, failed, or stale.
+    setSettingsBusy(true);
+    try {
+      const rows = await api<RosterRow[]>(`/leagues/${league.id}/rosters`);
+      const count = rows.filter((r) => r.acquired_via === "preassigned").length;
+      if (count > 0) {
+        setPreassignOffCount(count);
+        setPreassignOffConfirmOpen(true);
+        return;
+      }
+    } catch {
+      // Can't verify count — require confirmation rather than clearing silently.
+      setPreassignOffCount(null);
+      setPreassignOffConfirmOpen(true);
+      return;
+    } finally {
+      setSettingsBusy(false);
+    }
+
+    void saveDraftSetting({ preassign_mode: value });
   }
 
   async function saveDraftSetting(patch: {
@@ -146,6 +206,67 @@ export function DraftAdminPanel({
     }
   }
 
+  async function saveDraftSettings() {
+    if (settingsBusy) return;
+    if (timerEditable && pickTimerSeconds.trim()) {
+      const parsedTimer = Number(pickTimerSeconds);
+      if (!Number.isInteger(parsedTimer) || parsedTimer < 1) {
+        toast({
+          message: "Seconds per pick must be a whole number of at least 1, or left blank.",
+          tone: "error",
+          durationMs: 6000,
+          dismissible: true,
+        });
+        return;
+      }
+    }
+
+    setSettingsBusy(true);
+    let timingSaved = false;
+    try {
+      const nextTimer = parsePickTimerSeconds(pickTimerSeconds);
+      const prevTimer = currentPickTimerSeconds(league);
+      const timingPatch = {
+        ...(scheduleEditable
+          ? { draft_scheduled_at: fromDatetimeLocalValue(scheduledLocal) }
+          : {}),
+        // Only send the timer when it changed — PATCH always restarts an open pick clock.
+        ...(timerEditable && nextTimer !== prevTimer
+          ? { pick_timer_seconds: nextTimer }
+          : {}),
+      };
+      if (Object.keys(timingPatch).length > 0) {
+        await api(`/leagues/${league.id}/settings`, json("PATCH", timingPatch));
+        timingSaved = true;
+      }
+      if (settingsEditable) {
+        await api(`/leagues/${league.id}/draft-order`, json("PUT", { member_ids: draftOrder }));
+      }
+      toast({ message: "Draft settings saved." });
+      onLeagueChange?.();
+      if (settingsEditable) loadPoolTeams();
+    } catch (e) {
+      if (timingSaved) {
+        toast({
+          message: `Draft timing was saved, but draft order failed: ${errorMessage(e)}`,
+          tone: "error",
+          durationMs: 8000,
+          dismissible: true,
+        });
+        onLeagueChange?.();
+      } else {
+        toast({
+          message: errorMessage(e),
+          tone: "error",
+          durationMs: 6000,
+          dismissible: true,
+        });
+      }
+    } finally {
+      setSettingsBusy(false);
+    }
+  }
+
   function preassign(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     pendingPreassignForm.current = e.currentTarget;
@@ -160,7 +281,6 @@ export function DraftAdminPanel({
     const f = new FormData(form);
     const teamId = String(f.get("team") || "");
     const memberId = String(f.get("member") || "");
-    // Combined "all competitions" mode encodes pool in the option value as poolId:teamId.
     let poolId = String(f.get("pool") || "");
     let resolvedTeamId = teamId;
     if (teamId.includes(":")) {
@@ -211,12 +331,18 @@ export function DraftAdminPanel({
           settingsBusy={settingsBusy}
           teamPool={teamPool}
           poolTeams={poolTeams}
+          scheduledLocal={scheduledLocal}
+          pickTimerSeconds={pickTimerSeconds}
+          scheduleEditable={scheduleEditable}
+          timerEditable={timerEditable}
           onMove={moveMember}
           onTeamPool={setTeamPool}
-          onSaveOrder={saveOrder}
           onDraftStyleChange={(value) => void saveDraftSetting({ draft_style: value })}
-          onPreassignModeChange={(value) => void saveDraftSetting({ preassign_mode: value })}
+          onPreassignModeChange={requestPreassignModeChange}
           onPreassign={preassign}
+          onScheduledLocalChange={setScheduledLocal}
+          onPickTimerSecondsChange={setPickTimerSeconds}
+          onSave={() => void saveDraftSettings()}
         />
         <RosterCorrectionsSection
           league={league}
@@ -228,9 +354,9 @@ export function DraftAdminPanel({
       </div>
       <ConfirmDialog
         open={preassignConfirmOpen}
-        title="Preassign this team?"
-        description="The selected team will be assigned to this manager before the draft."
-        confirmLabel="Preassign"
+        title="Assign this club before the draft?"
+        description="The selected club will be given to this manager now and will not be available in the live draft."
+        confirmLabel="Assign club"
         cancelLabel="Cancel"
         tone="warning"
         onCancel={() => {
@@ -238,6 +364,23 @@ export function DraftAdminPanel({
           setPreassignConfirmOpen(false);
         }}
         onConfirm={() => void confirmPreassign()}
+      />
+      <ConfirmDialog
+        open={preassignOffConfirmOpen}
+        title="Turn off preassign?"
+        description={
+          preassignOffCount != null && preassignOffCount > 0
+            ? `Switching to None will clear ${preassignOffCount} preassigned club${preassignOffCount === 1 ? "" : "s"}. Managers will lose those clubs.`
+            : "Switching to None will clear any preassigned clubs. Managers will lose those clubs."
+        }
+        confirmLabel="Clear preassigns"
+        cancelLabel="Cancel"
+        tone="warning"
+        onCancel={() => setPreassignOffConfirmOpen(false)}
+        onConfirm={() => {
+          setPreassignOffConfirmOpen(false);
+          void saveDraftSetting({ preassign_mode: "none" });
+        }}
       />
     </Stack>
   );

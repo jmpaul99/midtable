@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import type { League } from "@/lib/types";
 import { api } from "@/lib/api";
-import { formatDate } from "@/lib/format";
+import { formatDateTimeWithZone } from "@/lib/format";
 import { Card, Muted, Stack } from "@/components/ui/Card";
 import {
   normalizePayouts,
@@ -218,22 +218,29 @@ export function LeagueSettingsView({ league }: { league: League }) {
               Managers: {memberCount}
               {league.max_members != null ? ` of ${league.max_members}` : ""}
             </div>
+          </ReviewBlock>
+
+          <ReviewBlock title="Draft">
+            <div>Status: {humanizeKey(league.status || "unknown")}</div>
             <div>
-              Draft: {league.draft_style === "snake" ? "Snake" : "Linear"}
-              {" · "}
-              Preassign:{" "}
+              Style: {league.draft_style === "snake" ? "Snake" : "Linear"}
+            </div>
+            <div>
+              Preassign clubs before draft:{" "}
               {preassign === "none"
                 ? "None"
                 : preassign === "supported"
                   ? "Supported"
-                  : humanizeKey(preassign)}
+                  : preassign === "optional"
+                    ? "Optional"
+                    : humanizeKey(preassign)}
             </div>
             <div>
               Scheduled start:{" "}
               {league.draft_scheduled_at
-                ? formatDate(league.draft_scheduled_at)
+                ? formatDateTimeWithZone(league.draft_scheduled_at)
                 : typeof league.settings?.draft_scheduled_at === "string"
-                  ? formatDate(league.settings.draft_scheduled_at)
+                  ? formatDateTimeWithZone(league.settings.draft_scheduled_at)
                   : "Not set (open manually)"}
             </div>
             <div>

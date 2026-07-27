@@ -33,6 +33,7 @@ export function DraftTimingFields({
   scheduleDisabled = false,
   timerDisabled = false,
   className,
+  hint,
 }: {
   scheduledLocal: string;
   onScheduledLocalChange: (value: string) => void;
@@ -41,6 +42,8 @@ export function DraftTimingFields({
   scheduleDisabled?: boolean;
   timerDisabled?: boolean;
   className?: string;
+  /** Override the default timing help line. */
+  hint?: string;
 }) {
   const timerNum = Number(pickTimerSeconds);
   const hasTimer = Number.isFinite(timerNum) && timerNum > 0;
@@ -48,8 +51,8 @@ export function DraftTimingFields({
   return (
     <div className={cn("flex flex-col gap-3 sm:col-span-2", className)}>
       <Muted className="text-xs leading-snug">
-        Optional draft timing — not required to create the league. You can set or change these later
-        under Admin → League → Draft.
+        {hint ??
+          "Optional draft timing — not required to create the league. You can set or change these later on the Draft page."}
       </Muted>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <Label className="min-w-0">
@@ -66,6 +69,13 @@ export function DraftTimingFields({
             disabled={scheduleDisabled}
             onChange={(e) => onScheduledLocalChange(e.target.value)}
           />
+          <Muted className="mt-1 text-xs">
+            Times use your local timezone (
+            {new Intl.DateTimeFormat(undefined, { timeZoneName: "short" })
+              .formatToParts(new Date())
+              .find((p) => p.type === "timeZoneName")?.value ?? "local"}
+            ).
+          </Muted>
           {!scheduleDisabled && scheduledLocal ? (
             <button
               type="button"
