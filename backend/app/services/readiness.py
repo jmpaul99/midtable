@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.models import League, LeagueMember, PoolTeam, RosterEntry, TeamPool
 from app.schemas.leagues import ReadinessCheck, ReadinessResponse
-from app.services.preassign import normalize_preassign_mode
+from app.services.preassign import effective_preassign_count, normalize_preassign_mode
 
 ReadinessPurpose = Literal["draft", "sync"]
 
@@ -27,7 +27,7 @@ def evaluate_readiness(
 
     if purpose == "draft":
         checks.extend(_draft_member_checks(db, league))
-        checks.extend(_draft_preassign_checks(db, league))
+        checks.extend(_draft_preassign_checks(db, league, pools))
         checks.extend(_pools_check(pools, for_draft=True))
         checks.extend(_scoring_pools_check(pools, scoring_pools, purpose="draft"))
         for pool in pools:
@@ -136,12 +136,14 @@ def _draft_member_checks(db: Session, league: League) -> list[ReadinessCheck]:
     return checks
 
 
-def _draft_preassign_checks(db: Session, league: League) -> list[ReadinessCheck]:
+def _draft_preassign_checks(
+    db: Session, league: League, pools: list[TeamPool]
+) -> list[ReadinessCheck]:
     mode = normalize_preassign_mode(getattr(league, "preassign_mode", None))
     if mode not in {"optional", "required"}:
         return []
 
-    n = int(getattr(league, "preassign_count", 1) or 0)
+    n = effective_preassign_count(getattr(league, "preassign_count", None))
     members = list(
         db.scalars(select(LeagueMember).where(LeagueMember.league_id == league.id)).all()
     )
@@ -231,6 +233,41 @@ def _draft_preassign_checks(db: Session, league: League) -> list[ReadinessCheck]
                     detail=f"{over} of {member_count} managers exceed {n} preassigned club(s)",
                 )
             )
+
+    # Guard against preassigns overflowing a competition's roster slot_count.
+    pool_by_id = {p.id: p for p in pools}
+    counts_by_member_pool: dict[tuple[int, int], int] = {}
+    for entry in preassigns:
+        pool_id = getattr(entry, "pool_id", None)
+        if pool_id is None:
+            continue
+        key = (entry.member_id, pool_id)
+        counts_by_member_pool[key] = counts_by_member_pool.get(key, 0) + 1
+    over_slot = 0
+    for (member_id, pool_id), count in counts_by_member_pool.items():
+        pool = pool_by_id.get(pool_id)
+        if pool is not None and count > int(pool.slot_count):
+            over_slot += 1
+    if over_slot == 0:
+        checks.append(
+            ReadinessCheck(
+                key="preassigns:pool_slots",
+                label="Preassigns within competition slots",
+                status="ok",
+                detail="No manager exceeds a competition's slot count via preassign",
+            )
+        )
+    else:
+        checks.append(
+            ReadinessCheck(
+                key="preassigns:pool_slots",
+                label="Preassigns within competition slots",
+                status="error",
+                detail=(
+                    f"{over_slot} manager/competition pair(s) exceed competition slot_count"
+                ),
+            )
+        )
     return checks
 
 

@@ -28,6 +28,7 @@ from app.services.errors import (
     ForbiddenError,
     NotFoundError,
 )
+from app.services.preassign import effective_preassign_count
 
 logger = logging.getLogger(__name__)
 
@@ -119,7 +120,7 @@ def bootstrap_season(
         status="pre_draft",
         draft_style=template.draft_style,
         preassign_mode=template.preassign_mode,
-        preassign_count=getattr(template, "preassign_count", 1) or 1,
+        preassign_count=effective_preassign_count(getattr(template, "preassign_count", None)),
         result_points=deepcopy(template.result_points),
         upset_rules=deepcopy(template.upset_rules),
         leaderboard_phases=deepcopy(template.leaderboard_phases),

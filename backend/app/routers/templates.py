@@ -20,6 +20,7 @@ from app.schemas.templates import (
     TemplateResponse,
     TemplateUpdate,
 )
+from app.services.preassign import effective_preassign_count
 
 logger = logging.getLogger(__name__)
 
@@ -423,7 +424,7 @@ def duplicate_template(
         label=copy_label,
         draft_style=source.draft_style,
         preassign_mode=source.preassign_mode,
-        preassign_count=getattr(source, "preassign_count", 1) or 1,
+        preassign_count=effective_preassign_count(getattr(source, "preassign_count", None)),
         result_points=dict(source.result_points),
         upset_rules=dict(source.upset_rules),
         leaderboard_phases=list(source.leaderboard_phases),

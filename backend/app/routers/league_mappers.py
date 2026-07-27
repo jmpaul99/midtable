@@ -20,6 +20,7 @@ from app.schemas.leagues import (
     PoolResponse,
 )
 from app.services.members import member_label
+from app.services.preassign import effective_preassign_count
 
 def _member_role(member: LeagueMember) -> str:
     return "commissioner" if member.is_commissioner else "member"
@@ -105,7 +106,7 @@ def _league_response(
         status=league.status,
         draft_style=league.draft_style,
         preassign_mode=league.preassign_mode,
-        preassign_count=getattr(league, "preassign_count", 1) or 1,
+        preassign_count=effective_preassign_count(getattr(league, "preassign_count", None)),
         result_points=league.result_points,
         upset_rules=league.upset_rules,
         leaderboard_phases=league.leaderboard_phases,
@@ -152,7 +153,7 @@ def _league_detail(
         status=league.status,
         draft_style=league.draft_style,
         preassign_mode=league.preassign_mode,
-        preassign_count=getattr(league, "preassign_count", 1) or 1,
+        preassign_count=effective_preassign_count(getattr(league, "preassign_count", None)),
         result_points=league.result_points,
         upset_rules=league.upset_rules,
         leaderboard_phases=league.leaderboard_phases,
@@ -171,7 +172,7 @@ def _league_detail(
         settings={
             "draft_style": league.draft_style,
             "preassign_mode": league.preassign_mode,
-            "preassign_count": getattr(league, "preassign_count", 1) or 1,
+            "preassign_count": effective_preassign_count(getattr(league, "preassign_count", None)),
             "result_points": league.result_points,
             "upset_rules": league.upset_rules,
             "format": league.draft_style,

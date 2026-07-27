@@ -16,9 +16,17 @@ def normalize_preassign_mode(value: str | None) -> str:
     return "off"
 
 
+def effective_preassign_count(value: int | None, *, default: int = 1) -> int:
+    """Return stored count; only substitute default when value is missing/None.
+
+    Preserves explicit 0 (e.g. optional max 0) unlike ``value or default``.
+    """
+    return default if value is None else int(value)
+
+
 def validate_preassign_pair(mode: str | None, count: int | None) -> None:
     """Raise ValueError if required mode is paired with count < 1."""
     normalized = normalize_preassign_mode(mode)
-    n = 1 if count is None else int(count)
+    n = effective_preassign_count(count)
     if normalized == "required" and n < 1:
         raise ValueError("Required preassign mode needs at least 1 team per manager")
