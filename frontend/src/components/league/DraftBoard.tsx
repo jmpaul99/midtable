@@ -60,6 +60,7 @@ export function DraftBoard({
   const [teams, setTeams] = useState<DraftableTeam[]>([]);
   const [error, setError] = useState("");
   const [team, setTeam] = useState("");
+  const [teamPoolId, setTeamPoolId] = useState("");
   const [busy, setBusy] = useState(false);
   const [updatedAt, setUpdatedAt] = useState<Date | null>(null);
   const [pendingKey, setPendingKey] = useState<string | null>(null);
@@ -183,7 +184,9 @@ export function DraftBoard({
   const onClock = state?.current_member_id || state?.on_clock_member_id || null;
   const running = state && ["running", "open"].includes(state.status);
   const myTurn = Boolean(running && onClock === league.current_member_id);
-  const selected = availableTeams.find((t) => t.id === team) || teams.find((t) => t.id === team);
+  const selected =
+    availableTeams.find((t) => t.id === team && t.pool_id === teamPoolId) ||
+    teams.find((t) => t.id === team && t.pool_id === teamPoolId);
   const canOpenDraft = readiness?.ready === true;
   const showOpenControls =
     commissioner && state && ["pending", "paused", "cancelled"].includes(state.status);
@@ -254,12 +257,14 @@ export function DraftBoard({
           `/leagues/${league.id}/draft/picks`,
           json("POST", {
             team_id: team,
+            ...(teamPoolId ? { pool_id: teamPoolId } : {}),
             idempotency_key: key,
             expected_version: state.version,
           }),
         ),
       );
       setTeam("");
+      setTeamPoolId("");
       setPendingKey(null);
       load();
     } catch (err) {
@@ -433,11 +438,14 @@ export function DraftBoard({
                                   <button
                                     type="button"
                                     role="option"
-                                    aria-selected={team === t.id}
-                                    onClick={() => setTeam(t.id)}
+                                    aria-selected={team === t.id && teamPoolId === t.pool_id}
+                                    onClick={() => {
+                                      setTeam(t.id);
+                                      setTeamPoolId(t.pool_id);
+                                    }}
                                     className={cn(
                                       "flex w-full items-center gap-3 px-3 py-2.5 text-left transition",
-                                      team === t.id
+                                      team === t.id && teamPoolId === t.pool_id
                                         ? "bg-brand/10"
                                         : "bg-surface hover:bg-surface-2",
                                     )}

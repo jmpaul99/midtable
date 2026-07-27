@@ -361,9 +361,8 @@ def update_settings(
             data.get("pick_timer_seconds") is not None
             and draft_state is not None
             and draft_state.status == "open"
-            and draft_state.pick_deadline_at is None
         ):
-            # Enabling a timer while open: start the clock for the current pick.
+            # Enabling or changing duration: restart the clock for the current pick.
             draft_state.pick_deadline_at = datetime.now(UTC) + timedelta(
                 seconds=int(data["pick_timer_seconds"])
             )

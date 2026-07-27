@@ -8,6 +8,7 @@ from app.schemas.common import IdSchema
 
 class DraftPickRequest(BaseModel):
     team_id: UUID
+    pool_id: UUID | None = None
     idempotency_key: str | None = None
     expected_version: int | None = None
 

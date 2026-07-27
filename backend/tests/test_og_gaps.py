@@ -263,7 +263,7 @@ def test_lock_ranking_lists_after_scoring(monkeypatch):
 def test_undo_last_pick_allows_complete_status():
     from app.services.draft import undo_last_pick
 
-    league = SimpleNamespace(id=1, status="active")
+    league = SimpleNamespace(id=1, status="active", pick_timer_seconds=None)
     db = MagicMock()
     state = SimpleNamespace(status="complete", current_pick_number=3)
     pick = SimpleNamespace(id=99, pick_number=2, team_id=5)
@@ -354,7 +354,7 @@ def test_undo_last_pick_rejects_when_pending():
 def test_reset_draft_clears_picks_keeps_preassigns():
     from app.services.draft import reset_draft
 
-    league = SimpleNamespace(id=1, status="active")
+    league = SimpleNamespace(id=1, status="active", draft_scheduled_at="2026-01-01T00:00:00Z")
     db = MagicMock()
     state = SimpleNamespace(status="complete", current_pick_number=5)
     pick = SimpleNamespace(id=10)
@@ -390,6 +390,7 @@ def test_reset_draft_clears_picks_keeps_preassigns():
     assert state.status == "pending"
     assert state.current_pick_number == 1
     assert league.status == "pre_draft"
+    assert league.draft_scheduled_at is None
     assert pick in deleted
     assert draft_roster in deleted
     assert commissioner_roster in deleted

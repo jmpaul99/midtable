@@ -26,9 +26,9 @@ from app.services.draft import (
     find_idempotent_pick,
     enforce_league_draft_timers,
     make_pick,
-    on_clock_member,
     open_draft,
     ordered_members,
+    peek_on_clock_member,
     reassign_roster_entry,
     reset_draft,
     undo_last_pick,
@@ -52,12 +52,15 @@ def _build_draft_state(db: Session, league: League) -> DraftStateResponse:
     if state.status == "open" and members:
         try:
             ordered = ordered_members(members)
-            member, current_round = on_clock_member(
-                draft_style=league.draft_style,
-                ordered=ordered,
-                pick_number=state.current_pick_number,
+            pools = list(
+                db.scalars(select(TeamPool).where(TeamPool.league_id == league.id)).all()
             )
-            on_clock_id = member.public_id
+            peeked = peek_on_clock_member(
+                db, league=league, state=state, ordered=ordered, pools=pools
+            )
+            if peeked is not None:
+                member, current_round = peeked
+                on_clock_id = member.public_id
         except DomainError as exc:
             logger.warning(
                 "draft on-clock unresolved league_id=%s status=%s pick=%s detail=%s",
@@ -181,6 +184,7 @@ def submit_pick(
         league=league,
         picker_member=member,
         team_public_id=payload.team_id,
+        pool_public_id=payload.pool_id,
         allow_commissioner_override=member.is_commissioner,
         idempotency_key=payload.idempotency_key,
     )
