@@ -370,6 +370,13 @@ export interface Readiness {
 }
 
 /** GET /leagues/{id}/match-log row (fixtures, not scoring events). */
+export interface MatchOwnerInfo {
+  member_id: UUID | null;
+  display_name: string | null;
+  team_name?: string | null;
+  acquired_via?: string;
+}
+
 export interface MatchLogRow {
   id: UUID;
   kickoff_at: string;
@@ -382,8 +389,16 @@ export interface MatchLogRow {
   home_goals: number | null;
   away_goals: number | null;
   pool_id: UUID;
+  pool_label?: string | null;
   home_points?: number | null;
   away_points?: number | null;
+  home_owner?: MatchOwnerInfo | null;
+  away_owner?: MatchOwnerInfo | null;
+}
+
+export interface MatchLogPage {
+  items: MatchLogRow[];
+  has_more: boolean;
 }
 
 export interface TeamFixture extends MatchLogRow {
@@ -392,12 +407,7 @@ export interface TeamFixture extends MatchLogRow {
   opponent_name: string;
   opponent_id: UUID;
   opponent_table_position?: number | null;
-  opponent_owner?: {
-    member_id: UUID | null;
-    display_name: string | null;
-    team_name?: string | null;
-    acquired_via?: string;
-  } | null;
+  opponent_owner?: MatchOwnerInfo | null;
 }
 
 export interface VenueSplit {

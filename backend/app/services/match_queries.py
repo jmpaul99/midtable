@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session
+from sqlalchemy.sql import ColumnElement
 
 from app.models import League, Match, TeamPool
 
 CompetitionKey = tuple[str, str, int]
+
+FINISHED_STATUSES = frozenset({"FINISHED", "AWARDED"})
 
 
 def scoring_pools_for_league(db: Session, league: League) -> list[TeamPool]:
@@ -35,6 +38,21 @@ def competition_keys_from_pools(pools: list[TeamPool]) -> list[CompetitionKey]:
         seen.add(key)
         keys.append(key)
     return keys
+
+
+def competition_key_predicate(keys: list[CompetitionKey]) -> ColumnElement[bool] | None:
+    if not keys:
+        return None
+    return or_(
+        *[
+            and_(
+                Match.provider == provider,
+                Match.competition_code == competition_code,
+                Match.season_year == season_year,
+            )
+            for provider, competition_code, season_year in keys
+        ]
+    )
 
 
 def matches_for_competition(
@@ -96,3 +114,13 @@ def pool_for_match(db: Session, league: League, match: Match) -> TeamPool | None
         ):
             return pool
     return None
+
+
+def pool_lookup_for_league(db: Session, league: League) -> dict[CompetitionKey, TeamPool]:
+    lookup: dict[CompetitionKey, TeamPool] = {}
+    for pool in scoring_pools_for_league(db, league):
+        if pool.competition_code is None or pool.season_year is None:
+            continue
+        key = (pool.provider, pool.competition_code, pool.season_year)
+        lookup.setdefault(key, pool)
+    return lookup

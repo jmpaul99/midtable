@@ -253,7 +253,7 @@ export function StatsDashboard({ leagueId }: { leagueId: UUID }) {
               View all matches
             </Link>
           </div>
-          <MatchLog leagueId={leagueId} limit={20} compact />
+          <MatchLog leagueId={leagueId} limit={10} compact section="results" />
         </Stack>
       </Card>
     </Stack>
