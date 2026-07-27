@@ -7,7 +7,7 @@ import { ErrorState } from "@/components/ui/State";
 import { Stack } from "@/components/ui/Card";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { useToast } from "@/components/ui/ToastProvider";
-import { DraftOrderSection } from "@/components/admin/DraftOrderSection";
+import { DraftOrderSection, type PreassignMode } from "@/components/admin/DraftOrderSection";
 import { RosterCorrectionsSection } from "@/components/admin/RosterCorrectionsSection";
 import {
   fromDatetimeLocalValue,
@@ -16,15 +16,21 @@ import {
 } from "@/components/settings/DraftTimingFields";
 
 type DraftStyle = "linear" | "snake";
-type PreassignMode = "none" | "supported" | "optional";
 
 function normalizeDraftStyle(value: string | undefined): DraftStyle {
   return value === "snake" ? "snake" : "linear";
 }
 
 function normalizePreassignMode(value: string | undefined): PreassignMode {
-  if (value === "supported" || value === "optional") return value;
-  return "none";
+  if (value === "optional" || value === "required") return value;
+  if (value === "supported") return "required";
+  if (value === "none" || value === "off") return "off";
+  return "off";
+}
+
+function normalizePreassignCount(value: number | undefined | null): number {
+  if (value == null || !Number.isFinite(value) || value < 0) return 1;
+  return Math.floor(value);
 }
 
 function initialScheduledLocal(league: League): string {
@@ -72,6 +78,14 @@ export function DraftAdminPanel({
   );
   const [preassignMode, setPreassignMode] = useState<PreassignMode>(() =>
     normalizePreassignMode(league.preassign_mode),
+  );
+  const [preassignCount, setPreassignCount] = useState(() =>
+    normalizePreassignCount(
+      league.preassign_count ??
+        (typeof league.settings?.preassign_count === "number"
+          ? league.settings.preassign_count
+          : null),
+    ),
   );
   const [scheduledLocal, setScheduledLocal] = useState(() => initialScheduledLocal(league));
   const [pickTimerSeconds, setPickTimerSeconds] = useState(() =>
@@ -122,7 +136,20 @@ export function DraftAdminPanel({
   useEffect(() => {
     setDraftStyle(normalizeDraftStyle(league.draft_style));
     setPreassignMode(normalizePreassignMode(league.preassign_mode));
-  }, [league.draft_style, league.preassign_mode]);
+    setPreassignCount(
+      normalizePreassignCount(
+        league.preassign_count ??
+          (typeof league.settings?.preassign_count === "number"
+            ? league.settings.preassign_count
+            : null),
+      ),
+    );
+  }, [
+    league.draft_style,
+    league.preassign_mode,
+    league.preassign_count,
+    league.settings?.preassign_count,
+  ]);
 
   useEffect(() => {
     setScheduledLocal(initialScheduledLocal(league));
@@ -142,8 +169,13 @@ export function DraftAdminPanel({
   }
 
   async function requestPreassignModeChange(value: PreassignMode) {
-    if (value !== "none") {
-      void saveDraftSetting({ preassign_mode: value });
+    if (value !== "off") {
+      const nextCount =
+        value === "required" && preassignCount < 1 ? 1 : preassignCount;
+      void saveDraftSetting({
+        preassign_mode: value,
+        preassign_count: nextCount,
+      });
       return;
     }
     if (settingsBusy) return;
@@ -173,28 +205,44 @@ export function DraftAdminPanel({
   async function saveDraftSetting(patch: {
     draft_style?: DraftStyle;
     preassign_mode?: PreassignMode;
+    preassign_count?: number;
   }) {
     if (!settingsEditable || settingsBusy) return;
+    if (
+      (patch.preassign_mode ?? preassignMode) === "required" &&
+      (patch.preassign_count ?? preassignCount) < 1
+    ) {
+      toast({
+        message: "Required preassign mode needs at least 1 team per manager.",
+        tone: "error",
+        durationMs: 6000,
+        dismissible: true,
+      });
+      return;
+    }
     const prevStyle = draftStyle;
     const prevMode = preassignMode;
+    const prevCount = preassignCount;
     if (patch.draft_style != null) setDraftStyle(patch.draft_style);
     if (patch.preassign_mode != null) setPreassignMode(patch.preassign_mode);
+    if (patch.preassign_count != null) setPreassignCount(patch.preassign_count);
     setSettingsBusy(true);
     try {
       await api(`/leagues/${league.id}/settings`, json("PATCH", patch));
       toast({
         message:
-          patch.preassign_mode === "none"
+          patch.preassign_mode === "off"
             ? "Draft settings saved. Preassigned clubs were cleared."
             : "Draft settings saved.",
       });
       onLeagueChange?.();
-      if (patch.preassign_mode === "none") {
+      if (patch.preassign_mode === "off") {
         loadPoolTeams();
       }
     } catch (e) {
       setDraftStyle(prevStyle);
       setPreassignMode(prevMode);
+      setPreassignCount(prevCount);
       toast({
         message: errorMessage(e),
         tone: "error",
@@ -327,6 +375,7 @@ export function DraftAdminPanel({
           draftOrder={draftOrder}
           draftStyle={draftStyle}
           preassignMode={preassignMode}
+          preassignCount={preassignCount}
           settingsEditable={settingsEditable}
           settingsBusy={settingsBusy}
           teamPool={teamPool}
@@ -339,6 +388,9 @@ export function DraftAdminPanel({
           onTeamPool={setTeamPool}
           onDraftStyleChange={(value) => void saveDraftSetting({ draft_style: value })}
           onPreassignModeChange={requestPreassignModeChange}
+          onPreassignCountChange={(value) =>
+            void saveDraftSetting({ preassign_count: value })
+          }
           onPreassign={preassign}
           onScheduledLocalChange={setScheduledLocal}
           onPickTimerSecondsChange={setPickTimerSeconds}
@@ -370,8 +422,8 @@ export function DraftAdminPanel({
         title="Turn off preassign?"
         description={
           preassignOffCount != null && preassignOffCount > 0
-            ? `Switching to None will clear ${preassignOffCount} preassigned club${preassignOffCount === 1 ? "" : "s"}. Managers will lose those clubs.`
-            : "Switching to None will clear any preassigned clubs. Managers will lose those clubs."
+            ? `Switching to Off will clear ${preassignOffCount} preassigned club${preassignOffCount === 1 ? "" : "s"}. Managers will lose those clubs.`
+            : "Switching to Off will clear any preassigned clubs. Managers will lose those clubs."
         }
         confirmLabel="Clear preassigns"
         cancelLabel="Cancel"
@@ -379,7 +431,7 @@ export function DraftAdminPanel({
         onCancel={() => setPreassignOffConfirmOpen(false)}
         onConfirm={() => {
           setPreassignOffConfirmOpen(false);
-          void saveDraftSetting({ preassign_mode: "none" });
+          void saveDraftSetting({ preassign_mode: "off" });
         }}
       />
     </Stack>

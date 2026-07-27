@@ -35,6 +35,7 @@ _TEMPLATE_SYNC_FIELDS = (
     "payouts",
     "draft_style",
     "preassign_mode",
+    "preassign_count",
 )
 _RECENT_LIMIT = 8
 _KEY_SLUG_RE = re.compile(r"[^a-z0-9]+")
@@ -361,6 +362,17 @@ def update_template(
     if not is_platform_admin(profile, user):
         for key in _STAFF_FLAG_KEYS:
             updates.pop(key, None)
+    if "preassign_mode" in updates or "preassign_count" in updates:
+        from app.services.preassign import validate_preassign_pair
+
+        effective_mode = updates.get("preassign_mode", row.preassign_mode)
+        effective_count = updates.get(
+            "preassign_count", getattr(row, "preassign_count", 1)
+        )
+        try:
+            validate_preassign_pair(effective_mode, effective_count)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
     for key, value in updates.items():
         setattr(row, key, value)
     leagues_updated = 0
@@ -411,6 +423,7 @@ def duplicate_template(
         label=copy_label,
         draft_style=source.draft_style,
         preassign_mode=source.preassign_mode,
+        preassign_count=getattr(source, "preassign_count", 1) or 1,
         result_points=dict(source.result_points),
         upset_rules=dict(source.upset_rules),
         leaderboard_phases=list(source.leaderboard_phases),

@@ -129,7 +129,8 @@ def seed() -> CompetitionTemplate:
 
         existing.label = "Premier League Draft"
         existing.draft_style = "linear"
-        existing.preassign_mode = "supported"
+        existing.preassign_mode = "required"
+        existing.preassign_count = 1
         existing.result_points = {"win": 3, "draw": 1}
         existing.upset_rules = PL_UPSET_RULES
         existing.leaderboard_phases = PL_PHASES

@@ -238,7 +238,10 @@ def preassign_team(
             status_code=409,
             detail="Preassign only allowed before the draft opens",
         )
-    if (league.preassign_mode or "none").lower() == "none":
+    from app.services.preassign import normalize_preassign_mode
+
+    mode = normalize_preassign_mode(league.preassign_mode)
+    if mode == "off":
         raise HTTPException(
             status_code=409,
             detail="Preassign is disabled for this league",
@@ -257,6 +260,21 @@ def preassign_team(
     ).first()
     if not member or not pool:
         raise HTTPException(status_code=404, detail="Manager or competition not found")
+    limit = int(getattr(league, "preassign_count", 1) or 0)
+    existing_for_member = list(
+        db.scalars(
+            select(RosterEntry).where(
+                RosterEntry.league_id == league.id,
+                RosterEntry.member_id == member.id,
+                RosterEntry.source == "preassigned",
+            )
+        ).all()
+    )
+    if len(existing_for_member) >= limit:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Manager already has the maximum of {limit} preassigned club(s)",
+        )
     team = team_in_league(db, league.id, payload.team_id)
     in_pool = db.scalars(
         select(PoolTeam).where(PoolTeam.pool_id == pool.id, PoolTeam.team_id == team.id)

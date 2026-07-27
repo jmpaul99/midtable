@@ -226,23 +226,25 @@ def test_update_settings_rejects_season_year_after_draft_starts():
 def test_update_settings_allows_draft_style_in_pre_draft():
     league = _league(status="pre_draft")
     league.draft_style = "linear"
-    league.preassign_mode = "none"
+    league.preassign_mode = "off"
+    league.preassign_count = 1
     member = SimpleNamespace(id=1)
     db = MagicMock()
     detail = SimpleNamespace(id=league.id)
-    payload = LeagueSettingsUpdate(draft_style="snake", preassign_mode="supported")
+    payload = LeagueSettingsUpdate(draft_style="snake", preassign_mode="required")
     with patch("app.routers.leagues_core._league_detail", return_value=detail):
         result = update_settings(payload=payload, membership=(league, member), db=db)
     assert result is detail
     assert league.draft_style == "snake"
-    assert league.preassign_mode == "supported"
+    assert league.preassign_mode == "required"
     db.commit.assert_called_once()
 
 
-def test_update_settings_clears_preassigns_when_mode_becomes_none():
+def test_update_settings_clears_preassigns_when_mode_becomes_off():
     league = _league(status="pre_draft")
     league.draft_style = "linear"
-    league.preassign_mode = "supported"
+    league.preassign_mode = "required"
+    league.preassign_count = 1
     member = SimpleNamespace(id=1)
     entry = SimpleNamespace(id=99, league_id=league.id, source="preassigned")
     db = MagicMock()
@@ -250,13 +252,25 @@ def test_update_settings_clears_preassigns_when_mode_becomes_none():
     scalars_out.all.return_value = [entry]
     db.scalars.return_value = scalars_out
     detail = SimpleNamespace(id=league.id)
-    payload = LeagueSettingsUpdate(preassign_mode="none")
+    payload = LeagueSettingsUpdate(preassign_mode="off")
     with patch("app.routers.leagues_core._league_detail", return_value=detail):
         update_settings(payload=payload, membership=(league, member), db=db)
-    assert league.preassign_mode == "none"
+    assert league.preassign_mode == "off"
     db.delete.assert_called_once_with(entry)
     db.flush.assert_called()
     db.commit.assert_called_once()
+
+
+def test_update_settings_rejects_required_with_zero_count():
+    league = _league(status="pre_draft")
+    league.preassign_mode = "optional"
+    league.preassign_count = 0
+    member = SimpleNamespace(id=1)
+    payload = LeagueSettingsUpdate(preassign_mode="required")
+    with pytest.raises(HTTPException) as exc:
+        update_settings(payload=payload, membership=(league, member), db=MagicMock())
+    assert exc.value.status_code == 400
+    assert "at least 1" in str(exc.value.detail).lower()
 
 
 def test_update_settings_creates_pool_in_pre_draft():
@@ -612,3 +626,112 @@ def test_readiness_check_model():
         detail="Add competitions",
     )
     assert check.status == "error"
+
+
+def test_readiness_required_preassigns_exact_count():
+    from app.services.readiness import evaluate_readiness
+
+    league = _league(status="pre_draft")
+    league.config = {"max_members": 2}
+    league.preassign_mode = "required"
+    league.preassign_count = 2
+    members = [
+        SimpleNamespace(id=10, draft_slot=1),
+        SimpleNamespace(id=11, draft_slot=2),
+    ]
+    pool = SimpleNamespace(
+        id=1,
+        key="premier_league",
+        label="Premier League",
+        slot_count=5,
+        scores_match_results=True,
+        competition_code="PL",
+        season_year=2026,
+    )
+    db = MagicMock()
+
+    def scalars(stmt):
+        sql = str(stmt).lower()
+        out = MagicMock()
+        if "team_pool" in sql:
+            out.all.return_value = [pool]
+            return out
+        if "league_member" in sql:
+            out.all.return_value = members
+            return out
+        if "roster" in sql:
+            out.all.return_value = [
+                SimpleNamespace(member_id=10, team_id=1, source="preassigned"),
+                SimpleNamespace(member_id=10, team_id=2, source="preassigned"),
+            ]
+            return out
+        out.all.return_value = [SimpleNamespace(id=1)]
+        return out
+
+    db.scalars.side_effect = scalars
+    result = evaluate_readiness(db, league, purpose="draft")
+    pre = next(c for c in result.checks if c.key == "preassigns")
+    assert pre.status == "error"
+    assert "exactly 2" in (pre.detail or "")
+    assert result.ready is False
+
+
+def test_readiness_optional_preassigns_allows_zero_errors_on_over_max():
+    from app.services.readiness import evaluate_readiness
+
+    league = _league(status="pre_draft")
+    league.config = {"max_members": 2}
+    league.preassign_mode = "optional"
+    league.preassign_count = 1
+    members = [
+        SimpleNamespace(id=10, draft_slot=1),
+        SimpleNamespace(id=11, draft_slot=2),
+    ]
+    pool = SimpleNamespace(
+        id=1,
+        key="premier_league",
+        label="Premier League",
+        slot_count=5,
+        scores_match_results=True,
+        competition_code="PL",
+        season_year=2026,
+    )
+
+    def make_db(preassigns):
+        db = MagicMock()
+
+        def scalars(stmt):
+            sql = str(stmt).lower()
+            out = MagicMock()
+            if "team_pool" in sql:
+                out.all.return_value = [pool]
+                return out
+            if "league_member" in sql:
+                out.all.return_value = members
+                return out
+            if "roster" in sql:
+                out.all.return_value = preassigns
+                return out
+            out.all.return_value = [SimpleNamespace(id=1)]
+            return out
+
+        db.scalars.side_effect = scalars
+        return db
+
+    ok = evaluate_readiness(make_db([]), league, purpose="draft")
+    pre_ok = next(c for c in ok.checks if c.key == "preassigns")
+    assert pre_ok.status == "ok"
+
+    over = evaluate_readiness(
+        make_db(
+            [
+                SimpleNamespace(member_id=10, team_id=1, source="preassigned"),
+                SimpleNamespace(member_id=10, team_id=2, source="preassigned"),
+            ]
+        ),
+        league,
+        purpose="draft",
+    )
+    pre_over = next(c for c in over.checks if c.key == "preassigns")
+    assert pre_over.status == "error"
+    assert over.ready is False

@@ -7,8 +7,9 @@ from typing import Literal
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import League, LeagueMember, PoolTeam, TeamPool
+from app.models import League, LeagueMember, PoolTeam, RosterEntry, TeamPool
 from app.schemas.leagues import ReadinessCheck, ReadinessResponse
+from app.services.preassign import normalize_preassign_mode
 
 ReadinessPurpose = Literal["draft", "sync"]
 
@@ -26,6 +27,7 @@ def evaluate_readiness(
 
     if purpose == "draft":
         checks.extend(_draft_member_checks(db, league))
+        checks.extend(_draft_preassign_checks(db, league))
         checks.extend(_pools_check(pools, for_draft=True))
         checks.extend(_scoring_pools_check(pools, scoring_pools, purpose="draft"))
         for pool in pools:
@@ -131,6 +133,104 @@ def _draft_member_checks(db: Session, league: League) -> list[ReadinessCheck]:
                 detail=f"{missing_draft} of {member_count} managers missing a draft slot",
             )
         )
+    return checks
+
+
+def _draft_preassign_checks(db: Session, league: League) -> list[ReadinessCheck]:
+    mode = normalize_preassign_mode(getattr(league, "preassign_mode", None))
+    if mode not in {"optional", "required"}:
+        return []
+
+    n = int(getattr(league, "preassign_count", 1) or 0)
+    members = list(
+        db.scalars(select(LeagueMember).where(LeagueMember.league_id == league.id)).all()
+    )
+    preassigns = list(
+        db.scalars(
+            select(RosterEntry).where(
+                RosterEntry.league_id == league.id,
+                RosterEntry.source == "preassigned",
+            )
+        ).all()
+    )
+    checks: list[ReadinessCheck] = []
+    team_ids = [e.team_id for e in preassigns]
+    if len(team_ids) != len(set(team_ids)):
+        checks.append(
+            ReadinessCheck(
+                key="preassigns:duplicates",
+                label="Preassigned clubs unique",
+                status="error",
+                detail="The same club is preassigned more than once",
+            )
+        )
+    else:
+        checks.append(
+            ReadinessCheck(
+                key="preassigns:duplicates",
+                label="Preassigned clubs unique",
+                status="ok",
+                detail="No duplicate preassigned clubs",
+            )
+        )
+
+    by_member = {m.id: 0 for m in members}
+    for entry in preassigns:
+        if entry.member_id in by_member:
+            by_member[entry.member_id] += 1
+
+    member_count = len(members)
+    if mode == "required":
+        wrong = sum(1 for count in by_member.values() if count != n)
+        if wrong == 0 and member_count > 0:
+            checks.append(
+                ReadinessCheck(
+                    key="preassigns",
+                    label=f"Required preassigns ({n} per manager)",
+                    status="ok",
+                    detail=f"All {member_count} managers have exactly {n} preassigned club(s)",
+                )
+            )
+        else:
+            short = sum(1 for count in by_member.values() if count < n)
+            over = sum(1 for count in by_member.values() if count > n)
+            parts: list[str] = []
+            if short:
+                parts.append(f"{short} need more")
+            if over:
+                parts.append(f"{over} have too many")
+            detail = (
+                f"{wrong} of {member_count} managers need exactly {n} preassigned club(s)"
+                + (f" — {'; '.join(parts)}" if parts else "")
+            )
+            checks.append(
+                ReadinessCheck(
+                    key="preassigns",
+                    label=f"Required preassigns ({n} per manager)",
+                    status="error",
+                    detail=detail,
+                )
+            )
+    else:
+        over = sum(1 for count in by_member.values() if count > n)
+        if over == 0:
+            checks.append(
+                ReadinessCheck(
+                    key="preassigns",
+                    label=f"Optional preassigns (max {n})",
+                    status="ok",
+                    detail=f"No manager exceeds {n} preassigned club(s)",
+                )
+            )
+        else:
+            checks.append(
+                ReadinessCheck(
+                    key="preassigns",
+                    label=f"Optional preassigns (max {n})",
+                    status="error",
+                    detail=f"{over} of {member_count} managers exceed {n} preassigned club(s)",
+                )
+            )
     return checks
 
 

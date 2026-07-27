@@ -154,7 +154,12 @@ export function LeagueSettingsView({ league }: { league: League }) {
     resultPoints.loss_et != null ||
     resultPoints.win_pk != null ||
     resultPoints.loss_pk != null;
-  const preassign = league.preassign_mode || "none";
+  const preassign = league.preassign_mode || "off";
+  const preassignCount =
+    league.preassign_count ??
+    (typeof league.settings?.preassign_count === "number"
+      ? league.settings.preassign_count
+      : undefined);
 
   const phaseLabelByKey = useMemo(() => {
     const map = new Map<string, string>();
@@ -227,12 +232,16 @@ export function LeagueSettingsView({ league }: { league: League }) {
             </div>
             <div>
               Preassign clubs before draft:{" "}
-              {preassign === "none"
-                ? "None"
-                : preassign === "supported"
-                  ? "Supported"
+              {preassign === "off" || preassign === "none"
+                ? "Off"
+                : preassign === "required" || preassign === "supported"
+                  ? preassignCount != null
+                    ? `Required (${preassignCount})`
+                    : "Required"
                   : preassign === "optional"
-                    ? "Optional"
+                    ? preassignCount != null
+                      ? `Optional (max ${preassignCount})`
+                      : "Optional"
                     : humanizeKey(preassign)}
             </div>
             <div>

@@ -1,17 +1,19 @@
 from datetime import datetime
 from decimal import Decimal
-from typing import Any, Literal
+from typing import Any, Literal, Self
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from app.schemas.common import IdSchema, ORMModel
+from app.services.preassign import validate_preassign_pair
 
 
 class TemplateCreate(BaseModel):
     label: str
     draft_style: str = "linear"
-    preassign_mode: str = "none"
+    preassign_mode: Literal["off", "optional", "required"] = "off"
+    preassign_count: int = Field(default=1, ge=0)
     result_points: dict[str, Any] = Field(default_factory=lambda: {"win": 3, "draw": 1})
     upset_rules: dict[str, Any] = Field(default_factory=dict)
     leaderboard_phases: list[Any] = Field(default_factory=list)
@@ -28,12 +30,18 @@ class TemplateCreate(BaseModel):
     featured: bool = False
     made_by_staff: bool = False
 
+    @model_validator(mode="after")
+    def reject_required_with_zero(self) -> Self:
+        validate_preassign_pair(self.preassign_mode, self.preassign_count)
+        return self
+
 
 class TemplateResponse(IdSchema):
     key: str
     label: str
     draft_style: str
     preassign_mode: str
+    preassign_count: int = 1
     result_points: dict[str, Any]
     upset_rules: dict[str, Any]
     leaderboard_phases: list[Any]
@@ -54,7 +62,8 @@ class TemplateResponse(IdSchema):
 class TemplateUpdate(BaseModel):
     label: str | None = None
     draft_style: str | None = None
-    preassign_mode: str | None = None
+    preassign_mode: Literal["off", "optional", "required"] | None = None
+    preassign_count: int | None = Field(default=None, ge=0)
     result_points: dict[str, Any] | None = None
     upset_rules: dict[str, Any] | None = None
     leaderboard_phases: list[Any] | None = None

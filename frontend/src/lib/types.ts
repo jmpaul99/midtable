@@ -93,6 +93,7 @@ export interface League extends LeagueSummary {
   buy_in?: number | string;
   payouts?: Json[];
   preassign_mode?: string;
+  preassign_count?: number;
   max_members?: number | null;
   roster_club_order?: "draft" | "competition";
   visibility: string;
@@ -112,6 +113,7 @@ export interface CompetitionTemplate {
   label: string;
   draft_style: string;
   preassign_mode: string;
+  preassign_count?: number;
   result_points: Record<string, Json>;
   upset_rules: Record<string, Json>;
   leaderboard_phases: Record<string, Json>[];
@@ -135,6 +137,7 @@ export type TemplateWrite = {
   label: string;
   draft_style: string;
   preassign_mode: string;
+  preassign_count?: number;
   result_points: Record<string, Json>;
   upset_rules: Record<string, Json>;
   leaderboard_phases: Record<string, Json>[];

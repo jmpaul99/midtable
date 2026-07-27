@@ -24,6 +24,18 @@ function humanizeKey(key: string): string {
     .join(" ");
 }
 
+function preassignLabel(mode: string, count?: number): string {
+  const n = count != null && Number.isFinite(count) ? Math.floor(count) : null;
+  if (mode === "off" || mode === "none") return "Off";
+  if (mode === "required" || mode === "supported") {
+    return n != null ? `Required (${n})` : "Required";
+  }
+  if (mode === "optional") {
+    return n != null ? `Optional (max ${n})` : "Optional";
+  }
+  return humanizeKey(mode);
+}
+
 function draftOrderMembers(league: League) {
   return [...(league.members || [])].sort((a, b) => {
     const as = a.draft_slot ?? 10_000;
@@ -82,7 +94,12 @@ export function DraftSettingsSummary({
   pickTimerSeconds?: number | null;
   onClockMemberId?: string | null;
 }) {
-  const preassign = league.preassign_mode || "none";
+  const preassign = league.preassign_mode || "off";
+  const preassignCount =
+    league.preassign_count ??
+    (typeof league.settings?.preassign_count === "number"
+      ? league.settings.preassign_count
+      : undefined);
   const schedule =
     scheduledAt ??
     league.draft_scheduled_at ??
@@ -107,14 +124,7 @@ export function DraftSettingsSummary({
               Style: {league.draft_style === "snake" ? "Snake" : "Linear"}
             </div>
             <div>
-              Preassign clubs before draft:{" "}
-              {preassign === "none"
-                ? "None"
-                : preassign === "supported"
-                  ? "Supported"
-                  : preassign === "optional"
-                    ? "Optional"
-                    : humanizeKey(preassign)}
+              Preassign clubs before draft: {preassignLabel(preassign, preassignCount)}
             </div>
             <div>
               Scheduled start:{" "}
