@@ -45,6 +45,15 @@ function initialPickTimerSeconds(league: League): string {
   return existing != null && existing > 0 ? String(existing) : "";
 }
 
+function currentPickTimerSeconds(league: League): number | null {
+  const existing =
+    league.pick_timer_seconds ??
+    (typeof league.settings?.pick_timer_seconds === "number"
+      ? league.settings.pick_timer_seconds
+      : null);
+  return existing != null && existing > 0 ? existing : null;
+}
+
 export function DraftAdminPanel({
   league,
   onLeagueChange,
@@ -215,12 +224,15 @@ export function DraftAdminPanel({
     setSettingsBusy(true);
     let timingSaved = false;
     try {
+      const nextTimer = parsePickTimerSeconds(pickTimerSeconds);
+      const prevTimer = currentPickTimerSeconds(league);
       const timingPatch = {
         ...(scheduleEditable
           ? { draft_scheduled_at: fromDatetimeLocalValue(scheduledLocal) }
           : {}),
-        ...(timerEditable
-          ? { pick_timer_seconds: parsePickTimerSeconds(pickTimerSeconds) }
+        // Only send the timer when it changed — PATCH always restarts an open pick clock.
+        ...(timerEditable && nextTimer !== prevTimer
+          ? { pick_timer_seconds: nextTimer }
           : {}),
       };
       if (Object.keys(timingPatch).length > 0) {
