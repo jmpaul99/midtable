@@ -76,9 +76,11 @@ function phaseProgressParts(meta?: PhaseMetadata): string[] {
   if (meta.matching_matches === 0) return ["No matching fixtures"];
   const parts: string[] = [];
   if (meta.is_final) parts.push("Final");
-  else if (meta.remaining_matches != null) parts.push(`${meta.remaining_matches} remaining`);
+  else if (meta.remaining_matches != null) {
+    parts.push(`${meta.remaining_matches} matches remaining`);
+  }
   if (meta.finished_matches != null) {
-    parts.push(`${meta.finished_matches}/${meta.matching_matches} finished`);
+    parts.push(`${meta.finished_matches}/${meta.matching_matches} matches finished`);
   }
   return parts;
 }
