@@ -84,6 +84,7 @@ export function MatchLog({
   const [poolTeams, setPoolTeams] = useState<PoolTeam[]>([]);
   const [list, setList] = useState<ListState>(emptyList);
   const fellBackToUpcoming = useRef(false);
+  const fetchGeneration = useRef(0);
 
   const filterKey = `${poolId}|${teamId}|${memberId}|${view}`;
 
@@ -129,6 +130,7 @@ export function MatchLog({
 
   const fetchMatches = useCallback(
     async (offset: number, append: boolean, viewMode: ViewMode) => {
+      const generation = ++fetchGeneration.current;
       setList((prev) => ({
         ...prev,
         loading: !append && offset === 0,
@@ -145,6 +147,7 @@ export function MatchLog({
           member_id: memberId || undefined,
         });
         const page = await api<MatchLogPage>(`/leagues/${leagueId}/match-log${qs}`);
+        if (generation !== fetchGeneration.current) return;
         if (
           !compact &&
           !append &&
@@ -165,6 +168,7 @@ export function MatchLog({
           offset: offset + page.items.length,
         }));
       } catch (e) {
+        if (generation !== fetchGeneration.current) return;
         setList((prev) => ({
           ...prev,
           loading: false,
