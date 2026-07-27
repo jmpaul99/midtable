@@ -148,6 +148,8 @@ def start_pl_season(
         pool_provider_params=payload.pool_provider_params,
         scheduled_start_date=payload.scheduled_start_date,
         scheduled_end_date=payload.scheduled_end_date,
+        draft_scheduled_at=payload.draft_scheduled_at,
+        pick_timer_seconds=payload.pick_timer_seconds,
         max_members=payload.max_members,
         force=payload.force,
     )

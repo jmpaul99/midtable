@@ -8,10 +8,14 @@ import { Button } from "@/components/ui/Button";
 import { IconButton } from "@/components/ui/IconButton";
 import { EraserIcon, UndoIcon } from "@/components/ui/icons";
 import { Card, Muted, Stack } from "@/components/ui/Card";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { Label, Select } from "@/components/ui/Field";
 import { useToast } from "@/components/ui/ToastProvider";
 
 type HealthInfo = { dev_tools_enabled?: boolean };
+
+const RESET_DRAFT_WARNING =
+  "Reset draft? This clears all picks and draft rosters, returns the league to pre-draft, and keeps draft order and preassigns. Scoring data is not cleared.";
 
 export function RosterCorrectionsSection({
   league,
@@ -24,6 +28,11 @@ export function RosterCorrectionsSection({
   const [loadError, setLoadError] = useState("");
   const [devTools, setDevTools] = useState(false);
   const [resetBusy, setResetBusy] = useState(false);
+  const [resetConfirmOpen, setResetConfirmOpen] = useState(false);
+  const [pendingReassign, setPendingReassign] = useState<{
+    entryId: UUID;
+    memberId: UUID;
+  } | null>(null);
   const { toast } = useToast();
 
   const load = useCallback(() => {
@@ -65,13 +74,7 @@ export function RosterCorrectionsSection({
   }
 
   async function resetDraft() {
-    if (
-      !confirm(
-        "Reset draft? This clears all picks and draft rosters, returns the league to pre-draft, and keeps draft order and preassigns. Scoring data is not cleared.",
-      )
-    ) {
-      return;
-    }
+    setResetConfirmOpen(false);
     setResetBusy(true);
     try {
       await api(`/leagues/${league.id}/draft/reset`, { method: "POST" });
@@ -90,8 +93,10 @@ export function RosterCorrectionsSection({
     }
   }
 
-  async function reassign(entryId: UUID, memberId: UUID) {
-    if (!confirm("Reassign this team to a different manager?")) return;
+  async function confirmReassign() {
+    if (!pendingReassign) return;
+    const { entryId, memberId } = pendingReassign;
+    setPendingReassign(null);
     try {
       await api(`/leagues/${league.id}/rosters/${entryId}`, json("PATCH", { member_id: memberId }));
       toast({ message: "Roster ownership updated." });
@@ -139,7 +144,7 @@ export function RosterCorrectionsSection({
               label="Reset draft (dev)"
               variant="danger"
               busy={resetBusy}
-              onClick={resetDraft}
+              onClick={() => setResetConfirmOpen(true)}
             >
               <EraserIcon />
             </IconButton>
@@ -161,7 +166,9 @@ export function RosterCorrectionsSection({
                 Owner
                 <Select
                   value={r.member_id}
-                  onChange={(e) => r.id && reassign(r.id, e.target.value)}
+                  onChange={(e) =>
+                    r.id && setPendingReassign({ entryId: r.id, memberId: e.target.value })
+                  }
                 >
                   {league.members.map((m) => (
                     <option key={m.id} value={m.id}>
@@ -173,6 +180,27 @@ export function RosterCorrectionsSection({
             </div>
           ))}
         </Stack>
+
+        <ConfirmDialog
+          open={resetConfirmOpen}
+          title="Reset draft?"
+          description={RESET_DRAFT_WARNING}
+          confirmLabel="Reset draft"
+          cancelLabel="Cancel"
+          tone="danger"
+          onCancel={() => setResetConfirmOpen(false)}
+          onConfirm={() => void resetDraft()}
+        />
+        <ConfirmDialog
+          open={Boolean(pendingReassign)}
+          title="Reassign this team?"
+          description="Reassign this team to a different manager?"
+          confirmLabel="Reassign"
+          cancelLabel="Cancel"
+          tone="warning"
+          onCancel={() => setPendingReassign(null)}
+          onConfirm={() => void confirmReassign()}
+        />
       </Stack>
     </Card>
   );

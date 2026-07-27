@@ -351,7 +351,6 @@ function TemplateSettingsSummary({ form }: { form: FormState }) {
                     p.season_year ? String(p.season_year) : null,
                     `${p.slot_count} slot${p.slot_count === 1 ? "" : "s"}`,
                     p.scores_match_results ? "scores results" : "no result scoring",
-                    p.provider || null,
                   ]
                     .filter(Boolean)
                     .join(" · ")}

@@ -20,6 +20,8 @@ class LeagueCreate(BaseModel):
     draft_style: str = "linear"
     preassign_mode: str = "none"
     max_members: int = Field(ge=2, le=100)
+    draft_scheduled_at: datetime | None = None
+    pick_timer_seconds: int | None = Field(default=None, ge=1)
 
 
 class PoolResponse(IdSchema):
@@ -90,6 +92,8 @@ class LeagueResponse(IdSchema):
     payouts: list[Any]
     scheduled_start_date: date | None = None
     scheduled_end_date: date | None = None
+    draft_scheduled_at: datetime | None = None
+    pick_timer_seconds: int | None = None
     template_id: UUID | None = None
     max_members: int | None = None
     roster_club_order: Literal["draft", "competition"] = "draft"
@@ -199,6 +203,8 @@ class BootstrapSeasonRequest(BaseModel):
     max_members: int | None = Field(default=None, ge=2, le=100)
     scheduled_start_date: date | None = None
     scheduled_end_date: date | None = None
+    draft_scheduled_at: datetime | None = None
+    pick_timer_seconds: int | None = Field(default=None, ge=1)
     force: bool = False
 
 
@@ -267,6 +273,8 @@ class LeagueSettingsUpdate(BaseModel):
     roster_club_order: Literal["draft", "competition"] | None = None
     draft_style: Literal["linear", "snake"] | None = None
     preassign_mode: Literal["none", "supported", "optional"] | None = None
+    draft_scheduled_at: datetime | None = None
+    pick_timer_seconds: int | None = Field(default=None, ge=1)
     pools: list[PoolSettingsPatch] | None = None
     remove_pool_ids: list[UUID] | None = None
 

@@ -17,6 +17,7 @@ import {
   TrashIcon,
 } from "@/components/ui/icons";
 import { Card, Muted, Stack } from "@/components/ui/Card";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { Input, Label, Switch } from "@/components/ui/Field";
 import { cn } from "@/lib/cn";
 import { defaultFootballSeasonYear } from "@/lib/availableCompetitions";
@@ -34,8 +35,17 @@ import {
   type LeaguePoolEdit,
   type PayoutRow,
 } from "@/components/settings";
+import {
+  DraftTimingFields,
+  fromDatetimeLocalValue,
+  parsePickTimerSeconds,
+  toDatetimeLocalValue,
+} from "@/components/settings/DraftTimingFields";
 
-type Tab = "basics" | "managers" | "pools" | "phases" | "payouts";
+type Tab = "basics" | "managers" | "pools" | "phases" | "payouts" | "draft";
+
+const ROTATE_JOIN_LINK_WARNING =
+  "Rotate the join link? The current link will stop working.";
 
 const TABS: Array<{ id: Tab; label: string }> = [
   { id: "basics", label: "Basics" },
@@ -43,6 +53,7 @@ const TABS: Array<{ id: Tab; label: string }> = [
   { id: "pools", label: "Competitions" },
   { id: "phases", label: "Phases" },
   { id: "payouts", label: "Payouts" },
+  { id: "draft", label: "Draft" },
 ];
 
 function poolsFromLeague(
@@ -148,6 +159,22 @@ export function LeagueMetaSettingsSection({
   const [rosterClubOrder, setRosterClubOrder] = useState<RosterClubOrder>(() =>
     normalizeRosterClubOrder(league.roster_club_order),
   );
+  const [draftScheduledLocal, setDraftScheduledLocal] = useState(() =>
+    toDatetimeLocalValue(
+      league.draft_scheduled_at ??
+        (typeof league.settings?.draft_scheduled_at === "string"
+          ? league.settings.draft_scheduled_at
+          : null),
+    ),
+  );
+  const [pickTimerSeconds, setPickTimerSeconds] = useState(() => {
+    const existing =
+      league.pick_timer_seconds ??
+      (typeof league.settings?.pick_timer_seconds === "number"
+        ? league.settings.pick_timer_seconds
+        : null);
+    return existing != null && existing > 0 ? String(existing) : "";
+  });
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const { toast } = useToast();
@@ -163,8 +190,31 @@ export function LeagueMetaSettingsSection({
     setRosterClubOrder(normalizeRosterClubOrder(league.roster_club_order));
   }, [league.roster_club_order]);
 
+  useEffect(() => {
+    setDraftScheduledLocal(
+      toDatetimeLocalValue(
+        league.draft_scheduled_at ??
+          (typeof league.settings?.draft_scheduled_at === "string"
+            ? league.settings.draft_scheduled_at
+            : null),
+      ),
+    );
+  }, [league.draft_scheduled_at, league.settings?.draft_scheduled_at]);
+
+  useEffect(() => {
+    const existing =
+      league.pick_timer_seconds ??
+      (typeof league.settings?.pick_timer_seconds === "number"
+        ? league.settings.pick_timer_seconds
+        : null);
+    setPickTimerSeconds(existing != null && existing > 0 ? String(existing) : "");
+  }, [league.pick_timer_seconds, league.settings?.pick_timer_seconds]);
+
   const memberCount = league.members?.length || 0;
   const preDraft = league.status === "pre_draft";
+  const draftComplete = league.status === "complete";
+  const scheduleEditable = preDraft;
+  const timerEditable = !draftComplete;
 
   const managerCapacity = useMemo(() => {
     const parsed = Number(maxMembersValue);
@@ -197,6 +247,14 @@ export function LeagueMetaSettingsSection({
     const trimmedName = name.trim();
     const trimmedSeason = seasonLabel.trim();
     const parsedMax = Number(maxMembersValue);
+    if (timerEditable && pickTimerSeconds.trim()) {
+      const parsedTimer = Number(pickTimerSeconds);
+      if (!Number.isInteger(parsedTimer) || parsedTimer < 1) {
+        setError("Seconds per pick must be a whole number of at least 1, or left blank.");
+        setTab("draft");
+        return;
+      }
+    }
     if (!trimmedName || !trimmedSeason) {
       setError("League name and season label are required.");
       setTab("basics");
@@ -242,6 +300,12 @@ export function LeagueMetaSettingsSection({
           roster_club_order: rosterClubOrder,
           leaderboard_phases: phases,
           payouts,
+          ...(scheduleEditable
+            ? { draft_scheduled_at: fromDatetimeLocalValue(draftScheduledLocal) }
+            : {}),
+          ...(timerEditable
+            ? { pick_timer_seconds: parsePickTimerSeconds(pickTimerSeconds) }
+            : {}),
           remove_pool_ids: remove_pool_ids.length ? remove_pool_ids : undefined,
           pools: pools.map((p) =>
             p.isNew
@@ -306,7 +370,7 @@ export function LeagueMetaSettingsSection({
   return (
     <Card>
       <Stack>
-        <Muted>Season identity, managers, competitions, phases, and payout structure.</Muted>
+        <Muted>Season identity, managers, competitions, draft timing, phases, and payout structure.</Muted>
         {error && <StatusBanner tone="error">{error}</StatusBanner>}
 
         <div
@@ -447,6 +511,16 @@ export function LeagueMetaSettingsSection({
                   />
                 </div>
               )}
+              {tab === "draft" && (
+                <DraftTimingFields
+                  scheduledLocal={draftScheduledLocal}
+                  onScheduledLocalChange={setDraftScheduledLocal}
+                  pickTimerSeconds={pickTimerSeconds}
+                  onPickTimerSecondsChange={setPickTimerSeconds}
+                  scheduleDisabled={!scheduleEditable}
+                  timerDisabled={!timerEditable}
+                />
+              )}
             </div>
 
             {tab !== "pools" && (
@@ -505,6 +579,16 @@ function ManagersInvitesPanel({
     return managerLabel(a).localeCompare(managerLabel(b));
   });
   const [copied, setCopied] = useState(false);
+  const [rotateConfirmOpen, setRotateConfirmOpen] = useState(false);
+  const [pendingDemote, setPendingDemote] = useState<{
+    id: UUID;
+    label: string;
+  } | null>(null);
+  const [pendingRemove, setPendingRemove] = useState<{
+    id: UUID;
+    label: string;
+  } | null>(null);
+  const [pendingRevokeId, setPendingRevokeId] = useState<UUID | null>(null);
   const { toast } = useToast();
   const joinUrl =
     joinLink?.join_url ||
@@ -587,15 +671,7 @@ function ManagersInvitesPanel({
                 size="icon-sm"
                 label="Rotate join link"
                 busy={joinLinkBusy}
-                onClick={() => {
-                  if (
-                    confirm(
-                      "Rotate the join link? The current link will stop working.",
-                    )
-                  ) {
-                    void onJoinLinkUpdate?.({ rotate: true });
-                  }
-                }}
+                onClick={() => setRotateConfirmOpen(true)}
               >
                 <RefreshIcon className="size-4" />
               </IconButton>
@@ -635,10 +711,8 @@ function ManagersInvitesPanel({
                     disabled={m.is_commissioner && !demoteOk}
                     onChange={(e) => {
                       const next = e.target.checked;
-                      if (
-                        !next &&
-                        !confirm(`Remove commissioner access from ${managerLabel(m)}?`)
-                      ) {
+                      if (!next) {
+                        setPendingDemote({ id: m.id, label: managerLabel(m) });
                         return;
                       }
                       onToggleCommissioner?.(m.id, next);
@@ -657,15 +731,9 @@ function ManagersInvitesPanel({
                         : "Cannot remove the last commissioner"
                     }
                     disabled={!removeOk}
-                    onClick={() => {
-                      if (
-                        confirm(
-                          `Remove ${managerLabel(m)} from this league? Their preassigned clubs will be cleared.`,
-                        )
-                      ) {
-                        onRemove?.(m.id);
-                      }
-                    }}
+                    onClick={() =>
+                      setPendingRemove({ id: m.id, label: managerLabel(m) })
+                    }
                   >
                     <TrashIcon className="size-4" />
                   </IconButton>
@@ -761,9 +829,7 @@ function ManagersInvitesPanel({
                           variant="danger"
                           size="icon-sm"
                           label="Revoke invite"
-                          onClick={() => {
-                            if (confirm("Revoke this invite?")) onRevoke?.(i.id);
-                          }}
+                          onClick={() => setPendingRevokeId(i.id)}
                         >
                           <BanIcon className="size-4" />
                         </IconButton>
@@ -789,6 +855,67 @@ function ManagersInvitesPanel({
           })}
         </Stack>
       )}
+
+      <ConfirmDialog
+        open={rotateConfirmOpen}
+        title="Rotate join link?"
+        description={ROTATE_JOIN_LINK_WARNING}
+        confirmLabel="Rotate link"
+        cancelLabel="Cancel"
+        tone="warning"
+        onCancel={() => setRotateConfirmOpen(false)}
+        onConfirm={() => {
+          setRotateConfirmOpen(false);
+          void onJoinLinkUpdate?.({ rotate: true });
+        }}
+      />
+      <ConfirmDialog
+        open={Boolean(pendingDemote)}
+        title="Remove commissioner access?"
+        description={
+          pendingDemote
+            ? `Remove commissioner access from ${pendingDemote.label}?`
+            : undefined
+        }
+        confirmLabel="Remove access"
+        cancelLabel="Cancel"
+        tone="warning"
+        onCancel={() => setPendingDemote(null)}
+        onConfirm={() => {
+          if (pendingDemote) onToggleCommissioner?.(pendingDemote.id, false);
+          setPendingDemote(null);
+        }}
+      />
+      <ConfirmDialog
+        open={Boolean(pendingRemove)}
+        title="Remove manager?"
+        description={
+          pendingRemove
+            ? `Remove ${pendingRemove.label} from this league? Their preassigned clubs will be cleared.`
+            : undefined
+        }
+        confirmLabel="Remove manager"
+        cancelLabel="Cancel"
+        tone="danger"
+        onCancel={() => setPendingRemove(null)}
+        onConfirm={() => {
+          if (pendingRemove) onRemove?.(pendingRemove.id);
+          setPendingRemove(null);
+        }}
+      />
+      <ConfirmDialog
+        open={Boolean(pendingRevokeId)}
+        title="Revoke this invite?"
+        description="The invite link for this email will stop working."
+        confirmLabel="Revoke invite"
+        cancelLabel="Cancel"
+        tone="danger"
+        onCancel={() => setPendingRevokeId(null)}
+        onConfirm={() => {
+          if (pendingRevokeId) onRevoke?.(pendingRevokeId);
+          setPendingRevokeId(null);
+        }}
+      />
     </Stack>
   );
 }

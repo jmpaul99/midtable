@@ -4,6 +4,7 @@ import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "re
 import { api, errorMessage, json } from "@/lib/api";
 import type { DraftState, League, PoolTeam, Readiness } from "@/lib/types";
 import { managerLabel } from "@/lib/types";
+import { formatDate } from "@/lib/format";
 import { Empty, ErrorState, Loading, Status, StatusBanner } from "@/components/ui/State";
 import { IconButton } from "@/components/ui/IconButton";
 import { CheckIcon, PlayIcon, RefreshIcon } from "@/components/ui/icons";
@@ -16,6 +17,34 @@ import { TeamLink } from "./TeamLink";
 import { ManagerLink } from "./ManagerLink";
 import { DraftAdminPanel } from "./DraftAdminPanel";
 
+type DraftableTeam = PoolTeam & { pool_id: string; pool_label: string };
+
+function formatCountdown(ms: number): string {
+  if (ms <= 0) return "0:00";
+  const totalSec = Math.ceil(ms / 1000);
+  const m = Math.floor(totalSec / 60);
+  const s = totalSec % 60;
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+function PickClock({ deadlineAt }: { deadlineAt: string }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), 250);
+    return () => window.clearInterval(id);
+  }, [deadlineAt]);
+  const remaining = new Date(deadlineAt).getTime() - now;
+  const expired = remaining <= 0;
+  return (
+    <StatusBanner tone={expired ? "error" : remaining < 15_000 ? "error" : "success"}>
+      <strong>{expired ? "Time expired — auto-picking…" : "On the clock"}</strong>
+      <div className="mt-1 font-mono text-2xl font-bold tabular-nums tracking-tight">
+        {formatCountdown(remaining)}
+      </div>
+    </StatusBanner>
+  );
+}
+
 export function DraftBoard({
   league,
   commissioner,
@@ -25,17 +54,25 @@ export function DraftBoard({
   commissioner: boolean;
   onLeagueChange?: () => void;
 }) {
-  const [poolId, setPoolId] = useState(league.pools[0]?.id || "");
+  /** Optional competition filter; empty string = all competitions. */
+  const [poolFilter, setPoolFilter] = useState("");
   const [state, setState] = useState<DraftState>();
-  const [teams, setTeams] = useState<PoolTeam[]>([]);
+  const [teams, setTeams] = useState<DraftableTeam[]>([]);
   const [error, setError] = useState("");
   const [team, setTeam] = useState("");
+  const [teamPoolId, setTeamPoolId] = useState("");
   const [busy, setBusy] = useState(false);
   const [updatedAt, setUpdatedAt] = useState<Date | null>(null);
   const [pendingKey, setPendingKey] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
   const [readiness, setReadiness] = useState<Readiness>();
   const loadAbortRef = useRef<AbortController | null>(null);
+  const leagueStatusRef = useRef(league.status);
+  const onLeagueChangeRef = useRef(onLeagueChange);
+  leagueStatusRef.current = league.status;
+  onLeagueChangeRef.current = onLeagueChange;
+
+  const multiPool = league.pools.length > 1;
 
   const managerName = (id: string) =>
     managerLabel(league.members.find((m) => m.id === id), "Unknown manager");
@@ -56,28 +93,48 @@ export function DraftBoard({
     const q = filter.trim().toLowerCase();
     return teams
       .filter((t) => t.available)
+      .filter((t) => !poolFilter || t.pool_id === poolFilter)
       .filter((t) => !q || t.name.toLowerCase().includes(q))
       .sort((a, b) => a.name.localeCompare(b.name));
-  }, [teams, filter]);
+  }, [teams, filter, poolFilter]);
 
   const load = useCallback(() => {
     if (!league.id) return;
     loadAbortRef.current?.abort();
     const controller = new AbortController();
     loadAbortRef.current = controller;
-    const teamsPath = poolId ? `/leagues/${league.id}/pools/${poolId}/teams` : null;
+    const poolList = league.pools;
     Promise.all([
       api<DraftState>(`/leagues/${league.id}/draft`, { signal: controller.signal }),
-      teamsPath
-        ? api<PoolTeam[]>(teamsPath, { signal: controller.signal })
-        : Promise.resolve([] as PoolTeam[]),
+      Promise.all(
+        poolList.map(async (p) => {
+          try {
+            const poolTeams = await api<PoolTeam[]>(
+              `/leagues/${league.id}/pools/${p.id}/teams`,
+              { signal: controller.signal },
+            );
+            return poolTeams.map(
+              (t): DraftableTeam => ({
+                ...t,
+                pool_id: p.id,
+                pool_label: p.label || p.key,
+              }),
+            );
+          } catch {
+            return [] as DraftableTeam[];
+          }
+        }),
+      ),
     ])
-      .then(([draft, poolTeams]) => {
+      .then(([draft, poolTeamLists]) => {
         if (controller.signal.aborted) return;
         setState(draft);
-        setTeams(poolTeams);
+        setTeams(poolTeamLists.flat());
         setUpdatedAt(new Date());
         setError("");
+        if (draft.league_status && draft.league_status !== leagueStatusRef.current) {
+          onLeagueChangeRef.current?.();
+        }
       })
       .catch((e) => {
         if (controller.signal.aborted || (e as Error)?.name === "AbortError") return;
@@ -87,7 +144,7 @@ export function DraftBoard({
       controller.abort();
       if (loadAbortRef.current === controller) loadAbortRef.current = null;
     };
-  }, [league.id, poolId]);
+  }, [league.id, league.pools]);
 
   useEffect(() => {
     setState(undefined);
@@ -97,20 +154,39 @@ export function DraftBoard({
   }, [load]);
 
   const draftStatus = state?.status;
+  const scheduledAt =
+    state?.draft_scheduled_at ??
+    league.draft_scheduled_at ??
+    (typeof league.settings?.draft_scheduled_at === "string"
+      ? league.settings.draft_scheduled_at
+      : null);
+  const scheduleOverdue =
+    Boolean(scheduledAt) &&
+    state?.status === "pending" &&
+    new Date(scheduledAt as string).getTime() <= Date.now();
+
   useEffect(() => {
-    if (!draftStatus || !["running", "open"].includes(draftStatus)) return;
+    const pendingWithSchedule = draftStatus === "pending" && Boolean(scheduledAt);
+    if (
+      !(draftStatus && ["running", "open"].includes(draftStatus)) &&
+      !pendingWithSchedule
+    ) {
+      return;
+    }
     const tick = () => {
       if (document.visibilityState === "hidden") return;
       load();
     };
     const id = window.setInterval(tick, 2500);
     return () => window.clearInterval(id);
-  }, [draftStatus, load]);
+  }, [draftStatus, scheduledAt, load]);
 
   const onClock = state?.current_member_id || state?.on_clock_member_id || null;
   const running = state && ["running", "open"].includes(state.status);
   const myTurn = Boolean(running && onClock === league.current_member_id);
-  const selected = teams.find((t) => t.id === team);
+  const selected =
+    availableTeams.find((t) => t.id === team && t.pool_id === teamPoolId) ||
+    teams.find((t) => t.id === team && t.pool_id === teamPoolId);
   const canOpenDraft = readiness?.ready === true;
   const showOpenControls =
     commissioner && state && ["pending", "paused", "cancelled"].includes(state.status);
@@ -181,12 +257,14 @@ export function DraftBoard({
           `/leagues/${league.id}/draft/picks`,
           json("POST", {
             team_id: team,
+            ...(teamPoolId ? { pool_id: teamPoolId } : {}),
             idempotency_key: key,
             expected_version: state.version,
           }),
         ),
       );
       setTeam("");
+      setTeamPoolId("");
       setPendingKey(null);
       load();
     } catch (err) {
@@ -200,16 +278,21 @@ export function DraftBoard({
   return (
     <Stack gap="md" className="animate-in">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-        <Label className="min-w-0 w-full sm:max-w-xs sm:flex-1">
-          Competition
-          <Select value={poolId} onChange={(e) => setPoolId(e.target.value)}>
-            {league.pools.map((p) => (
-              <option value={p.id} key={p.id}>
-                {p.label}
-              </option>
-            ))}
-          </Select>
-        </Label>
+        {multiPool ? (
+          <Label className="min-w-0 w-full sm:max-w-xs sm:flex-1">
+            Competition
+            <Select value={poolFilter} onChange={(e) => setPoolFilter(e.target.value)}>
+              <option value="">All competitions</option>
+              {league.pools.map((p) => (
+                <option value={p.id} key={p.id}>
+                  {p.label}
+                </option>
+              ))}
+            </Select>
+          </Label>
+        ) : (
+          <div className="min-w-0 flex-1" />
+        )}
         <div className="flex w-full items-center gap-2 sm:w-auto">
           {updatedAt && (
             <span className="hidden text-xs text-muted sm:inline" aria-live="polite">
@@ -240,16 +323,55 @@ export function DraftBoard({
               >
                 <Stack>
                   <h2>Draft controls</h2>
+                  {state.status === "pending" && scheduledAt && (
+                    <StatusBanner tone={scheduleOverdue ? "error" : undefined}>
+                      {scheduleOverdue ? (
+                        <>
+                          <strong>Scheduled start has passed</strong>
+                          <div className="mt-1">
+                            Auto-open is waiting until all pre-draft checks pass (
+                            {formatDate(scheduledAt)}).
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <strong>Scheduled start</strong>
+                          <div className="mt-1">{formatDate(scheduledAt)}</div>
+                        </>
+                      )}
+                    </StatusBanner>
+                  )}
+                  {state.status === "pending" &&
+                    (state.pick_timer_seconds || league.pick_timer_seconds) && (
+                      <Muted className="text-xs">
+                        Pick timer: {state.pick_timer_seconds || league.pick_timer_seconds}s per
+                        pick (auto-picks a random available club when time runs out).
+                      </Muted>
+                    )}
                   {showOpenControls && (
                     <>
                       <Muted>
-                        Opens the league draft using the league draft style ({league.draft_style}).
+                        Opens one league draft ({league.draft_style}
+                        {league.pools.length > 1
+                          ? ") covering all competitions — managers pick clubs from any of them."
+                          : ")."}
+                        {scheduledAt
+                          ? " You can still open manually once checks pass."
+                          : ""}
                       </Muted>
                       <ReadinessChecklist
                         readiness={readiness}
-                        readyLabel="Ready to open"
+                        readyLabel={
+                          scheduleOverdue
+                            ? "Ready — will auto-open on the next check"
+                            : "Ready to open"
+                        }
                         readyWithWarningsDetail="warning(s) below — draft can open, but fix before relying on live scores."
-                        notReadyDetail="issue(s) to fix before opening the draft."
+                        notReadyDetail={
+                          scheduleOverdue
+                            ? "issue(s) blocking auto-open — fix these and the draft will open automatically."
+                            : "issue(s) to fix before opening the draft."
+                        }
                         checksSummaryLabel="Pre-draft checks"
                       />
                       <div className="flex justify-start">
@@ -266,6 +388,14 @@ export function DraftBoard({
                       </div>
                     </>
                   )}
+                  {running && state.pick_deadline_at && (
+                    <PickClock deadlineAt={state.pick_deadline_at} />
+                  )}
+                  {running &&
+                    !state.pick_deadline_at &&
+                    (state.pick_timer_seconds || league.pick_timer_seconds) && (
+                      <Muted className="text-xs">Pick timer is set; waiting for clock…</Muted>
+                    )}
                   {running &&
                     (myTurn ? (
                       <form className="flex flex-col gap-3" onSubmit={pick}>
@@ -288,6 +418,9 @@ export function DraftBoard({
                             <div className="min-w-0">
                               <Muted className="text-xs">Selected</Muted>
                               <strong className="block truncate">{selected.name}</strong>
+                              {multiPool && (
+                                <Muted className="truncate text-xs">{selected.pool_label}</Muted>
+                              )}
                             </div>
                           </div>
                         )}
@@ -301,22 +434,32 @@ export function DraftBoard({
                           ) : (
                             <ul className="divide-y divide-line">
                               {availableTeams.map((t) => (
-                                <li key={t.id}>
+                                <li key={`${t.pool_id}:${t.id}`}>
                                   <button
                                     type="button"
                                     role="option"
-                                    aria-selected={team === t.id}
-                                    onClick={() => setTeam(t.id)}
+                                    aria-selected={team === t.id && teamPoolId === t.pool_id}
+                                    onClick={() => {
+                                      setTeam(t.id);
+                                      setTeamPoolId(t.pool_id);
+                                    }}
                                     className={cn(
                                       "flex w-full items-center gap-3 px-3 py-2.5 text-left transition",
-                                      team === t.id
+                                      team === t.id && teamPoolId === t.pool_id
                                         ? "bg-brand/10"
                                         : "bg-surface hover:bg-surface-2",
                                     )}
                                   >
                                     <TeamCrest name={t.name} crestUrl={t.crest_url} size="md" />
-                                    <span className="min-w-0 flex-1 truncate text-sm font-bold">
-                                      {t.name}
+                                    <span className="min-w-0 flex-1">
+                                      <span className="block truncate text-sm font-bold">
+                                        {t.name}
+                                      </span>
+                                      {multiPool && (
+                                        <Muted className="block truncate text-xs">
+                                          {t.pool_label}
+                                        </Muted>
+                                      )}
                                     </span>
                                   </button>
                                 </li>

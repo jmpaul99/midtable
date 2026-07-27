@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "@/lib/api";
 import { formatNumber } from "@/lib/format";
 import type { Bonus, BonusTarget, League, Manager, MatchLogRow, PoolTeam, UUID } from "@/lib/types";
@@ -10,6 +10,7 @@ import { IconButton } from "@/components/ui/IconButton";
 import { AwardIcon, BanIcon } from "@/components/ui/icons";
 import { Autocomplete } from "@/components/ui/Autocomplete";
 import { Card, Muted, Stack } from "@/components/ui/Card";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { Input, Label } from "@/components/ui/Field";
 import { cn } from "@/lib/cn";
 import { BonusTypesListEditor } from "@/components/settings";
@@ -93,6 +94,9 @@ export function BonusesSection({
   const [awardTypeId, setAwardTypeId] = useState("");
   const [matches, setMatches] = useState<MatchLogRow[]>([]);
   const [matchesLoading, setMatchesLoading] = useState(false);
+  const [awardConfirmOpen, setAwardConfirmOpen] = useState(false);
+  const [pendingRevokeId, setPendingRevokeId] = useState<UUID | null>(null);
+  const pendingAwardForm = useRef<HTMLFormElement | null>(null);
 
   useEffect(() => {
     if (tab !== "award" || target !== "match") return;
@@ -197,11 +201,19 @@ export function BonusesSection({
     setAwardMemberId("");
   }
 
-  async function award(e: FormEvent<HTMLFormElement>) {
+  function award(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     if (!awardReady) return;
-    if (!confirm("Award this bonus using the configured points?")) return;
-    const f = new FormData(e.currentTarget);
+    pendingAwardForm.current = e.currentTarget;
+    setAwardConfirmOpen(true);
+  }
+
+  async function confirmAward() {
+    const form = pendingAwardForm.current;
+    pendingAwardForm.current = null;
+    setAwardConfirmOpen(false);
+    if (!form) return;
+    const f = new FormData(form);
     const notes = String(f.get("notes") || "").trim();
     const body: Record<string, unknown> = {
       target,
@@ -217,7 +229,7 @@ export function BonusesSection({
       body.member_id = awardMemberId;
     }
     await onAction(`/leagues/${leagueId}/manual-bonuses`, "POST", body);
-    resetAwardForm(e.currentTarget);
+    resetAwardForm(form);
     setTab("history");
   }
 
@@ -448,11 +460,7 @@ export function BonusesSection({
                       size="icon-sm"
                       label="Revoke bonus"
                       className="text-danger hover:bg-danger/10 hover:text-danger"
-                      onClick={() => {
-                        if (confirm("Revoke this awarded bonus?")) {
-                          onAction(`/leagues/${leagueId}/manual-bonuses/${b.id}`, "DELETE");
-                        }
-                      }}
+                      onClick={() => setPendingRevokeId(b.id)}
                     >
                       <BanIcon className="size-4" />
                     </IconButton>
@@ -463,6 +471,35 @@ export function BonusesSection({
           )}
         </div>
       )}
+
+      <ConfirmDialog
+        open={awardConfirmOpen}
+        title="Award this bonus?"
+        description="Award this bonus using the configured points?"
+        confirmLabel="Award bonus"
+        cancelLabel="Cancel"
+        tone="warning"
+        onCancel={() => {
+          pendingAwardForm.current = null;
+          setAwardConfirmOpen(false);
+        }}
+        onConfirm={() => void confirmAward()}
+      />
+      <ConfirmDialog
+        open={Boolean(pendingRevokeId)}
+        title="Revoke this bonus?"
+        description="Revoke this awarded bonus?"
+        confirmLabel="Revoke"
+        cancelLabel="Cancel"
+        tone="danger"
+        onCancel={() => setPendingRevokeId(null)}
+        onConfirm={() => {
+          if (pendingRevokeId) {
+            onAction(`/leagues/${leagueId}/manual-bonuses/${pendingRevokeId}`, "DELETE");
+          }
+          setPendingRevokeId(null);
+        }}
+      />
     </Stack>
   );
 

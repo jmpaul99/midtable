@@ -93,6 +93,8 @@ class League(Base):
     config: Mapped[dict] = mapped_column(JSONB, default=dict)
     scheduled_start_date: Mapped[date | None] = mapped_column(Date)
     scheduled_end_date: Mapped[date | None] = mapped_column(Date)
+    draft_scheduled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    pick_timer_seconds: Mapped[int | None] = mapped_column(Integer)
     join_token: Mapped[str | None] = mapped_column(Text, unique=True)
     join_link_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -222,6 +224,7 @@ class DraftState(Base):
     league_id: Mapped[int] = mapped_column(ForeignKey("leagues.id", ondelete="CASCADE"), unique=True)
     current_pick_number: Mapped[int] = mapped_column(Integer, default=1)
     status: Mapped[str] = mapped_column(Text, default="pending")
+    pick_deadline_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 

@@ -24,10 +24,11 @@ from app.schemas.draft import DraftPickRequest, DraftPickResponse, DraftStateRes
 from app.schemas.leagues import DraftOrderUpdate, MemberResponse, PreassignRequest, RosterPatchRequest
 from app.services.draft import (
     find_idempotent_pick,
+    enforce_league_draft_timers,
     make_pick,
-    on_clock_member,
     open_draft,
     ordered_members,
+    peek_on_clock_member,
     reassign_roster_entry,
     reset_draft,
     undo_last_pick,
@@ -51,12 +52,15 @@ def _build_draft_state(db: Session, league: League) -> DraftStateResponse:
     if state.status == "open" and members:
         try:
             ordered = ordered_members(members)
-            member, current_round = on_clock_member(
-                draft_style=league.draft_style,
-                ordered=ordered,
-                pick_number=state.current_pick_number,
+            pools = list(
+                db.scalars(select(TeamPool).where(TeamPool.league_id == league.id)).all()
             )
-            on_clock_id = member.public_id
+            peeked = peek_on_clock_member(
+                db, league=league, state=state, ordered=ordered, pools=pools
+            )
+            if peeked is not None:
+                member, current_round = peeked
+                on_clock_id = member.public_id
         except DomainError as exc:
             logger.warning(
                 "draft on-clock unresolved league_id=%s status=%s pick=%s detail=%s",
@@ -111,6 +115,9 @@ def _build_draft_state(db: Session, league: League) -> DraftStateResponse:
         current_member_id=on_clock_id,
         league_status=league.status,
         version=state.current_pick_number,
+        pick_deadline_at=state.pick_deadline_at,
+        pick_timer_seconds=league.pick_timer_seconds,
+        draft_scheduled_at=league.draft_scheduled_at,
         picks=pick_rows,
     )
 
@@ -121,6 +128,10 @@ def get_draft_state(
     db: Session = Depends(get_db),
 ) -> DraftStateResponse:
     league, _ = membership
+    outcome = enforce_league_draft_timers(db, league)
+    if outcome.get("changed") or outcome["opened"] or outcome["auto_picks"]:
+        db.commit()
+        db.refresh(league)
     return _build_draft_state(db, league)
 
 
@@ -173,6 +184,7 @@ def submit_pick(
         league=league,
         picker_member=member,
         team_public_id=payload.team_id,
+        pool_public_id=payload.pool_id,
         allow_commissioner_override=member.is_commissioner,
         idempotency_key=payload.idempotency_key,
     )

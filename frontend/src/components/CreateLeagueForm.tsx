@@ -16,6 +16,11 @@ import {
   defaultFootballSeasonYear,
 } from "@/lib/availableCompetitions";
 import { CompetitionAutocomplete } from "@/components/settings/CompetitionAutocomplete";
+import {
+  DraftTimingFields,
+  fromDatetimeLocalValue,
+  parsePickTimerSeconds,
+} from "@/components/settings/DraftTimingFields";
 
 type TemplatePool = {
   key: string;
@@ -60,6 +65,8 @@ export function CreateLeagueForm({
   const [name, setName] = useState("");
   const [seasonLabel, setSeasonLabel] = useState("");
   const [maxMembers, setMaxMembers] = useState("");
+  const [draftScheduledLocal, setDraftScheduledLocal] = useState("");
+  const [pickTimerSeconds, setPickTimerSeconds] = useState("");
   const [poolParams, setPoolParams] = useState<
     Record<string, { competition_code: string; season_year: string }>
   >({});
@@ -140,6 +147,12 @@ export function CreateLeagueForm({
       competition_code: poolParams[p.key]?.competition_code || p.competition_code || "",
       season_year: Number(poolParams[p.key]?.season_year || p.season_year || 0),
     }));
+    const draft_scheduled_at = fromDatetimeLocalValue(draftScheduledLocal);
+    const pick_timer_seconds = parsePickTimerSeconds(pickTimerSeconds);
+    const timingPayload = {
+      ...(draft_scheduled_at ? { draft_scheduled_at } : {}),
+      ...(pick_timer_seconds != null ? { pick_timer_seconds } : {}),
+    };
 
     try {
       let created: League;
@@ -153,6 +166,7 @@ export function CreateLeagueForm({
             season_label: seasonLabel,
             max_members: Number(maxMembers),
             pool_provider_params,
+            ...timingPayload,
           }),
         );
         toast({ message: `Created ${created.name}.` });
@@ -164,6 +178,7 @@ export function CreateLeagueForm({
             template_id: templateId || null,
             season_label: seasonLabel,
             max_members: Number(maxMembers),
+            ...timingPayload,
           }),
         );
 
@@ -293,6 +308,13 @@ export function CreateLeagueForm({
                 />
               </Label>
 
+              <DraftTimingFields
+                scheduledLocal={draftScheduledLocal}
+                onScheduledLocalChange={setDraftScheduledLocal}
+                pickTimerSeconds={pickTimerSeconds}
+                onPickTimerSecondsChange={setPickTimerSeconds}
+              />
+
               {isPremierLeague && (
                 <div className="sm:col-span-2">
                   {gatesError ? (
@@ -341,12 +363,12 @@ export function CreateLeagueForm({
               <div className="flex items-start gap-2">
                 <Muted className="text-xs">
                   Confirm the competition and season year for each — clubs are loaded when you
-                  create the league.
+                  create the league. Managers draft from all of them in one shared draft.
                 </Muted>
                 <FieldHelp label="Competitions">
                   <p className="mb-2">
                     Choose which provider competition and season year to pull clubs from for each
-                    competition on the template.
+                    competition on the template. The league runs a single draft across all of them.
                   </p>
                   <ul className="list-disc space-y-1 pl-4">
                     <li>

@@ -6,6 +6,7 @@ import { Empty } from "@/components/ui/State";
 import { IconButton } from "@/components/ui/IconButton";
 import { CheckIcon, PencilIcon, PlusIcon, TrashIcon, XIcon } from "@/components/ui/icons";
 import { Muted, Stack } from "@/components/ui/Card";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { Input } from "@/components/ui/Field";
 import { slugifyKey, uniqueKey, type BonusTypeDef } from "./types";
 
@@ -66,6 +67,9 @@ export function BonusTypesListEditor({
   const [newLabel, setNewLabel] = useState("");
   const [newPoints, setNewPoints] = useState("");
   const [busy, setBusy] = useState(false);
+  const [pendingDelete, setPendingDelete] = useState<{ id: string; label: string } | null>(
+    null,
+  );
 
   const persistMode = Boolean(onCreate || onUpdate || onDelete);
 
@@ -134,8 +138,10 @@ export function BonusTypesListEditor({
     }
   }
 
-  async function removeType(id: string, label: string) {
-    if (!confirm(`Delete bonus type “${label}”?`)) return;
+  async function confirmRemoveType() {
+    if (!pendingDelete) return;
+    const { id } = pendingDelete;
+    setPendingDelete(null);
     setBusy(true);
     try {
       if (persistMode) {
@@ -232,7 +238,7 @@ export function BonusTypesListEditor({
                       label={`Delete ${t.label}`}
                       className="text-danger hover:bg-danger/10 hover:text-danger"
                       disabled={busy}
-                      onClick={() => removeType(id, t.label)}
+                      onClick={() => setPendingDelete({ id, label: t.label })}
                     >
                       <TrashIcon className="size-4" />
                     </IconButton>
@@ -303,6 +309,20 @@ export function BonusTypesListEditor({
             </IconButton>
           </div>
         ))}
+      <ConfirmDialog
+        open={Boolean(pendingDelete)}
+        title="Delete bonus type?"
+        description={
+          pendingDelete
+            ? `Delete bonus type “${pendingDelete.label}”?`
+            : undefined
+        }
+        confirmLabel="Delete"
+        cancelLabel="Cancel"
+        tone="danger"
+        onCancel={() => setPendingDelete(null)}
+        onConfirm={() => void confirmRemoveType()}
+      />
     </Stack>
   );
 }

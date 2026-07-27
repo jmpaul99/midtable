@@ -13,6 +13,7 @@ from app.models import League
 from app.providers.fifa_rankings import FifaRankingsError, ParseFifaRankingsProvider
 from app.providers.football_data import FootballDataProvider
 from app.services.ranking_catalog import sync_fifa_catalogs
+from app.services.draft import run_draft_maintenance
 from app.services.sync import sync_all_active_competitions_then_score
 
 logger = logging.getLogger(__name__)
@@ -45,6 +46,22 @@ def sync_and_score(
     )
     if payload.get("failures"):
         raise HTTPException(status_code=502, detail=payload)
+    return payload
+
+
+@router.post(
+    "/internal/draft-maintenance",
+    dependencies=[Depends(require_cron_secret)],
+)
+def draft_maintenance(db: Session = Depends(get_db)) -> dict:
+    """Cron entrypoint: auto-open scheduled drafts and auto-pick expired clocks."""
+    logger.info("draft-maintenance started")
+    payload = run_draft_maintenance(db)
+    logger.info(
+        "draft-maintenance finished leagues=%s results=%s",
+        payload.get("leagues_considered"),
+        len(payload.get("results") or []),
+    )
     return payload
 
 

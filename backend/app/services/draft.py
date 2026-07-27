@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import logging
+import random
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -125,13 +127,89 @@ def _member_has_open_draft_slots(
     return False
 
 
+def _aware(dt: datetime) -> datetime:
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=UTC)
+    return dt
+
+
+def apply_pick_deadline(
+    state: DraftState,
+    league: League,
+    *,
+    now: datetime | None = None,
+) -> None:
+    """Set or clear pick_deadline_at from league.pick_timer_seconds."""
+    now = now or datetime.now(UTC)
+    seconds = league.pick_timer_seconds
+    if state.status == "open" and seconds is not None and int(seconds) > 0:
+        state.pick_deadline_at = now + timedelta(seconds=int(seconds))
+    else:
+        state.pick_deadline_at = None
+
+
+def peek_on_clock_member(
+    db: Session,
+    *,
+    league: League,
+    state: DraftState,
+    ordered: list[LeagueMember],
+    pools: list[TeamPool],
+) -> tuple[LeagueMember, int] | None:
+    """Return (on-clock manager, round) with open slots without mutating pick number."""
+    safety = max(1, len(ordered) * max(1, sum(p.slot_count for p in pools)) + 1)
+    pick_number = state.current_pick_number
+    for _ in range(safety):
+        expected, round_number = on_clock_member(
+            draft_style=league.draft_style,
+            ordered=ordered,
+            pick_number=pick_number,
+        )
+        if _member_has_open_draft_slots(db, expected.id, pools):
+            return expected, round_number
+        pick_number += 1
+        if all(not _member_has_open_draft_slots(db, m.id, pools) for m in ordered):
+            return None
+    return None
+
+
+def _random_available_team(
+    db: Session,
+    *,
+    league: League,
+    member: LeagueMember,
+    pools: list[TeamPool],
+) -> tuple[Team, TeamPool] | None:
+    drafted_ids = {
+        e.team_id
+        for e in db.scalars(
+            select(RosterEntry).where(RosterEntry.league_id == league.id)
+        ).all()
+    }
+    candidates: list[tuple[Team, TeamPool]] = []
+    for pool in pools:
+        if member_pool_filled(db, member.id, pool.id, pool.slot_count):
+            continue
+        for pt in db.scalars(select(PoolTeam).where(PoolTeam.pool_id == pool.id)).all():
+            if pt.team_id in drafted_ids:
+                continue
+            team = db.get(Team, pt.team_id)
+            if team is not None:
+                candidates.append((team, pool))
+    if not candidates:
+        return None
+    return random.choice(candidates)
+
+
 def make_pick(
     db: Session,
     *,
     league: League,
     picker_member: LeagueMember,
     team_public_id,
+    pool_public_id=None,
     allow_commissioner_override: bool = False,
+    allow_system_autopick: bool = False,
     idempotency_key: str | None = None,
 ) -> DraftPick:
     """Transactional pick: lock draft_state, validate turn/availability, insert pick+roster."""
@@ -171,17 +249,24 @@ def make_pick(
         if _draft_is_complete(db, league, ordered):
             state.status = "complete"
             league.status = "active"
+            state.pick_deadline_at = None
             db.flush()
             raise ConflictError("Draft completed — no open roster slots remain")
     else:
         raise ConflictError("Unable to find an on-clock manager with open slots")
 
     if expected.id != picker_member.id and not (
-        allow_commissioner_override and picker_member.is_commissioner
+        allow_system_autopick
+        or (allow_commissioner_override and picker_member.is_commissioner)
     ):
         raise ForbiddenError("It is not your turn")
 
-    acting_member = expected if allow_commissioner_override else picker_member
+    if allow_system_autopick or (
+        allow_commissioner_override and picker_member.is_commissioner
+    ):
+        acting_member = expected
+    else:
+        acting_member = picker_member
 
     team = db.scalars(select(Team).where(Team.public_id == team_public_id)).first()
     if team is None:
@@ -196,16 +281,34 @@ def make_pick(
     if existing:
         raise ConflictError("Team already drafted")
 
-    pool_team = db.scalars(
-        select(PoolTeam)
-        .join(TeamPool, TeamPool.id == PoolTeam.pool_id)
-        .where(TeamPool.league_id == league.id, PoolTeam.team_id == team.id)
-    ).first()
-    if pool_team is None:
-        raise DomainError("Team is not in any competition for this league")
-
-    pool = db.get(TeamPool, pool_team.pool_id)
-    assert pool is not None
+    if pool_public_id is not None:
+        pool = db.scalars(
+            select(TeamPool).where(
+                TeamPool.public_id == pool_public_id,
+                TeamPool.league_id == league.id,
+            )
+        ).first()
+        if pool is None:
+            raise NotFoundError("Competition not found")
+        pool_team = db.scalars(
+            select(PoolTeam).where(
+                PoolTeam.pool_id == pool.id,
+                PoolTeam.team_id == team.id,
+            )
+        ).first()
+        if pool_team is None:
+            raise DomainError("Team is not in the selected competition")
+    else:
+        pool_team = db.scalars(
+            select(PoolTeam)
+            .join(TeamPool, TeamPool.id == PoolTeam.pool_id)
+            .where(TeamPool.league_id == league.id, PoolTeam.team_id == team.id)
+        ).first()
+        if pool_team is None:
+            raise DomainError("Team is not in any competition for this league")
+        pool = db.get(TeamPool, pool_team.pool_id)
+        if pool is None:
+            raise NotFoundError("Competition not found")
     if member_pool_filled(db, acting_member.id, pool.id, pool.slot_count):
         raise ConflictError("Roster slot for this competition is full")
 
@@ -236,6 +339,9 @@ def make_pick(
             if _draft_is_complete(db, league, ordered):
                 state.status = "complete"
                 league.status = "active"
+                state.pick_deadline_at = None
+            else:
+                apply_pick_deadline(state, league)
             if idempotency_key:
                 db.add(
                     DraftIdempotencyKey(
@@ -264,12 +370,13 @@ def make_pick(
         raise ConflictError("Pick conflict (already taken or not your turn)") from exc
 
     logger.info(
-        "draft pick made league_id=%s pick_number=%s round=%s member_id=%s team_id=%s",
+        "draft pick made league_id=%s pick_number=%s round=%s member_id=%s team_id=%s autopick=%s",
         log_id(league),
         pick.pick_number,
         pick.round_number,
         log_id(acting_member),
         log_id(team),
+        allow_system_autopick,
     )
     return pick
 
@@ -309,7 +416,10 @@ def reset_draft(db: Session, league: League) -> DraftState:
     else:
         state.current_pick_number = 1
         state.status = "pending"
+        state.pick_deadline_at = None
     league.status = "pre_draft"
+    # Clear schedule so a past draft_scheduled_at cannot auto-open again immediately.
+    league.draft_scheduled_at = None
     db.flush()
     logger.info("draft reset league_id=%s", log_id(league))
     return state
@@ -350,6 +460,7 @@ def undo_last_pick(db: Session, league: League) -> DraftPick:
     state.current_pick_number = pick_number
     state.status = "open"
     league.status = "drafting"
+    apply_pick_deadline(state, league)
     db.flush()
     logger.info(
         "draft pick undone league_id=%s pick_number=%s team_id=%s",
@@ -424,7 +535,7 @@ def reassign_roster_entry(
 def open_draft(db: Session, league: League) -> DraftState:
     if league.status not in {"pre_draft", "drafting"}:
         raise ConflictError(f"Cannot open draft from league status {league.status}")
-    readiness = evaluate_readiness(db, league)
+    readiness = evaluate_readiness(db, league, purpose="draft")
     if not readiness.ready:
         raise ConflictError(readiness.errors[0] if readiness.errors else "League is not ready")
     members = list(db.scalars(select(LeagueMember).where(LeagueMember.league_id == league.id)).all())
@@ -472,10 +583,190 @@ def open_draft(db: Session, league: League) -> DraftState:
             raise ConflictError("Draft already complete")
         state.status = "open"
     league.status = "drafting"
+    apply_pick_deadline(state, league)
     db.flush()
     logger.info(
-        "draft opened league_id=%s managers=%s",
+        "draft opened league_id=%s managers=%s pick_timer_seconds=%s",
         log_id(league),
         len(ordered),
+        league.pick_timer_seconds,
     )
     return state
+
+
+def try_auto_open_if_scheduled(db: Session, league: League) -> bool:
+    """Open draft when schedule is due and draft readiness passes. Returns True if opened."""
+    if league.draft_scheduled_at is None or league.status != "pre_draft":
+        return False
+    if _aware(league.draft_scheduled_at) > datetime.now(UTC):
+        return False
+    state = db.scalars(select(DraftState).where(DraftState.league_id == league.id)).first()
+    if state is not None and state.status != "pending":
+        return False
+    try:
+        open_draft(db, league)
+        logger.info("draft auto-opened league_id=%s", log_id(league))
+        return True
+    except ConflictError as exc:
+        logger.info(
+            "draft auto-open deferred league_id=%s reason=%s",
+            log_id(league),
+            getattr(exc, "message", str(exc)),
+        )
+        return False
+
+
+def try_auto_pick_if_expired(db: Session, league: League) -> str:
+    """Auto-pick when the pick clock has expired.
+
+    Returns:
+      "picked" — a pick was made
+      "completed" — draft marked complete
+      "deferred" — could not pick; deadline pushed forward
+      "noop" — nothing to do
+    """
+    state = db.scalars(select(DraftState).where(DraftState.league_id == league.id)).first()
+    if state is None or state.status != "open" or state.pick_deadline_at is None:
+        return "noop"
+    if _aware(state.pick_deadline_at) > datetime.now(UTC):
+        return "noop"
+    if not league.pick_timer_seconds:
+        return "noop"
+
+    members = list(
+        db.scalars(select(LeagueMember).where(LeagueMember.league_id == league.id)).all()
+    )
+    pools = list(db.scalars(select(TeamPool).where(TeamPool.league_id == league.id)).all())
+    try:
+        ordered = ordered_members(members)
+    except ConflictError as exc:
+        logger.warning(
+            "draft auto-pick skipped league_id=%s reason=%s",
+            log_id(league),
+            getattr(exc, "message", str(exc)),
+        )
+        return "noop"
+
+    peeked = peek_on_clock_member(
+        db, league=league, state=state, ordered=ordered, pools=pools
+    )
+    if peeked is None:
+        if _draft_is_complete(db, league, ordered):
+            state.status = "complete"
+            league.status = "active"
+            state.pick_deadline_at = None
+            logger.info("draft auto-completed league_id=%s (no open slots)", log_id(league))
+            return "completed"
+        logger.warning("draft auto-pick no on-clock manager league_id=%s", log_id(league))
+        # Avoid tight retry loops while the draft is stuck.
+        apply_pick_deadline(state, league)
+        return "deferred"
+
+    on_clock, _ = peeked
+    picked = _random_available_team(db, league=league, member=on_clock, pools=pools)
+    if picked is None:
+        logger.warning(
+            "draft auto-pick no available teams league_id=%s member_id=%s",
+            log_id(league),
+            log_id(on_clock),
+        )
+        # Push the clock forward so polls/cron do not hammer every few seconds.
+        apply_pick_deadline(state, league)
+        return "deferred"
+
+    team, pool = picked
+    try:
+        make_pick(
+            db,
+            league=league,
+            picker_member=on_clock,
+            team_public_id=team.public_id,
+            pool_public_id=pool.public_id,
+            allow_system_autopick=True,
+        )
+        return "picked"
+    except (ConflictError, ForbiddenError, DomainError, NotFoundError) as exc:
+        logger.info(
+            "draft auto-pick failed league_id=%s reason=%s",
+            log_id(league),
+            getattr(exc, "message", str(exc)),
+        )
+        # Push the clock forward so failed picks do not leave an expired deadline.
+        apply_pick_deadline(state, league)
+        return "deferred"
+
+
+def enforce_league_draft_timers(db: Session, league: League) -> dict[str, int | bool]:
+    """Auto-open if scheduled and catch up expired pick clocks for one league."""
+    opened = try_auto_open_if_scheduled(db, league)
+    auto_picks = 0
+    changed = bool(opened)
+    for _ in range(50):
+        result = try_auto_pick_if_expired(db, league)
+        if result == "noop":
+            break
+        changed = True
+        if result == "picked":
+            auto_picks += 1
+            continue
+        # completed or deferred — stop the catch-up loop
+        break
+    return {"opened": opened, "auto_picks": auto_picks, "changed": changed}
+
+
+def run_draft_maintenance(db: Session) -> dict:
+    """Cron: auto-open due drafts and auto-pick expired clocks across leagues."""
+    now = datetime.now(UTC)
+    due_open = list(
+        db.scalars(
+            select(League).where(
+                League.draft_scheduled_at.is_not(None),
+                League.draft_scheduled_at <= now,
+                League.status == "pre_draft",
+            )
+        ).all()
+    )
+    expired_clock = list(
+        db.scalars(
+            select(League)
+            .join(DraftState, DraftState.league_id == League.id)
+            .where(
+                DraftState.status == "open",
+                DraftState.pick_deadline_at.is_not(None),
+                DraftState.pick_deadline_at <= now,
+            )
+        ).all()
+    )
+    by_id: dict[int, League] = {league.id: league for league in due_open}
+    for league in expired_clock:
+        by_id[league.id] = league
+
+    results: list[dict] = []
+    for league in by_id.values():
+        try:
+            outcome = enforce_league_draft_timers(db, league)
+            db.commit()
+            results.append(
+                {
+                    "league_id": str(league.public_id),
+                    "opened": bool(outcome["opened"]),
+                    "auto_picks": int(outcome["auto_picks"]),
+                }
+            )
+        except Exception:
+            db.rollback()
+            logger.exception(
+                "draft maintenance failed league_id=%s",
+                log_id(league),
+            )
+            results.append(
+                {
+                    "league_id": str(league.public_id),
+                    "error": True,
+                }
+            )
+    return {
+        "ok": True,
+        "leagues_considered": len(by_id),
+        "results": results,
+    }

@@ -113,6 +113,8 @@ def _league_response(
         payouts=league.payouts,
         scheduled_start_date=league.scheduled_start_date,
         scheduled_end_date=league.scheduled_end_date,
+        draft_scheduled_at=league.draft_scheduled_at,
+        pick_timer_seconds=league.pick_timer_seconds,
         template_id=template_public,
         max_members=_max_members(league),
         roster_club_order=_roster_club_order(league),
@@ -157,6 +159,8 @@ def _league_detail(
         payouts=league.payouts,
         scheduled_start_date=league.scheduled_start_date,
         scheduled_end_date=league.scheduled_end_date,
+        draft_scheduled_at=league.draft_scheduled_at,
+        pick_timer_seconds=league.pick_timer_seconds,
         template_id=template_id,
         max_members=max_members,
         roster_club_order=_roster_club_order(league),
@@ -170,6 +174,10 @@ def _league_detail(
             "format": league.draft_style,
             "max_members": max_members,
             "roster_club_order": _roster_club_order(league),
+            "draft_scheduled_at": league.draft_scheduled_at.isoformat()
+            if league.draft_scheduled_at
+            else None,
+            "pick_timer_seconds": league.pick_timer_seconds,
         },
         members=member_rows,
         pools=[
