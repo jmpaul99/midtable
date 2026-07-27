@@ -100,6 +100,7 @@ def test_claim_join_link_success():
     # league lookup, existing member (none), member count, invite audit (none)
     db.scalars.return_value.first.side_effect = [league, None, None]
     db.scalars.return_value.all.return_value = []
+    db.scalar.return_value = None  # no existing draft slots → assign 1
     db.get = MagicMock()
 
     with patch("app.routers.join_links._member_response") as member_resp:
@@ -110,7 +111,7 @@ def test_claim_join_link_success():
                 "team_name": "Joiner's Team",
                 "email": profile.email,
                 "is_commissioner": False,
-                "draft_slot": None,
+                "draft_slot": 1,
                 "role": "member",
             }
         )
@@ -121,6 +122,8 @@ def test_claim_join_link_success():
         )
     assert out.league_id == league.public_id
     assert db.add.call_count >= 1
+    added_member = db.add.call_args_list[0].args[0]
+    assert added_member.draft_slot == 1
     db.commit.assert_called()
 
 
@@ -241,5 +244,37 @@ def test_get_or_create_profile_without_invite():
         display_name="Newbie",
     )
     assert profile.email == "newbie@example.com"
+    db.add.assert_called_once()
+    db.flush.assert_called_once()
+    db.begin_nested.assert_called_once()
+
+
+def test_get_or_create_profile_resolves_insert_race():
+    from sqlalchemy.exc import IntegrityError
+
+    auth_id = uuid4()
+    existing = SimpleNamespace(
+        public_id=uuid4(),
+        email="racer@example.com",
+        auth_user_id=auth_id,
+        display_name="Display Name",
+    )
+    db = MagicMock()
+    # First pass: no profile by auth or email. After flush race: find by auth.
+    db.scalars.return_value.first.side_effect = [None, None, existing]
+    nested = MagicMock()
+    nested.__enter__.return_value = nested
+    nested.__exit__.return_value = None
+    db.begin_nested.return_value = nested
+    db.flush.side_effect = IntegrityError("stmt", {}, Exception("duplicate"))
+
+    profile = get_or_create_profile(
+        db,
+        email="racer@example.com",
+        auth_user_id=auth_id,
+        display_name="Racer",
+    )
+    assert profile is existing
+    assert profile.display_name == "Racer"
     db.add.assert_called_once()
     db.flush.assert_called_once()

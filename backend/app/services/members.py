@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.auth.jwt import MAX_DISPLAY_NAME_LEN
@@ -68,6 +68,14 @@ def required_manager_count(league) -> int | None:
         return None
 
 
+def next_draft_slot(db: Session, league_id: int) -> int:
+    """Return the next append-only draft slot (max existing + 1, or 1)."""
+    max_slot = db.scalar(
+        select(func.max(LeagueMember.draft_slot)).where(LeagueMember.league_id == league_id)
+    )
+    return int(max_slot or 0) + 1
+
+
 def join_or_return_member(
     db: Session,
     league: League,
@@ -78,6 +86,7 @@ def join_or_return_member(
 ) -> tuple[LeagueMember, bool]:
     """Return existing membership or create one. Does not commit.
 
+    New members without an explicit draft_slot get the next available slot.
     Raises HTTPException 409 when the league is closed or full.
     Caller owns draft_slot uniqueness checks and invite/audit side effects.
     """
@@ -102,6 +111,9 @@ def join_or_return_member(
             status_code=409,
             detail=f"League is full ({max_members} managers)",
         )
+
+    if draft_slot is None:
+        draft_slot = next_draft_slot(db, league.id)
 
     member = LeagueMember(
         league_id=league.id,

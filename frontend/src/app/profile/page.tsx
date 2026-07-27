@@ -1,16 +1,22 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useState } from "react";
-import { RequireAuth } from "@/lib/auth";
+import { useRouter } from "next/navigation";
+import { RequireAuth, useAuth } from "@/lib/auth";
 import { api, errorMessage, json } from "@/lib/api";
 import type { Me } from "@/lib/types";
 import { ErrorState, Loading, StatusBanner } from "@/components/ui/State";
 import { IconButton } from "@/components/ui/IconButton";
 import { SaveIcon } from "@/components/ui/icons";
+import { Button } from "@/components/ui/Button";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { Card, Eyebrow, Muted, Stack } from "@/components/ui/Card";
 import { Input, Label } from "@/components/ui/Field";
 import { ThemeSwitcher } from "@/components/ThemeSwitcher";
 import { useToast } from "@/components/ui/ToastProvider";
+
+const DELETE_ACCOUNT_WARNING =
+  "This permanently deletes your account, sign-in, and league memberships. Leagues you alone commission that are still setting up or already finished will also be deleted. If you alone commission a league that is drafting or in season, resolve that first by promoting another commissioner or deleting the league.";
 
 export default function ProfilePage() {
   return (
@@ -21,13 +27,16 @@ export default function ProfilePage() {
 }
 
 function ProfileForm() {
+  const router = useRouter();
+  const { signOut } = useAuth();
   const [me, setMe] = useState<Me>();
   const [displayName, setDisplayName] = useState("");
   const [loadError, setLoadError] = useState("");
   const [validation, setValidation] = useState("");
   const [busy, setBusy] = useState(false);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const { toast } = useToast();
-
   const load = useCallback(() => {
     setLoadError("");
     api<Me>("/auth/me")
@@ -68,6 +77,23 @@ function ProfileForm() {
     }
   }
 
+  async function deleteAccount() {
+    setDeleteBusy(true);
+    try {
+      await api("/auth/me", json("DELETE"));
+      await signOut();
+      router.replace("/");
+      router.refresh();
+    } catch (err) {
+      toast({
+        message: errorMessage(err),
+        tone: "error",
+        durationMs: 8000,
+        dismissible: true,
+      });
+      setDeleteBusy(false);
+    }
+  }
   if (loadError && !me) {
     return <ErrorState error={loadError} retry={load} />;
   }
@@ -127,9 +153,38 @@ function ProfileForm() {
             <ThemeSwitcher />
           </div>
 
+          <div className="border-t border-line pt-4">
+            <p className="text-sm font-semibold text-muted">Delete account</p>
+            <Muted className="mt-1 mb-3">
+              Permanently remove your account and sign-in. This cannot be undone.
+            </Muted>
+            <Button
+              type="button"
+              variant="danger"
+              disabled={busy || deleteBusy}
+              onClick={() => setDeleteConfirmOpen(true)}
+            >
+              Delete account
+            </Button>
+          </div>
+
           {validation && <StatusBanner tone="error">{validation}</StatusBanner>}
         </Stack>
       </Card>
+
+      <ConfirmDialog
+        open={deleteConfirmOpen}
+        title="Delete your account?"
+        description={DELETE_ACCOUNT_WARNING}
+        confirmLabel="Delete account"
+        cancelLabel="Keep account"
+        tone="danger"
+        onCancel={() => setDeleteConfirmOpen(false)}
+        onConfirm={() => {
+          setDeleteConfirmOpen(false);
+          void deleteAccount();
+        }}
+      />
     </section>
   );
 }

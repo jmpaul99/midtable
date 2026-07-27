@@ -460,7 +460,6 @@ class ManualBonus(Base):
     bonus_type_id: Mapped[int] = mapped_column(ForeignKey("bonus_types.id", ondelete="CASCADE"))
     points: Mapped[Decimal] = mapped_column(Numeric(10, 2))
     notes: Mapped[str | None] = mapped_column(Text)
-    created_by_profile_id: Mapped[int | None] = mapped_column(ForeignKey("profiles.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

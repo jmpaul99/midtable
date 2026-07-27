@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
-import { useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useState } from "react";
 import { useAuth } from "@/lib/auth";
 import { cn } from "@/lib/cn";
 import { IconButton } from "@/components/ui/IconButton";
@@ -10,7 +10,38 @@ import { MidtableLogo } from "@/components/MidtableLogo";
 import { LogInIcon, LogOutIcon, MenuIcon, XIcon } from "@/components/ui/icons";
 import { LeagueBottomNav, LeagueDesktopTabs, leagueNavItems } from "@/components/ui/BottomNav";
 
+function safeNext(value: string | null): string | null {
+  if (!value?.startsWith("/") || value.startsWith("//")) return null;
+  return value;
+}
+
+function useLoginHref() {
+  const pathname = usePathname();
+  const search = useSearchParams();
+  const existingNext = safeNext(search.get("next"));
+  if (existingNext) {
+    return `/login?next=${encodeURIComponent(existingNext)}`;
+  }
+  const query = search.toString();
+  const current = `${pathname}${query ? `?${query}` : ""}`;
+  if (current === "/" || current === "") return "/login";
+  return `/login?next=${encodeURIComponent(current)}`;
+}
+
 export function Nav() {
+  return (
+    <Suspense fallback={<NavChrome loginHref="/login" />}>
+      <NavWithSearch />
+    </Suspense>
+  );
+}
+
+function NavWithSearch() {
+  const loginHref = useLoginHref();
+  return <NavChrome loginHref={loginHref} />;
+}
+
+function NavChrome({ loginHref }: { loginHref: string }) {
   const { user, loading, isAdmin, signOut } = useAuth();
   const pathname = usePathname();
   const router = useRouter();
@@ -76,7 +107,7 @@ export function Nav() {
           ) : (
             !loading && (
               <Link
-                href="/login"
+                href={loginHref}
                 className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-brand px-4 py-2.5 text-sm font-bold text-on-brand hover:bg-brand-dark"
               >
                 <LogInIcon className="size-4" />
@@ -137,7 +168,7 @@ export function Nav() {
             ) : (
               !loading && (
                 <Link
-                  href="/login"
+                  href={loginHref}
                   onClick={() => setOpen(false)}
                   className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-brand px-4 py-2.5 text-sm font-bold text-on-brand"
                 >

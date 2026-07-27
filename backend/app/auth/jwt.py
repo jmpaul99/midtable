@@ -14,6 +14,7 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jwt import InvalidTokenError, PyJWK
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.config import Settings, get_settings
@@ -134,6 +135,35 @@ def display_name_from_claims(claims: dict[str, Any]) -> str | None:
     return normalize_display_name(str(raw) if raw is not None else None)
 
 
+def _find_profile(
+    db: Session,
+    *,
+    email: str,
+    auth_user_id: UUID | None,
+) -> Profile | None:
+    if auth_user_id is not None:
+        by_auth = db.scalars(
+            select(Profile).where(Profile.auth_user_id == auth_user_id)
+        ).first()
+        if by_auth is not None:
+            return by_auth
+    return db.scalars(select(Profile).where(Profile.email == email)).first()
+
+
+def _apply_profile_updates(
+    profile: Profile,
+    *,
+    auth_user_id: UUID | None,
+    display_name: str | None,
+) -> Profile:
+    if auth_user_id and profile.auth_user_id is None:
+        profile.auth_user_id = auth_user_id
+    chosen = normalize_display_name(display_name)
+    if chosen and profile.display_name == DEFAULT_DISPLAY_NAME:
+        profile.display_name = chosen
+    return profile
+
+
 def get_or_create_profile(
     db: Session,
     *,
@@ -144,24 +174,41 @@ def get_or_create_profile(
     """Create or return a profile for any authenticated user.
 
     League membership remains gated by personal invite accept or join-link claim.
+    Concurrent first-login requests are safe: insert races re-load the winner.
     """
     normalized = email.strip().lower()
-    profile = db.scalars(select(Profile).where(Profile.email == normalized)).first()
-    if profile:
-        if auth_user_id and profile.auth_user_id is None:
-            profile.auth_user_id = auth_user_id
-        chosen = normalize_display_name(display_name)
-        if chosen and profile.display_name == DEFAULT_DISPLAY_NAME:
-            profile.display_name = chosen
-        return profile
+    existing = _find_profile(db, email=normalized, auth_user_id=auth_user_id)
+    if existing is not None:
+        return _apply_profile_updates(
+            existing,
+            auth_user_id=auth_user_id,
+            display_name=display_name,
+        )
+
     chosen = normalize_display_name(display_name) or DEFAULT_DISPLAY_NAME
-    profile = Profile(
-        email=normalized,
-        auth_user_id=auth_user_id,
-        display_name=chosen,
-    )
-    db.add(profile)
-    db.flush()
+    try:
+        with db.begin_nested():
+            profile = Profile(
+                email=normalized,
+                auth_user_id=auth_user_id,
+                display_name=chosen,
+            )
+            db.add(profile)
+            db.flush()
+    except IntegrityError:
+        raced = _find_profile(db, email=normalized, auth_user_id=auth_user_id)
+        if raced is None:
+            raise
+        logger.info(
+            "profile create race resolved profile_id=%s",
+            raced.public_id,
+        )
+        return _apply_profile_updates(
+            raced,
+            auth_user_id=auth_user_id,
+            display_name=display_name,
+        )
+
     logger.info("profile created profile_id=%s", profile.public_id)
     logger.debug("profile created email=%s", normalized)
     return profile

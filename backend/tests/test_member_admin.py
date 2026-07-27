@@ -14,6 +14,8 @@ from app.schemas.leagues import MemberAdminUpdate
 from app.services.members import (
     count_commissioners,
     is_sole_commissioner,
+    join_or_return_member,
+    next_draft_slot,
     renumber_draft_slots,
 )
 
@@ -44,6 +46,45 @@ def test_renumber_draft_slots_contiguous_preserving_order():
     assert a.draft_slot == 1
     assert b.draft_slot == 2
     assert c.draft_slot == 3
+
+
+def test_next_draft_slot_starts_at_one():
+    db = MagicMock()
+    db.scalar.return_value = None
+    assert next_draft_slot(db, league_id=1) == 1
+
+
+def test_next_draft_slot_appends_after_max():
+    db = MagicMock()
+    db.scalar.return_value = 3
+    assert next_draft_slot(db, league_id=1) == 4
+
+
+def test_join_assigns_next_draft_slot():
+    league = SimpleNamespace(id=1, status="pre_draft", config={"max_members": 4})
+    profile = SimpleNamespace(id=7, display_name="Joiner")
+    db = MagicMock()
+    db.scalars.return_value.first.return_value = None
+    db.scalars.return_value.all.return_value = [SimpleNamespace()]
+    db.scalar.return_value = 1
+
+    member, created = join_or_return_member(db, league, profile)
+    assert created is True
+    assert member.draft_slot == 2
+    db.add.assert_called_once_with(member)
+
+
+def test_join_keeps_explicit_draft_slot():
+    league = SimpleNamespace(id=1, status="pre_draft", config=None)
+    profile = SimpleNamespace(id=7, display_name="Joiner")
+    db = MagicMock()
+    db.scalars.return_value.first.return_value = None
+    db.scalars.return_value.all.return_value = []
+
+    member, created = join_or_return_member(db, league, profile, draft_slot=3)
+    assert created is True
+    assert member.draft_slot == 3
+    db.scalar.assert_not_called()
 
 
 def test_is_sole_commissioner():
