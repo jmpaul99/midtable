@@ -17,7 +17,7 @@ import { SeasonActionsSection } from "./SeasonActionsSection";
 import { useAdminLeagueData } from "./useAdminLeagueData";
 
 const SYNC_WARNING =
-  "Pull latest fixtures and results from football-data.org and score finished matches?";
+  "Pull latest fixtures and results and score finished matches?";
 
 const RECOMPUTE_WARNING =
   "Recompute scoring for all finished matches? This rewrites scoring events from current results.";
@@ -275,9 +275,9 @@ function SyncReadinessSection({
             <div className="flex flex-col rounded-xl border border-line bg-surface-2/40 p-3">
               <strong className="text-sm">Sync now</strong>
               <Muted className="mt-1 grow text-xs">
-                Pulls fixtures and results from football-data.org for every scoring competition that
-                has a competition code and season year, then scores newly finished matches. It does
-                not load clubs — save competitions in League settings for that.
+                Pulls fixtures and results for every scoring competition that has a competition code
+                and season year, then scores newly finished matches. It does not load clubs — save
+                competitions in League settings for that.
               </Muted>
               <div className="mt-3 flex justify-start">
                 <IconButton
@@ -340,7 +340,7 @@ function SyncReadinessSection({
           {sync?.map((s) => (
             <div className="rounded-xl border border-line bg-surface-2/50 p-3" key={s.id}>
               <Row between>
-                <strong>{s.provider || s.resource_type || "sync"}</strong>
+                <strong>{s.resource_type || "sync"}</strong>
                 <Status value={s.status} />
               </Row>
               <Muted className="mt-1 text-xs">
