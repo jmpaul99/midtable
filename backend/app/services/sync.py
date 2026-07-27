@@ -17,10 +17,12 @@ from app.providers.base import FootballProvider, RateLimitInfo
 from app.services.league_jobs import record_cron_league_result
 from app.services.match_adapters import match_to_input
 from app.services.match_queries import (
+    FINISHED_STATUSES,
     CompetitionKey,
     competition_keys_from_pools,
     matches_for_league,
     pool_for_match,
+    pool_lookup_for_league,
     scoring_pools_for_league,
 )
 from app.services.ranking_catalog import (
@@ -202,7 +204,7 @@ def sync_competition_fixtures(
                 )
                 db.add(row)
                 created += 1
-                if pm.status in {"FINISHED", "AWARDED"}:
+                if pm.status in FINISHED_STATUSES:
                     changed_matches.append(row)
             else:
                 before = (
@@ -491,10 +493,11 @@ def score_changed_matches(
     result_points = ResultPoints.from_config(league.result_points)
     upset_rules = UpsetRules.from_config(league.upset_rules)
     all_matches = matches_for_league(db, league)
+    pool_lookup = pool_lookup_for_league(db, league)
     pool_by_match: dict[int, TeamPool] = {}
     all_inputs = []
     for m in all_matches:
-        pool = pool_for_match(db, league, m)
+        pool = pool_for_match(db, league, m, lookup=pool_lookup)
         if pool is None:
             continue
         pool_by_match[m.id] = pool
@@ -507,7 +510,9 @@ def score_changed_matches(
     skipped_missing_snapshot = 0
     skipped_match_ids: list[int] = []
     for match in changed:
-        pool = pool_by_match.get(match.id) or pool_for_match(db, league, match)
+        pool = pool_by_match.get(match.id) or pool_for_match(
+            db, league, match, lookup=pool_lookup
+        )
         if pool is None:
             continue
         mi = match_to_input(match, pool_id=pool.id)

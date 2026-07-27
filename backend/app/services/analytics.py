@@ -21,7 +21,7 @@ from app.models import (
     ScoringEvent,
     Team,
 )
-from app.services.match_queries import matches_for_league
+from app.services.match_queries import FINISHED_STATUSES, matches_for_league
 from app.services.members import member_label
 from app.services.payouts import apply_payouts
 from app.services.scoring import (
@@ -218,7 +218,6 @@ def phase_match_counts(
     pool_by_match_id: dict[int, int] | None = None,
 ) -> dict[str, Any]:
     """Count matches in a phase slice for completeness / payout readiness."""
-    finished_statuses = {"FINISHED", "AWARDED"}
     matching = 0
     finished = 0
     for match in matches:
@@ -237,7 +236,7 @@ def phase_match_counts(
         ):
             continue
         matching += 1
-        if getattr(match, "status", None) in finished_statuses:
+        if getattr(match, "status", None) in FINISHED_STATUSES:
             finished += 1
     remaining = matching - finished
     return {
@@ -279,7 +278,7 @@ def points_per_game(
         games = [
             m
             for m in matches_for_league(db, league)
-            if m.status in ("FINISHED", "AWARDED")
+            if m.status in FINISHED_STATUSES
             and (m.home_team_id == entry.team_id or m.away_team_id == entry.team_id)
         ]
         gp = len(games)

@@ -2,8 +2,9 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, errorMessage } from "@/lib/api";
-import type { League, MatchLogPage, MatchLogRow, PoolTeam, UUID } from "@/lib/types";
-import { managerLabel } from "@/lib/types";
+import { fetchMatchLogPage } from "@/lib/matchLog";
+import type { League, MatchLogRow, PoolTeam, UUID } from "@/lib/types";
+import { managerOptionLabel } from "@/lib/types";
 import { Empty, ErrorState, Loading } from "@/components/ui/State";
 import { Card, Eyebrow, Stack } from "@/components/ui/Card";
 import { Select } from "@/components/ui/Field";
@@ -42,16 +43,6 @@ function sectionParam(view: ViewMode): "upcoming" | "results" {
 
 function emptyTitleFor(view: ViewMode): string {
   return view === "upcoming" ? "No upcoming fixtures" : "No scored matches yet";
-}
-
-function buildQuery(params: Record<string, string | number | boolean | undefined | null>): string {
-  const q = new URLSearchParams();
-  for (const [key, value] of Object.entries(params)) {
-    if (value === undefined || value === null || value === "" || value === false) continue;
-    q.set(key, String(value));
-  }
-  const s = q.toString();
-  return s ? `?${s}` : "";
 }
 
 export function MatchLog({
@@ -138,7 +129,7 @@ export function MatchLog({
         error: "",
       }));
       try {
-        const qs = buildQuery({
+        const page = await fetchMatchLogPage(leagueId, {
           section: sectionParam(viewMode),
           limit: pageSize,
           offset,
@@ -146,7 +137,6 @@ export function MatchLog({
           team_id: teamId || undefined,
           member_id: memberId || undefined,
         });
-        const page = await api<MatchLogPage>(`/leagues/${leagueId}/match-log${qs}`);
         if (generation !== fetchGeneration.current) return;
         // Only auto-switch Recent → Upcoming on the unfiltered first load so
         // legitimate empty filter results still show "No scored matches yet".
@@ -273,16 +263,11 @@ export function MatchLog({
             onChange={(e) => setMemberId(e.target.value)}
           >
             <option value="">All managers</option>
-            {league.members.map((m) => {
-              const team = m.team_name?.trim() || managerLabel(m);
-              const person = m.display_name?.trim() || m.email || null;
-              const label = person && person !== team ? `${team} (${person})` : team;
-              return (
-                <option key={m.id} value={m.id}>
-                  {label}
-                </option>
-              );
-            })}
+            {league.members.map((m) => (
+              <option key={m.id} value={m.id}>
+                {managerOptionLabel(m)}
+              </option>
+            ))}
           </Select>
         </div>
         {list.error && <ErrorState error={list.error} />}

@@ -9,7 +9,12 @@ from app.deps import require_league_member
 from app.models import League, LeagueMember, Match, ScoringEvent, StandingsSnapshot, Team
 from app.services import analytics as analytics_service
 from app.services.analytics import phase_match_counts
-from app.services.match_queries import matches_for_league, pool_for_match, scoring_pools_for_league
+from app.services.match_queries import (
+    matches_for_league,
+    pool_for_match,
+    pool_lookup_for_league,
+    scoring_pools_for_league,
+)
 
 
 router = APIRouter(tags=["analytics"])
@@ -43,9 +48,10 @@ def standings(
     scoring_pools = scoring_pools_for_league(db, league)
     scoring_pool_ids = {p.id for p in scoring_pools}
     matches = matches_for_league(db, league)
+    pool_lookup = pool_lookup_for_league(db, league, pools=scoring_pools)
     pool_by_match_id: dict[int, int] = {}
     for m in matches:
-        pool = pool_for_match(db, league, m)
+        pool = pool_for_match(db, league, m, lookup=pool_lookup)
         if pool:
             pool_by_match_id[m.id] = pool.id
     counts = phase_match_counts(

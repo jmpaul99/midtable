@@ -320,13 +320,20 @@ class RecomputeResponse(BaseModel):
     finished_matches: int = 0
 
 
+class MatchOwnerInfo(BaseModel):
+    member_id: UUID | None = None
+    display_name: str | None = None
+    team_name: str | None = None
+    acquired_via: str | None = None
+
+
 class PoolTeamResponse(IdSchema):
     name: str
     crest_url: str | None = None
     provider_team_id: str
     drafted: bool = False
     available: bool = True
-    current_owner: dict[str, Any] | None = None
+    current_owner: MatchOwnerInfo | None = None
 
 
 class RosterRowResponse(BaseModel):
@@ -376,8 +383,8 @@ class MatchLogRow(BaseModel):
     pool_label: str | None = None
     home_points: float | None = None
     away_points: float | None = None
-    home_owner: dict[str, Any] | None = None
-    away_owner: dict[str, Any] | None = None
+    home_owner: MatchOwnerInfo | None = None
+    away_owner: MatchOwnerInfo | None = None
 
 
 class MatchLogPage(BaseModel):
@@ -391,7 +398,7 @@ class TeamFixtureRow(MatchLogRow):
     opponent_name: str
     opponent_id: UUID
     opponent_table_position: int | None = None
-    opponent_owner: dict[str, Any] | None = None
+    opponent_owner: MatchOwnerInfo | None = None
 
 
 class MemberClubRow(BaseModel):
@@ -448,7 +455,7 @@ class TeamDetailResponse(BaseModel):
     crest_url: str | None = None
     pool_id: UUID | None = None
     pool_name: str | None = None
-    owner: dict[str, Any] | None = None
+    owner: MatchOwnerInfo | None = None
     stats: dict[str, Any] = Field(default_factory=dict)
     bonuses: list[BonusAwardRow] = Field(default_factory=list)
     scoring_events: list[ScoringEventMatchRow] = Field(default_factory=list)

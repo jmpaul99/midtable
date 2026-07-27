@@ -1,21 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useId, useRef, useState } from "react";
-import { api } from "@/lib/api";
-import type { MatchLogPage, MatchLogRow, UUID } from "@/lib/types";
+import { formatMatchOptionLabel } from "@/lib/format";
+import { fetchMatchLogPage } from "@/lib/matchLog";
+import type { MatchLogRow, UUID } from "@/lib/types";
 import { Input } from "@/components/ui/Field";
 import { cn } from "@/lib/cn";
 
 const PAGE_SIZE = 50;
-
-function matchOptionLabel(m: MatchLogRow): string {
-  const score =
-    m.home_goals != null && m.away_goals != null
-      ? ` ${m.home_goals}-${m.away_goals}`
-      : "";
-  const mw = m.scheduled_matchweek != null ? ` · MW${m.scheduled_matchweek}` : "";
-  return `${m.home_team_name} vs ${m.away_team_name}${score}${mw}`;
-}
 
 export function MatchAutocomplete({
   leagueId,
@@ -41,7 +33,7 @@ export function MatchAutocomplete({
 }) {
   const listId = useId();
   const rootRef = useRef<HTMLDivElement>(null);
-  const selectedLabel = selectedMatch ? matchOptionLabel(selectedMatch) : "";
+  const selectedLabel = selectedMatch ? formatMatchOptionLabel(selectedMatch) : "";
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState(selectedLabel);
   const [options, setOptions] = useState<MatchLogRow[]>([]);
@@ -70,13 +62,12 @@ export function MatchAutocomplete({
         // Clear any stuck append spinner from a request invalidated mid-flight.
         setLoadingMore(false);
       }
-      const qs = new URLSearchParams({
-        limit: String(PAGE_SIZE),
-        offset: String(nextOffset),
-      });
-      if (search) qs.set("q", search);
       try {
-        const page = await api<MatchLogPage>(`/leagues/${leagueId}/match-log?${qs}`);
+        const page = await fetchMatchLogPage(leagueId, {
+          limit: PAGE_SIZE,
+          offset: nextOffset,
+          q: search || undefined,
+        });
         if (generation !== fetchGeneration.current) return;
         setOptions((prev) => {
           if (!append) return page.items;
@@ -135,7 +126,7 @@ export function MatchAutocomplete({
 
   function pick(row: MatchLogRow) {
     onChange(row.id, row);
-    setQuery(matchOptionLabel(row));
+    setQuery(formatMatchOptionLabel(row));
     setOpen(false);
   }
 
@@ -226,7 +217,7 @@ export function MatchAutocomplete({
                       pick(row);
                     }}
                   >
-                    {matchOptionLabel(row)}
+                    {formatMatchOptionLabel(row)}
                   </li>
                 );
               })}

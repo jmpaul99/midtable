@@ -2,7 +2,7 @@
 
 import { FormEvent } from "react";
 import type { League, PoolTeam, UUID } from "@/lib/types";
-import { managerLabel } from "@/lib/types";
+import { managerLabel, managerOptionLabel } from "@/lib/types";
 import { IconButton } from "@/components/ui/IconButton";
 import { Button } from "@/components/ui/Button";
 import { ChevronDownIcon, ChevronUpIcon, SaveIcon, UserPlusIcon } from "@/components/ui/icons";
@@ -289,17 +289,11 @@ export function DraftOrderSection({
                 <Label>
                   Team
                   <Select name="member">
-                    {league.members.map((m) => {
-                      const team = m.team_name?.trim() || managerLabel(m);
-                      const person = m.display_name?.trim() || m.email || null;
-                      const label =
-                        person && person !== team ? `${team} (${person})` : team;
-                      return (
-                        <option value={m.id} key={m.id}>
-                          {label}
-                        </option>
-                      );
-                    })}
+                    {league.members.map((m) => (
+                      <option value={m.id} key={m.id}>
+                        {managerOptionLabel(m)}
+                      </option>
+                    ))}
                   </Select>
                 </Label>
                 <Label>

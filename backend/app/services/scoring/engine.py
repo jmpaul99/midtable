@@ -28,7 +28,7 @@ class Result(StrEnum):
     LOSS_PK = "loss_pk"
 
 
-FINISHED_STATUSES = frozenset({"FINISHED", "AWARDED"})
+from app.services.match_constants import FINISHED_STATUSES
 
 # Coarse outcomes used by competition tables and upset eligibility.
 _WIN_RESULTS = frozenset({Result.WIN, Result.WIN_ET, Result.WIN_PK})

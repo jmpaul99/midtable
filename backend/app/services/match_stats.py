@@ -23,7 +23,11 @@ from app.models import (
     TeamPool,
 )
 from app.services.match_adapters import match_to_input
-from app.services.match_queries import matches_for_league, matches_for_pool
+from app.services.match_queries import (
+    FINISHED_STATUSES,
+    matches_for_league,
+    matches_for_pool,
+)
 from app.services.members import member_label
 from app.services.scoring import Result, build_standings_before_kickoff, result_for
 from app.services.standings import (
@@ -32,9 +36,37 @@ from app.services.standings import (
     initial_rows_for_competition,
 )
 
-FINISHED = frozenset({"FINISHED", "AWARDED"})
+FINISHED = FINISHED_STATUSES
 UPSET_TYPES = frozenset({"minor_upset", "major_upset", "major_upset_draw"})
 ResultLetter = Literal["W", "D", "L"]
+
+
+def points_by_match_team(events: Iterable[Any]) -> dict[tuple[int, int], float]:
+    """Fold scoring events into (match_id, team_id) → points."""
+    out: dict[tuple[int, int], float] = {}
+    for event in events:
+        key = (event.match_id, event.team_id)
+        out[key] = out.get(key, 0.0) + float(event.points)
+    return out
+
+
+def aggregate_event_points(
+    events: Iterable[Any],
+) -> tuple[dict[str, float], dict[str, int], float]:
+    """Return (points_by_type, counts_by_type, total_points)."""
+    event_points: dict[str, float] = {}
+    event_counts: dict[str, int] = {}
+    total = 0.0
+    for event in events:
+        pts = float(event.points)
+        total += pts
+        event_points[event.event_type] = event_points.get(event.event_type, 0.0) + pts
+        event_counts[event.event_type] = event_counts.get(event.event_type, 0) + 1
+    return event_points, event_counts, total
+
+
+def sum_upset_points(event_points: dict[str, float]) -> float:
+    return float(sum(event_points.get(t, 0.0) for t in UPSET_TYPES))
 
 
 @dataclass(frozen=True)

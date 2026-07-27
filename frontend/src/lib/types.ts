@@ -53,6 +53,22 @@ export function managerLabel(
   return m.team_name?.trim() || m.display_name?.trim() || m.email || fallback;
 }
 
+/** Select option: `Team (Person)` when the person label differs from the team. */
+export function managerOptionLabel(
+  m: Pick<Manager, "team_name" | "display_name" | "email">,
+): string {
+  const team = m.team_name?.trim() || managerLabel(m);
+  const person = m.display_name?.trim() || m.email || null;
+  return person && person !== team ? `${team} (${person})` : team;
+}
+
+/** Owner line under a club name on match cards. */
+export function matchOwnerLabel(
+  owner: MatchOwnerInfo | null | undefined,
+): string | null {
+  return owner?.team_name?.trim() || owner?.display_name?.trim() || null;
+}
+
 export interface Pool {
   id: UUID;
   key: string;
