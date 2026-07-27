@@ -207,6 +207,7 @@ export function DraftAdminPanel({
     }
 
     setSettingsBusy(true);
+    let timingSaved = false;
     try {
       const timingPatch = {
         ...(scheduleEditable
@@ -218,6 +219,7 @@ export function DraftAdminPanel({
       };
       if (Object.keys(timingPatch).length > 0) {
         await api(`/leagues/${league.id}/settings`, json("PATCH", timingPatch));
+        timingSaved = true;
       }
       if (settingsEditable) {
         await api(`/leagues/${league.id}/draft-order`, json("PUT", { member_ids: draftOrder }));
@@ -226,12 +228,22 @@ export function DraftAdminPanel({
       onLeagueChange?.();
       if (settingsEditable) loadPoolTeams();
     } catch (e) {
-      toast({
-        message: errorMessage(e),
-        tone: "error",
-        durationMs: 6000,
-        dismissible: true,
-      });
+      if (timingSaved) {
+        toast({
+          message: `Draft timing was saved, but draft order failed: ${errorMessage(e)}`,
+          tone: "error",
+          durationMs: 8000,
+          dismissible: true,
+        });
+        onLeagueChange?.();
+      } else {
+        toast({
+          message: errorMessage(e),
+          tone: "error",
+          durationMs: 6000,
+          dismissible: true,
+        });
+      }
     } finally {
       setSettingsBusy(false);
     }

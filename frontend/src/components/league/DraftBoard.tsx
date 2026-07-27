@@ -395,18 +395,27 @@ export function DraftBoard({
 
   function renderPreControls() {
     if (!commissioner) return null;
-    if (!showOpenControls && !scheduleOverdue) return null;
+    if (!showOpenControls && !scheduledAt) return null;
     return (
       <Card>
         <Stack>
           <h2>Draft controls</h2>
-          {scheduleOverdue && scheduledAt && (
-            <StatusBanner tone="error">
-              <strong>Scheduled start has passed</strong>
-              <div className="mt-1">
-                Auto-open is waiting until all pre-draft checks pass (
-                {formatDateTimeWithZone(scheduledAt)}).
-              </div>
+          {scheduledAt && (
+            <StatusBanner tone={scheduleOverdue ? "error" : undefined}>
+              {scheduleOverdue ? (
+                <>
+                  <strong>Scheduled start has passed</strong>
+                  <div className="mt-1">
+                    Auto-open is waiting until all pre-draft checks pass (
+                    {formatDateTimeWithZone(scheduledAt)}).
+                  </div>
+                </>
+              ) : (
+                <>
+                  <strong>Scheduled start</strong>
+                  <div className="mt-1">{formatDateTimeWithZone(scheduledAt)}</div>
+                </>
+              )}
             </StatusBanner>
           )}
           {showOpenControls && (
@@ -568,13 +577,11 @@ export function DraftBoard({
           <>
             {phase === "pre" && (
               <Stack gap="md">
-                {!commissioner && (
-                  <DraftSettingsSummary
-                    league={league}
-                    scheduledAt={scheduledAt}
-                    pickTimerSeconds={pickTimerSeconds}
-                  />
-                )}
+                <DraftSettingsSummary
+                  league={league}
+                  scheduledAt={scheduledAt}
+                  pickTimerSeconds={pickTimerSeconds}
+                />
                 {renderPreControls()}
                 {state.picks.length > 0 &&
                   renderPickHistory({ emptyTitle: "Draft hasn’t started" })}

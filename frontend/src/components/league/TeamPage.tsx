@@ -11,7 +11,7 @@ import type {
   TeamFixture,
   UUID,
 } from "@/lib/types";
-import { Empty, ErrorState, Loading } from "@/components/ui/State";
+import { Empty, ErrorState, Loading, Status } from "@/components/ui/State";
 import {
   Card,
   Eyebrow,
@@ -172,19 +172,22 @@ function FixtureList({
                   )}
                 </div>
                 <div className="shrink-0 text-right">
-                  {showPoints ? (
-                    <>
-                      <div className="font-display text-base font-extrabold tabular-nums sm:text-lg">
-                        {displayPoints != null ? formatNumber(displayPoints) : "—"}
-                        <span className="ml-0.5 text-xs font-bold text-muted sm:text-sm">
-                          pts
-                        </span>
-                      </div>
-                      <Muted className="mt-1 text-[11px] tabular-nums sm:text-xs">
-                        {scoreline(m)}
-                      </Muted>
-                    </>
-                  ) : null}
+                  <div className="flex flex-col items-end gap-1">
+                    <Status value={m.status} />
+                    {showPoints ? (
+                      <>
+                        <div className="font-display text-base font-extrabold tabular-nums sm:text-lg">
+                          {displayPoints != null ? formatNumber(displayPoints) : "—"}
+                          <span className="ml-0.5 text-xs font-bold text-muted sm:text-sm">
+                            pts
+                          </span>
+                        </div>
+                        <Muted className="text-[11px] tabular-nums sm:text-xs">
+                          {scoreline(m)}
+                        </Muted>
+                      </>
+                    ) : null}
+                  </div>
                 </div>
               </div>
             </Link>
