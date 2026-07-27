@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import type { League } from "@/lib/types";
 import { api } from "@/lib/api";
+import { formatDate } from "@/lib/format";
 import { Card, Muted, Stack } from "@/components/ui/Card";
 import {
   normalizePayouts,
@@ -226,6 +227,23 @@ export function LeagueSettingsView({ league }: { league: League }) {
                 : preassign === "supported"
                   ? "Supported"
                   : humanizeKey(preassign)}
+            </div>
+            <div>
+              Scheduled start:{" "}
+              {league.draft_scheduled_at
+                ? formatDate(league.draft_scheduled_at)
+                : typeof league.settings?.draft_scheduled_at === "string"
+                  ? formatDate(league.settings.draft_scheduled_at)
+                  : "Not set (open manually)"}
+            </div>
+            <div>
+              Pick timer:{" "}
+              {league.pick_timer_seconds != null && league.pick_timer_seconds > 0
+                ? `${league.pick_timer_seconds}s`
+                : typeof league.settings?.pick_timer_seconds === "number" &&
+                    league.settings.pick_timer_seconds > 0
+                  ? `${league.settings.pick_timer_seconds}s`
+                  : "Off"}
             </div>
           </ReviewBlock>
 

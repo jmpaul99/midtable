@@ -21,6 +21,8 @@ export interface LeagueSummary {
   max_members?: number | null;
   /** Post-draft roster club order preference. Pre-draft always uses competition order. */
   roster_club_order?: "draft" | "competition";
+  draft_scheduled_at?: string | null;
+  pick_timer_seconds?: number | null;
   slug?: string;
   my_rank?: number | null;
   member_count?: number | null;
@@ -214,6 +216,9 @@ export interface DraftState {
   version: number;
   picks: DraftPick[];
   league_status?: string;
+  pick_deadline_at?: string | null;
+  pick_timer_seconds?: number | null;
+  draft_scheduled_at?: string | null;
 }
 
 export interface RosterRow {
@@ -582,11 +587,23 @@ export function normalizeLeague(raw: League): League {
     raw.roster_club_order === "competition" || raw.settings?.roster_club_order === "competition"
       ? "competition"
       : "draft";
+  const draftScheduledAt =
+    raw.draft_scheduled_at ??
+    (typeof raw.settings?.draft_scheduled_at === "string"
+      ? raw.settings.draft_scheduled_at
+      : null);
+  const pickTimerSeconds =
+    raw.pick_timer_seconds ??
+    (typeof raw.settings?.pick_timer_seconds === "number"
+      ? raw.settings.pick_timer_seconds
+      : null);
   return {
     ...raw,
     season_label: raw.season_label || "",
     max_members: max,
     roster_club_order: rosterOrder,
+    draft_scheduled_at: draftScheduledAt,
+    pick_timer_seconds: pickTimerSeconds,
     visibility: raw.visibility || "private",
     role: raw.role || (raw.members?.find((m) => m.id === raw.current_member_id)?.role) || "member",
     pools: raw.pools || [],

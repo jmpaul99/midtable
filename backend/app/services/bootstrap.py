@@ -81,6 +81,8 @@ def bootstrap_season(
     pool_provider_params: list[dict[str, Any]],
     scheduled_start_date: date | None = None,
     scheduled_end_date: date | None = None,
+    draft_scheduled_at: datetime | None = None,
+    pick_timer_seconds: int | None = None,
     max_members: int | None = None,
     force: bool = False,
 ) -> League:
@@ -133,6 +135,8 @@ def bootstrap_season(
         },
         scheduled_start_date=scheduled_start_date,
         scheduled_end_date=scheduled_end_date,
+        draft_scheduled_at=draft_scheduled_at,
+        pick_timer_seconds=pick_timer_seconds,
     )
     db.add(league)
     db.flush()

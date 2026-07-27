@@ -24,6 +24,7 @@ from app.schemas.draft import DraftPickRequest, DraftPickResponse, DraftStateRes
 from app.schemas.leagues import DraftOrderUpdate, MemberResponse, PreassignRequest, RosterPatchRequest
 from app.services.draft import (
     find_idempotent_pick,
+    enforce_league_draft_timers,
     make_pick,
     on_clock_member,
     open_draft,
@@ -111,6 +112,9 @@ def _build_draft_state(db: Session, league: League) -> DraftStateResponse:
         current_member_id=on_clock_id,
         league_status=league.status,
         version=state.current_pick_number,
+        pick_deadline_at=state.pick_deadline_at,
+        pick_timer_seconds=league.pick_timer_seconds,
+        draft_scheduled_at=league.draft_scheduled_at,
         picks=pick_rows,
     )
 
@@ -121,6 +125,10 @@ def get_draft_state(
     db: Session = Depends(get_db),
 ) -> DraftStateResponse:
     league, _ = membership
+    outcome = enforce_league_draft_timers(db, league)
+    if outcome.get("changed") or outcome["opened"] or outcome["auto_picks"]:
+        db.commit()
+        db.refresh(league)
     return _build_draft_state(db, league)
 
 

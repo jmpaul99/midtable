@@ -1,0 +1,22 @@
+# External cron against the hosted API (Cloud Run).
+# Secrets: API_URL = API origin only (e.g. https://midtable-api-….run.app);
+# the path /internal/draft-maintenance is appended below. CRON_SECRET must match the API.
+name: Draft maintenance
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Every minute — auto-open scheduled drafts and catch expired pick clocks
+    - cron: "* * * * *"
+
+jobs:
+  draft-maintenance:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger draft maintenance
+        env:
+          API_URL: ${{ secrets.API_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          curl -fsS -X POST "${API_URL}/internal/draft-maintenance" \
+            -H "X-Cron-Secret: ${CRON_SECRET}"

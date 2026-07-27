@@ -127,11 +127,11 @@ export function LeaguePoolsEditor({
   return (
     <EditorSection
       title={showHeading ? "Competitions" : undefined}
-      description={
-        showRosterOrder
-          ? "These are the real-world leagues managers draft clubs from (e.g. Premier League, Championship). The arrows set the pre-draft order shown on rosters. After the draft, rosters default to draft order — change that below if you want."
-          : "Real-world competitions managers draft from (e.g. Premier League + Championship). The arrows set the pre-draft order shown on rosters (first in the list appears first)."
-      }
+        description={
+          showRosterOrder
+          ? "These are the real-world leagues managers draft clubs from (e.g. Premier League, Championship). One shared draft covers every competition you add. The arrows set the pre-draft order shown on rosters. After the draft, rosters default to draft order — change that below if you want."
+          : "Real-world competitions managers draft from in one shared draft (e.g. Premier League + Championship). The arrows set the pre-draft order shown on rosters (first in the list appears first)."
+        }
     >
       {!structureEditable && (
         <p className="text-sm text-muted">

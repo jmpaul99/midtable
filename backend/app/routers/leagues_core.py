@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
@@ -160,6 +160,8 @@ def create_league(
         buy_in=(template.buy_in if template else 0),
         payouts=(template.payouts if template else []),
         config=_league_config_from_template(template, max_members=payload.max_members),
+        draft_scheduled_at=payload.draft_scheduled_at,
+        pick_timer_seconds=payload.pick_timer_seconds,
     )
     db.add(league)
     db.flush()
@@ -328,6 +330,43 @@ def update_settings(
             status_code=409,
             detail="Number of managers can only be changed before the draft opens.",
         )
+    if "draft_scheduled_at" in data:
+        draft_state = db.scalars(
+            select(DraftState).where(DraftState.league_id == league.id)
+        ).first()
+        draft_open = draft_state is not None and draft_state.status in {"open", "complete"}
+        if league.status != "pre_draft" or draft_open:
+            raise HTTPException(
+                status_code=409,
+                detail="Draft schedule can only be changed before the draft opens.",
+            )
+    if "pick_timer_seconds" in data and league.status == "complete":
+        raise HTTPException(
+            status_code=409,
+            detail="Pick timer cannot be changed after the season is complete.",
+        )
+    if "pick_timer_seconds" in data:
+        draft_state = db.scalars(
+            select(DraftState).where(DraftState.league_id == league.id)
+        ).first()
+        if draft_state is not None and draft_state.status == "complete":
+            raise HTTPException(
+                status_code=409,
+                detail="Pick timer cannot be changed after the draft is complete.",
+            )
+        # Clearing the timer mid-draft stops the current clock immediately.
+        if data.get("pick_timer_seconds") is None and draft_state is not None:
+            draft_state.pick_deadline_at = None
+        elif (
+            data.get("pick_timer_seconds") is not None
+            and draft_state is not None
+            and draft_state.status == "open"
+            and draft_state.pick_deadline_at is None
+        ):
+            # Enabling a timer while open: start the clock for the current pick.
+            draft_state.pick_deadline_at = datetime.now(UTC) + timedelta(
+                seconds=int(data["pick_timer_seconds"])
+            )
     clear_preassigns = (
         preassign_mode is not None and str(preassign_mode).lower() == "none"
     )

@@ -64,7 +64,7 @@ function SetupBody({ templateId }: { templateId: string }) {
           />
         }
         title="League setup"
-        description="Confirm season details and load clubs from the template’s competitions."
+        description="Confirm season details and load clubs from the template’s competitions. Draft schedule and pick timer are optional — you can set them later in Admin."
       />
       <CreateLeagueForm template={template} templateId={templateId} />
     </Stack>

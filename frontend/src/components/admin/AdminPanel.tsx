@@ -7,6 +7,7 @@ import { ErrorState, Status, StatusBanner } from "@/components/ui/State";
 import { IconButton } from "@/components/ui/IconButton";
 import { DownloadIcon, RefreshIcon } from "@/components/ui/icons";
 import { Card, Muted, Row, Stack } from "@/components/ui/Card";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { cn } from "@/lib/cn";
 import { ReadinessChecklist } from "@/components/ReadinessChecklist";
 import { LeagueMetaSettingsSection } from "./LeagueMetaSettingsSection";
@@ -14,6 +15,12 @@ import { LeagueSettingsSection } from "./LeagueSettingsSection";
 import { RankingIngest } from "./RankingIngest";
 import { SeasonActionsSection } from "./SeasonActionsSection";
 import { useAdminLeagueData } from "./useAdminLeagueData";
+
+const SYNC_WARNING =
+  "Pull latest fixtures and results from football-data.org and score finished matches?";
+
+const RECOMPUTE_WARNING =
+  "Recompute scoring for all finished matches? This rewrites scoring events from current results.";
 
 const SECTIONS = [
   { id: "league", label: "League" },
@@ -233,6 +240,9 @@ function SyncReadinessSection({
   onSync: () => void;
   onRecompute: () => void;
 }) {
+  const [syncConfirmOpen, setSyncConfirmOpen] = useState(false);
+  const [recomputeConfirmOpen, setRecomputeConfirmOpen] = useState(false);
+
   return (
     <Card>
       <Stack>
@@ -274,15 +284,7 @@ function SyncReadinessSection({
                   type="button"
                   variant="secondary"
                   label="Sync fixtures & scores"
-                  onClick={() => {
-                    if (
-                      confirm(
-                        "Pull latest fixtures and results from football-data.org and score finished matches?",
-                      )
-                    ) {
-                      onSync();
-                    }
-                  }}
+                  onClick={() => setSyncConfirmOpen(true)}
                 >
                   <DownloadIcon />
                 </IconButton>
@@ -300,21 +302,40 @@ function SyncReadinessSection({
                   type="button"
                   variant="secondary"
                   label="Recompute scores"
-                  onClick={() => {
-                    if (
-                      confirm(
-                        "Recompute scoring for all finished matches? This rewrites scoring events from current results.",
-                      )
-                    ) {
-                      onRecompute();
-                    }
-                  }}
+                  onClick={() => setRecomputeConfirmOpen(true)}
                 >
                   <RefreshIcon />
                 </IconButton>
               </div>
             </div>
           </div>
+
+          <ConfirmDialog
+            open={syncConfirmOpen}
+            title="Sync fixtures & scores?"
+            description={SYNC_WARNING}
+            confirmLabel="Sync now"
+            cancelLabel="Cancel"
+            tone="warning"
+            onCancel={() => setSyncConfirmOpen(false)}
+            onConfirm={() => {
+              setSyncConfirmOpen(false);
+              onSync();
+            }}
+          />
+          <ConfirmDialog
+            open={recomputeConfirmOpen}
+            title="Recompute scores?"
+            description={RECOMPUTE_WARNING}
+            confirmLabel="Recompute"
+            cancelLabel="Cancel"
+            tone="warning"
+            onCancel={() => setRecomputeConfirmOpen(false)}
+            onConfirm={() => {
+              setRecomputeConfirmOpen(false);
+              onRecompute();
+            }}
+          />
 
           {sync?.map((s) => (
             <div className="rounded-xl border border-line bg-surface-2/50 p-3" key={s.id}>

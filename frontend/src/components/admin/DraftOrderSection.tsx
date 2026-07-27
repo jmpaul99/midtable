@@ -183,16 +183,21 @@ export function DraftOrderSection({
         )}
         {showPreassignTools && settingsEditable && (
           <form className="flex flex-col gap-3" onSubmit={onPreassign}>
-            <Label>
-              Competition
-              <Select name="pool" value={teamPool} onChange={(e) => onTeamPool(e.target.value)}>
-                {league.pools.map((p) => (
-                  <option value={p.id} key={p.id}>
-                    {p.label}
-                  </option>
-                ))}
-              </Select>
-            </Label>
+            {multiPool ? (
+              <Label>
+                Competition
+                <Select name="pool" value={teamPool} onChange={(e) => onTeamPool(e.target.value)}>
+                  <option value="">All competitions</option>
+                  {league.pools.map((p) => (
+                    <option value={p.id} key={p.id}>
+                      {p.label}
+                    </option>
+                  ))}
+                </Select>
+              </Label>
+            ) : (
+              league.pools[0] && <input type="hidden" name="pool" value={league.pools[0].id} />
+            )}
             <Label>
               Manager
               <Select name="member">
@@ -205,15 +210,37 @@ export function DraftOrderSection({
             </Label>
             <Label>
               Available team
-              <Select name="team" required>
+              <Select name="team" required key={teamPool || "all"}>
                 <option value="">Choose…</option>
-                {(poolTeams[teamPool] || [])
+                {(teamPool
+                  ? (poolTeams[teamPool] || []).map((t) => ({
+                      ...t,
+                      pool_id: teamPool,
+                      pool_label:
+                        league.pools.find((p) => p.id === teamPool)?.label ||
+                        league.pools.find((p) => p.id === teamPool)?.key ||
+                        "",
+                    }))
+                  : league.pools.flatMap((pool) =>
+                      (poolTeams[pool.id] || []).map((t) => ({
+                        ...t,
+                        pool_id: pool.id,
+                        pool_label: pool.label || pool.key,
+                      })),
+                    )
+                )
                   .filter((t) => t.available)
-                  .map((t) => (
-                    <option value={t.id} key={t.id}>
-                      {t.name}
-                    </option>
-                  ))}
+                  .sort((a, b) => a.name.localeCompare(b.name))
+                  .map((t) => {
+                    const encodePool = multiPool && !teamPool;
+                    const value = encodePool ? `${t.pool_id}:${t.id}` : t.id;
+                    const label = multiPool ? `${t.name} (${t.pool_label})` : t.name;
+                    return (
+                      <option value={value} key={`${t.pool_id}:${t.id}`}>
+                        {label}
+                      </option>
+                    );
+                  })}
               </Select>
             </Label>
             <div className="flex justify-start">

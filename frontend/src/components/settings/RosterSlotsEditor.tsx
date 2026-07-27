@@ -36,7 +36,7 @@ export function RosterSlotsEditor({
   return (
     <EditorSection
       title="Roster slots"
-      description="How many clubs each manager drafts from each competition."
+      description="How many clubs each manager drafts from each competition in the shared draft."
     >
       {value.length > 0 && (
         <RowList>

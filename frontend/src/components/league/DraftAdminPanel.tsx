@@ -1,10 +1,11 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useState } from "react";
+import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { api, errorMessage, json } from "@/lib/api";
 import type { League, PoolTeam, UUID } from "@/lib/types";
 import { ErrorState } from "@/components/ui/State";
 import { Stack } from "@/components/ui/Card";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { useToast } from "@/components/ui/ToastProvider";
 import { DraftOrderSection } from "@/components/admin/DraftOrderSection";
 import { RosterCorrectionsSection } from "@/components/admin/RosterCorrectionsSection";
@@ -40,10 +41,13 @@ export function DraftAdminPanel({
   const [preassignMode, setPreassignMode] = useState<PreassignMode>(() =>
     normalizePreassignMode(league.preassign_mode),
   );
-  const [teamPool, setTeamPool] = useState(league.pools[0]?.id || "");
+  /** Empty = all competitions for the preassign team list. */
+  const [teamPool, setTeamPool] = useState("");
   const [poolTeams, setPoolTeams] = useState<Record<string, PoolTeam[]>>({});
   const [loadError, setLoadError] = useState("");
   const [settingsBusy, setSettingsBusy] = useState(false);
+  const [preassignConfirmOpen, setPreassignConfirmOpen] = useState(false);
+  const pendingPreassignForm = useRef<HTMLFormElement | null>(null);
 
   const settingsEditable = league.status === "pre_draft";
 
@@ -142,15 +146,44 @@ export function DraftAdminPanel({
     }
   }
 
-  async function preassign(e: FormEvent<HTMLFormElement>) {
+  function preassign(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    if (!confirm("Preassign this team?")) return;
-    const f = new FormData(e.currentTarget);
+    pendingPreassignForm.current = e.currentTarget;
+    setPreassignConfirmOpen(true);
+  }
+
+  async function confirmPreassign() {
+    const form = pendingPreassignForm.current;
+    pendingPreassignForm.current = null;
+    setPreassignConfirmOpen(false);
+    if (!form) return;
+    const f = new FormData(form);
+    const teamId = String(f.get("team") || "");
+    const memberId = String(f.get("member") || "");
+    // Combined "all competitions" mode encodes pool in the option value as poolId:teamId.
+    let poolId = String(f.get("pool") || "");
+    let resolvedTeamId = teamId;
+    if (teamId.includes(":")) {
+      const [encodedPool, encodedTeam] = teamId.split(":");
+      if (encodedPool && encodedTeam) {
+        poolId = encodedPool;
+        resolvedTeamId = encodedTeam;
+      }
+    }
+    if (!poolId || !resolvedTeamId || !memberId) {
+      toast({
+        message: "Choose a manager and available team.",
+        tone: "error",
+        durationMs: 6000,
+        dismissible: true,
+      });
+      return;
+    }
     try {
       await api(`/leagues/${league.id}/preassigns`, json("POST", {
-        member_id: f.get("member"),
-        team_id: f.get("team"),
-        pool_id: f.get("pool"),
+        member_id: memberId,
+        team_id: resolvedTeamId,
+        pool_id: poolId,
       }));
       toast({ message: "Team preassigned." });
       onLeagueChange?.();
@@ -193,6 +226,19 @@ export function DraftAdminPanel({
           }}
         />
       </div>
+      <ConfirmDialog
+        open={preassignConfirmOpen}
+        title="Preassign this team?"
+        description="The selected team will be assigned to this manager before the draft."
+        confirmLabel="Preassign"
+        cancelLabel="Cancel"
+        tone="warning"
+        onCancel={() => {
+          pendingPreassignForm.current = null;
+          setPreassignConfirmOpen(false);
+        }}
+        onConfirm={() => void confirmPreassign()}
+      />
     </Stack>
   );
 }
