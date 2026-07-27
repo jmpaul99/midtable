@@ -187,10 +187,12 @@ def delete_me(
             text("DELETE FROM auth.users WHERE id = :id"),
             {"id": str(auth_user_id)},
         )
+        # Concurrent / retry deletes may find the auth row already gone; treat
+        # that as success so the client does not see a spurious failure.
         if result.rowcount == 0:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to delete auth user",
+            logger.info(
+                "auth user already absent during account delete auth_user_id=%s",
+                auth_user_id,
             )
 
     db.commit()

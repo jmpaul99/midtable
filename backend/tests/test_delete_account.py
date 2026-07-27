@@ -210,7 +210,7 @@ def test_delete_me_allows_co_commissioner_in_active_league():
     db.commit.assert_called_once()
 
 
-def test_delete_me_fails_when_auth_user_missing():
+def test_delete_me_succeeds_when_auth_user_already_gone():
     auth_user_id = uuid4()
     profile = _profile(auth_user_id=auth_user_id)
     db = _db_with_memberships(
@@ -220,16 +220,15 @@ def test_delete_me_fails_when_auth_user_missing():
         auth_rowcount=0,
     )
 
-    with pytest.raises(HTTPException) as exc:
-        delete_me(
-            profile=profile,
-            user=_user(email=profile.email, auth_user_id=auth_user_id),
-            db=db,
-        )
+    result = delete_me(
+        profile=profile,
+        user=_user(email=profile.email, auth_user_id=auth_user_id),
+        db=db,
+    )
 
-    assert exc.value.status_code == 500
-    assert "auth user" in exc.value.detail.lower()
-    db.commit.assert_not_called()
+    assert result.status_code == 204
+    db.delete.assert_called_once_with(profile)
+    db.commit.assert_called_once()
 
 
 def test_delete_me_skips_auth_delete_when_auth_user_id_null():
