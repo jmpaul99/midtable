@@ -510,3 +510,21 @@ class SyncStatus(Base):
     last_summary: Mapped[dict | None] = mapped_column(JSONB)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class LeagueJob(Base):
+    __tablename__ = "league_jobs"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    public_id: Mapped[UUID] = _public_id_column()
+    league_id: Mapped[int] = mapped_column(ForeignKey("leagues.id", ondelete="CASCADE"))
+    kind: Mapped[str] = mapped_column(Text)  # sync | recompute
+    source: Mapped[str] = mapped_column(Text)  # commissioner | cron
+    status: Mapped[str] = mapped_column(Text)  # pending | running | succeeded | failed
+    created_by_profile_id: Mapped[int | None] = mapped_column(
+        ForeignKey("profiles.id", ondelete="SET NULL")
+    )
+    error: Mapped[str | None] = mapped_column(Text)
+    summary: Mapped[dict | None] = mapped_column(JSONB)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

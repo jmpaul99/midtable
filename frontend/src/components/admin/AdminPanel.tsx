@@ -2,7 +2,7 @@
 
 import { FormEvent, useState } from "react";
 import { formatDate } from "@/lib/format";
-import type { League, Readiness, SyncStatus } from "@/lib/types";
+import type { LatestLeagueJobs, League, LeagueJob, Readiness } from "@/lib/types";
 import { ErrorState, Status, StatusBanner } from "@/components/ui/State";
 import { IconButton } from "@/components/ui/IconButton";
 import { DownloadIcon, RefreshIcon } from "@/components/ui/icons";
@@ -14,13 +14,13 @@ import { LeagueMetaSettingsSection } from "./LeagueMetaSettingsSection";
 import { LeagueSettingsSection } from "./LeagueSettingsSection";
 import { RankingIngest } from "./RankingIngest";
 import { SeasonActionsSection } from "./SeasonActionsSection";
-import { useAdminLeagueData } from "./useAdminLeagueData";
+import { summarizeJob, useAdminLeagueData } from "./useAdminLeagueData";
 
 const SYNC_WARNING =
-  "Pull latest fixtures and results and score finished matches?";
+  "Pull latest fixtures and results and score finished matches in the background? You can leave this page and check back.";
 
 const RECOMPUTE_WARNING =
-  "Recompute scoring for all finished matches? This rewrites scoring events from current results.";
+  "Recompute scoring for all finished matches in the background? This rewrites scoring events from current results.";
 
 const SECTIONS = [
   { id: "league", label: "League" },
@@ -49,12 +49,14 @@ export function AdminPanel({
     joinLinkBusy,
     bonuses,
     bonusTypes,
-    sync,
+    latestJobs,
+    jobBusy,
     poolTeams,
     readiness,
     error,
     load,
     action,
+    enqueueJob,
     updateJoinLink,
     toast,
   } = useAdminLeagueData(league, onLeagueChange);
@@ -204,10 +206,11 @@ export function AdminPanel({
       <div id="admin-sync">
         <SyncReadinessSection
           readiness={readiness}
-          sync={sync}
+          latestJobs={latestJobs}
+          jobBusy={jobBusy}
           needsTeamLoad={needsTeamLoad}
-          onSync={() => action(`/leagues/${league.id}/sync`, "POST")}
-          onRecompute={() => action(`/leagues/${league.id}/recompute`, "POST")}
+          onSync={() => void enqueueJob("sync")}
+          onRecompute={() => void enqueueJob("recompute")}
         />
       </div>
 
@@ -229,13 +232,15 @@ export function AdminPanel({
 
 function SyncReadinessSection({
   readiness,
-  sync,
+  latestJobs,
+  jobBusy,
   needsTeamLoad,
   onSync,
   onRecompute,
 }: {
   readiness?: Readiness;
-  sync?: SyncStatus[];
+  latestJobs: LatestLeagueJobs;
+  jobBusy: boolean;
   needsTeamLoad: boolean;
   onSync: () => void;
   onRecompute: () => void;
@@ -249,10 +254,10 @@ function SyncReadinessSection({
         <div>
           <h2>Readiness &amp; Sync</h2>
           <Muted className="mt-1 text-sm">
-            Competition and provider checks for fixture sync. Errors mean Sync will skip or find
-            nothing to pull. Manager roster and draft order are not required here — use the Draft
-            board for those. Clubs reload when you save competitions that were added, removed, or
-            had their season year changed.
+            Competition and provider checks for fixture sync. Manual Sync and Recompute run in the
+            background — you can leave and return. Scheduled (cron) results appear in their own
+            card. Clubs reload when you save competitions that were added, removed, or had their
+            season year changed.
           </Muted>
         </div>
 
@@ -276,14 +281,15 @@ function SyncReadinessSection({
               <strong className="text-sm">Sync now</strong>
               <Muted className="mt-1 grow text-xs">
                 Pulls fixtures and results for every scoring competition that has a competition code
-                and season year, then scores newly finished matches. It does not load clubs — save
-                competitions in League settings for that.
+                and season year, then scores newly finished matches. Runs in the background. Does
+                not load clubs — save competitions in League settings for that.
               </Muted>
               <div className="mt-3 flex justify-start">
                 <IconButton
                   type="button"
                   variant="secondary"
-                  label="Sync fixtures & scores"
+                  label={jobBusy ? "Job running…" : "Sync fixtures & scores"}
+                  busy={jobBusy}
                   onClick={() => setSyncConfirmOpen(true)}
                 >
                   <DownloadIcon />
@@ -295,13 +301,14 @@ function SyncReadinessSection({
               <strong className="text-sm">Recompute scores</strong>
               <Muted className="mt-1 grow text-xs">
                 Rebuilds scoring events for all finished matches already in the database using
-                current rules — no provider call.
+                current rules — no provider call. Runs in the background.
               </Muted>
               <div className="mt-3 flex justify-start">
                 <IconButton
                   type="button"
                   variant="secondary"
-                  label="Recompute scores"
+                  label={jobBusy ? "Job running…" : "Recompute scores"}
+                  busy={jobBusy}
                   onClick={() => setRecomputeConfirmOpen(true)}
                 >
                   <RefreshIcon />
@@ -337,25 +344,52 @@ function SyncReadinessSection({
             }}
           />
 
-          {sync?.map((s) => (
-            <div className="rounded-xl border border-line bg-surface-2/50 p-3" key={s.id}>
-              <Row between>
-                <strong>{s.resource_type || "sync"}</strong>
-                <Status value={s.status} />
-              </Row>
-              <Muted className="mt-1 text-xs">
-                Last success {formatDate(s.last_success_at)} · quota{" "}
-                {s.rate_limit_remaining ?? "—"}
-              </Muted>
-              {s.last_error && (
-                <StatusBanner tone="error" className="mt-2">
-                  {s.last_error}
-                </StatusBanner>
-              )}
-            </div>
-          ))}
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <JobResultCard title="Manual" job={latestJobs.manual} empty="No manual sync or recompute yet." />
+            <JobResultCard
+              title="Scheduled"
+              job={latestJobs.cron}
+              empty="No scheduled sync has scored this league yet."
+            />
+          </div>
         </Stack>
       </Stack>
     </Card>
   );
 }
+
+function JobResultCard({
+  title,
+  job,
+  empty,
+}: {
+  title: string;
+  job: LeagueJob | null;
+  empty: string;
+}) {
+  return (
+    <div className="rounded-xl border border-line bg-surface-2/50 p-3">
+      <Row between>
+        <strong className="text-sm">{title}</strong>
+        {job ? <Status value={job.status} /> : null}
+      </Row>
+      {!job ? (
+        <Muted className="mt-1 text-xs">{empty}</Muted>
+      ) : (
+        <>
+          <Muted className="mt-1 text-xs">
+            {job.kind === "recompute" ? "Recompute" : "Sync"} ·{" "}
+            {formatDate(job.finished_at || job.started_at || job.created_at)}
+          </Muted>
+          <Muted className="mt-1 text-xs">{summarizeJob(job)}</Muted>
+          {job.error && (
+            <StatusBanner tone="error" className="mt-2">
+              {job.error}
+            </StatusBanner>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+

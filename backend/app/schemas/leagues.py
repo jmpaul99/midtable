@@ -451,6 +451,8 @@ class MemberDetailResponse(BaseModel):
 class SyncStatusResponse(BaseModel):
     id: UUID
     provider: str
+    competition_code: str | None = None
+    season_year: int | None = None
     status: str
     last_success_at: datetime | None = None
     last_attempt_at: datetime | None = None
@@ -458,6 +460,23 @@ class SyncStatusResponse(BaseModel):
     last_error: str | None = None
     last_summary: dict[str, Any] | None = None
     in_progress: bool = False
+
+
+class LeagueJobResponse(BaseModel):
+    id: UUID
+    kind: str
+    source: str
+    status: str
+    error: str | None = None
+    summary: dict[str, Any] | None = None
+    created_at: datetime
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+
+
+class LatestLeagueJobsResponse(BaseModel):
+    manual: LeagueJobResponse | None = None
+    cron: LeagueJobResponse | None = None
 
 
 class SnapshotAuditRow(BaseModel):

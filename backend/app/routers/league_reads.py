@@ -866,6 +866,8 @@ def sync_status(
         SyncStatusResponse(
             id=row.public_id,
             provider=row.provider,
+            competition_code=row.competition_code,
+            season_year=row.season_year,
             status="in_progress" if row.in_progress else ("error" if row.last_error else "idle"),
             last_success_at=row.last_sync_at,
             last_attempt_at=row.in_progress_since or row.last_sync_at,

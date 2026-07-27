@@ -322,6 +322,8 @@ export interface SyncStatus {
   id: UUID;
   provider?: string;
   resource_type?: string;
+  competition_code?: string | null;
+  season_year?: number | null;
   status: string;
   last_attempt_at: string | null;
   last_success_at: string | null;
@@ -329,7 +331,25 @@ export interface SyncStatus {
   rate_limit_remaining: number | null;
   rate_limit_reset_at?: string | null;
   last_error: string | null;
+  last_summary?: Record<string, unknown> | null;
   in_progress?: boolean;
+}
+
+export interface LeagueJob {
+  id: UUID;
+  kind: "sync" | "recompute" | string;
+  source: "commissioner" | "cron" | string;
+  status: "pending" | "running" | "succeeded" | "failed" | string;
+  error: string | null;
+  summary: Record<string, unknown> | null;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+}
+
+export interface LatestLeagueJobs {
+  manual: LeagueJob | null;
+  cron: LeagueJob | null;
 }
 
 export interface ReadinessCheck {

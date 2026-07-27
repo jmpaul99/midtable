@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from app.logging_config import log_id
 from app.models import League, Match, ScoringEvent, SyncStatus, Team, TeamPool
 from app.providers.base import FootballProvider, RateLimitInfo
+from app.services.league_jobs import record_cron_league_result
 from app.services.match_adapters import match_to_input
 from app.services.match_queries import (
     CompetitionKey,
@@ -156,7 +157,9 @@ def sync_competition_fixtures(
     status.in_progress = True
     status.in_progress_since = datetime.now(UTC)
     status.last_error = None
-    db.flush()
+    # Commit so other requests see the lock (cron + commissioner across processes).
+    db.commit()
+    db.refresh(status)
 
     changed_matches: list[Match] = []
     created = 0
@@ -417,6 +420,15 @@ def sync_all_active_competitions_then_score(
                     changed.append(m)
         try:
             score_summary = score_changed_matches(db, league, changed)
+            record_cron_league_result(
+                db,
+                league,
+                ok=True,
+                summary={
+                    "changed": len(changed),
+                    **score_summary,
+                },
+            )
             db.commit()
             league_results.append(
                 {
@@ -427,6 +439,19 @@ def sync_all_active_competitions_then_score(
         except Exception as exc:  # noqa: BLE001
             logger.exception("score_league failed league_id=%s", log_id(league))
             db.rollback()
+            try:
+                record_cron_league_result(
+                    db,
+                    league,
+                    ok=False,
+                    error=str(exc),
+                )
+                db.commit()
+            except Exception:  # noqa: BLE001
+                logger.exception(
+                    "record_cron_league_result failed league_id=%s", log_id(league)
+                )
+                db.rollback()
             failures += 1
             league_results.append(
                 {

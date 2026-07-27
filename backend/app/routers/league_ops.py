@@ -2,9 +2,8 @@
 from __future__ import annotations
 
 import logging
-import time
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from typing import Literal
@@ -25,14 +24,15 @@ from app.schemas.leagues import (
     BootstrapTeamsRequest,
     BootstrapTeamsResponse,
     LeagueDetailResponse,
+    LeagueJobResponse,
     ReadinessResponse,
-    RecomputeResponse,
 )
 from app.services.bootstrap import (
     bootstrap_season,
     bootstrap_teams_for_league,
     prior_leagues_blocking,
 )
+from app.services.league_jobs import ActiveJobConflict, enqueue_league_job, trigger_job_run
 from app.services.members import default_team_name
 from app.services.readiness import evaluate_readiness
 
@@ -63,47 +63,52 @@ def bootstrap_teams(
     return BootstrapTeamsResponse(**summary)
 
 
-@router.post("/leagues/{league_id}/recompute", response_model=RecomputeResponse)
+@router.post("/leagues/{league_id}/recompute", response_model=LeagueJobResponse)
 def recompute_scores(
+    response: Response,
     membership: tuple[League, LeagueMember] = Depends(require_commissioner),
+    profile: Profile = Depends(get_current_profile),
     db: Session = Depends(get_db),
-) -> RecomputeResponse:
-    from app.services.match_queries import matches_for_league, pool_for_match, scoring_pools_for_league
-    from app.services.sync import earliest_finished_seeds_per_pool, score_changed_matches
-
+) -> LeagueJobResponse:
     league, _ = membership
-    started = time.perf_counter()
-    matches = matches_for_league(db, league)
-    scoring_pools = scoring_pools_for_league(db, league)
-    scoring_pool_ids = {p.id for p in scoring_pools}
-    pool_by_match_id: dict[int, int] = {}
-    for m in matches:
-        pool = pool_for_match(db, league, m)
-        if pool:
-            pool_by_match_id[m.id] = pool.id
-    finished, seeds = earliest_finished_seeds_per_pool(
-        matches, pool_by_match_id=pool_by_match_id, scoring_pool_ids=scoring_pool_ids
-    )
     logger.info(
-        "recompute_scores start league_id=%s finished=%s seeds=%s",
+        "recompute_scores enqueue league_id=%s",
         league.public_id,
-        len(finished),
-        len(seeds),
     )
-    summary = score_changed_matches(db, league, seeds)
-    db.commit()
-    duration_ms = (time.perf_counter() - started) * 1000
-    logger.info(
-        "recompute_scores done league_id=%s finished_matches=%s scored=%s "
-        "cascaded=%s skipped_missing_snapshot=%s duration_ms=%.1f",
-        league.public_id,
-        len(finished),
-        summary.get("scored", 0),
-        summary.get("cascaded", 0),
-        summary.get("skipped_missing_snapshot", 0),
-        duration_ms,
+    try:
+        job = enqueue_league_job(
+            db,
+            league,
+            kind="recompute",
+            source="commissioner",
+            created_by_profile_id=profile.id,
+        )
+    except ActiveJobConflict as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": str(exc),
+                "job": {
+                    "id": str(exc.job.public_id),
+                    "kind": exc.job.kind,
+                    "source": exc.job.source,
+                    "status": exc.job.status,
+                },
+            },
+        ) from exc
+    trigger_job_run(job.public_id)
+    response.status_code = status.HTTP_202_ACCEPTED
+    return LeagueJobResponse(
+        id=job.public_id,
+        kind=job.kind,
+        source=job.source,
+        status=job.status,
+        error=job.error,
+        summary=job.summary,
+        created_at=job.created_at,
+        started_at=job.started_at,
+        finished_at=job.finished_at,
     )
-    return RecomputeResponse(finished_matches=len(finished), **summary)
 
 
 @router.get("/leagues/{league_id}/readiness", response_model=ReadinessResponse)
