@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { api, errorMessage } from "@/lib/api";
 import { formatDate, formatNumber } from "@/lib/format";
 import type {
@@ -23,8 +24,10 @@ import {
 import { Breadcrumbs } from "@/components/ui/Breadcrumbs";
 import { TeamCrest } from "./TeamCrest";
 import { TeamLink } from "./TeamLink";
+import { ManagerLink } from "./ManagerLink";
 import { TeamScoringBreakdown } from "./TeamScoringBreakdown";
 import { StagePointsBreakdown } from "./StagePointsBreakdown";
+import { cn } from "@/lib/cn";
 
 const EVENT_LABELS: Record<string, string> = {
   win: "Win",
@@ -89,6 +92,7 @@ function FixtureList({
   bonusesByMatchId?: Map<string, BonusAward[]>;
   eventTypeLabels?: Record<string, string>;
 }) {
+  const router = useRouter();
   if (!fixtures.length) return <Empty title={empty} />;
   return (
     <ul className="flex flex-col gap-2">
@@ -118,12 +122,25 @@ function FixtureList({
           m.opponent_owner?.team_name?.trim() ||
           m.opponent_owner?.display_name?.trim() ||
           null;
+        const matchHref = `/leagues/${leagueId}/matches/${m.id}`;
 
         return (
           <li key={m.id}>
-            <Link
-              href={`/leagues/${leagueId}/matches/${m.id}`}
-              className="block min-w-0 rounded-xl border border-line bg-surface-2/50 p-3 transition hover:border-brand/40 hover:bg-surface active:scale-[0.99] sm:p-3.5"
+            <div
+              role="link"
+              tabIndex={0}
+              onClick={() => router.push(matchHref)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  router.push(matchHref);
+                }
+              }}
+              className={cn(
+                "block min-w-0 cursor-pointer rounded-xl border border-line bg-surface-2/50 p-3 transition",
+                "hover:border-brand/40 hover:bg-surface active:scale-[0.99] sm:p-3.5",
+                "focus-visible:border-brand/40 focus-visible:outline-none",
+              )}
             >
               <div className="flex items-start justify-between gap-2 sm:gap-3">
                 <div className="min-w-0 flex-1">
@@ -150,17 +167,13 @@ function FixtureList({
                   </strong>
                   {ownerName && (
                     <Muted className="mt-0.5 block truncate text-[11px] sm:text-xs">
-                      {m.opponent_owner?.member_id ? (
-                        <Link
-                          href={`/leagues/${leagueId}/managers/${m.opponent_owner.member_id}`}
-                          className="font-semibold text-ink hover:text-brand"
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          {ownerName}
-                        </Link>
-                      ) : (
-                        ownerName
-                      )}
+                      <ManagerLink
+                        leagueId={leagueId}
+                        managerId={m.opponent_owner?.member_id}
+                        className="font-semibold text-ink hover:text-brand"
+                      >
+                        {ownerName}
+                      </ManagerLink>
                     </Muted>
                   )}
                   {showBreakdown && (
@@ -190,7 +203,7 @@ function FixtureList({
                   </div>
                 </div>
               </div>
-            </Link>
+            </div>
           </li>
         );
       })}

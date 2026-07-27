@@ -2,7 +2,7 @@
 
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { api, errorMessage, json } from "@/lib/api";
-import type { League, PoolTeam, UUID } from "@/lib/types";
+import type { League, PoolTeam, RosterRow, UUID } from "@/lib/types";
 import { ErrorState } from "@/components/ui/State";
 import { Stack } from "@/components/ui/Card";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
@@ -75,7 +75,7 @@ export function DraftAdminPanel({
   const [settingsBusy, setSettingsBusy] = useState(false);
   const [preassignConfirmOpen, setPreassignConfirmOpen] = useState(false);
   const [preassignOffConfirmOpen, setPreassignOffConfirmOpen] = useState(false);
-  const [preassignOffCount, setPreassignOffCount] = useState(0);
+  const [preassignOffCount, setPreassignOffCount] = useState<number | null>(null);
   const pendingPreassignForm = useRef<HTMLFormElement | null>(null);
 
   const settingsEditable = league.status === "pre_draft";
@@ -132,26 +132,32 @@ export function DraftAdminPanel({
     setDraftOrder(next);
   }
 
-  function countPreassigns(): number {
-    let count = 0;
-    for (const teams of Object.values(poolTeams)) {
-      for (const team of teams) {
-        const owner = team.current_owner;
-        if (owner && owner.acquired_via === "preassigned") count += 1;
-      }
+  async function requestPreassignModeChange(value: PreassignMode) {
+    if (value !== "none") {
+      void saveDraftSetting({ preassign_mode: value });
+      return;
     }
-    return count;
-  }
+    if (settingsBusy) return;
 
-  function requestPreassignModeChange(value: PreassignMode) {
-    if (value === "none") {
-      const count = countPreassigns();
+    // Count from the server roster — local poolTeams may still be loading, failed, or stale.
+    setSettingsBusy(true);
+    try {
+      const rows = await api<RosterRow[]>(`/leagues/${league.id}/rosters`);
+      const count = rows.filter((r) => r.acquired_via === "preassigned").length;
       if (count > 0) {
         setPreassignOffCount(count);
         setPreassignOffConfirmOpen(true);
         return;
       }
+    } catch {
+      // Can't verify count — require confirmation rather than clearing silently.
+      setPreassignOffCount(null);
+      setPreassignOffConfirmOpen(true);
+      return;
+    } finally {
+      setSettingsBusy(false);
     }
+
     void saveDraftSetting({ preassign_mode: value });
   }
 
@@ -350,7 +356,11 @@ export function DraftAdminPanel({
       <ConfirmDialog
         open={preassignOffConfirmOpen}
         title="Turn off preassign?"
-        description={`Switching to None will clear ${preassignOffCount} preassigned club${preassignOffCount === 1 ? "" : "s"}. Managers will lose those clubs.`}
+        description={
+          preassignOffCount != null && preassignOffCount > 0
+            ? `Switching to None will clear ${preassignOffCount} preassigned club${preassignOffCount === 1 ? "" : "s"}. Managers will lose those clubs.`
+            : "Switching to None will clear any preassigned clubs. Managers will lose those clubs."
+        }
         confirmLabel="Clear preassigns"
         cancelLabel="Cancel"
         tone="warning"
