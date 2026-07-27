@@ -1,8 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, errorMessage } from "@/lib/api";
+import { errorMessage } from "@/lib/api";
 import { fetchMatchLogPage } from "@/lib/matchLog";
+import { fetchPoolTeams } from "@/lib/poolTeams";
 import type { League, MatchLogRow, PoolTeam, UUID } from "@/lib/types";
 import { managerOptionLabel } from "@/lib/types";
 import { Empty, ErrorState, Loading } from "@/components/ui/State";
@@ -10,6 +11,7 @@ import { Card, Eyebrow, Stack } from "@/components/ui/Card";
 import { Select } from "@/components/ui/Field";
 import { Button } from "@/components/ui/Button";
 import { ChoiceToggle } from "@/components/ui/ChoiceToggle";
+import { PoolFilterSelect } from "@/components/ui/PoolFilterSelect";
 import { MatchLogCard } from "./MatchLogCard";
 
 type ViewMode = "recent" | "upcoming";
@@ -91,19 +93,9 @@ export function MatchLog({
       setPoolTeams([]);
       return;
     }
-    const entries = await Promise.all(
-      pools.map(async (p) => {
-        try {
-          return await api<PoolTeam[]>(`/leagues/${league.id}/pools/${p.id}/teams`);
-        } catch {
-          return [] as PoolTeam[];
-        }
-      }),
-    );
+    const teams = await fetchPoolTeams(league.id, pools);
     const byId = new Map<string, PoolTeam>();
-    for (const teams of entries) {
-      for (const t of teams) byId.set(t.id, t);
-    }
+    for (const t of teams) byId.set(t.id, t);
     setPoolTeams(
       [...byId.values()].sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" })),
     );
@@ -226,22 +218,16 @@ export function MatchLog({
         />
         <div className="flex flex-wrap items-center gap-2">
           {showCompetitionFilter && (
-            <Select
+            <PoolFilterSelect
               aria-label="Competition"
               className={selectClass}
+              pools={scoringPools}
               value={poolId}
-              onChange={(e) => {
-                setPoolId(e.target.value);
+              onChange={(next) => {
+                setPoolId(next);
                 setTeamId("");
               }}
-            >
-              <option value="">All competitions</option>
-              {scoringPools.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.label}
-                </option>
-              ))}
-            </Select>
+            />
           )}
           <Select
             aria-label="Club"

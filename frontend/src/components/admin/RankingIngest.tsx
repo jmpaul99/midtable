@@ -1,12 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
-import { api, errorMessage } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import type { UUID } from "@/lib/types";
 import { Empty, ErrorState, Loading } from "@/components/ui/State";
 import { Card, Muted, Stack } from "@/components/ui/Card";
+import { SurfaceListRow } from "@/components/ui/SurfaceListRow";
+import { useApiQuery } from "@/lib/useApiQuery";
 
 interface RankingStatusRow {
   id: UUID;
@@ -22,20 +22,13 @@ interface RankingStatusRow {
 
 export function RankingIngest({ leagueId }: { leagueId: UUID }) {
   const { isAdmin } = useAuth();
-  const [lists, setLists] = useState<RankingStatusRow[]>();
-  const [error, setError] = useState("");
+  const {
+    data: lists,
+    error,
+    loading,
+  } = useApiQuery<RankingStatusRow[]>(`/leagues/${leagueId}/ranking-lists`, [leagueId]);
 
-  const load = useCallback(() => {
-    api<RankingStatusRow[]>(`/leagues/${leagueId}/ranking-lists`)
-      .then(setLists)
-      .catch((e) => setError(errorMessage(e)));
-  }, [leagueId]);
-
-  useEffect(() => {
-    load();
-  }, [load]);
-
-  if (!lists) return <Loading label="Loading ranking lists…" />;
+  if (loading || !lists) return <Loading label="Loading ranking lists…" />;
 
   return (
     <Card>
@@ -55,10 +48,7 @@ export function RankingIngest({ leagueId }: { leagueId: UUID }) {
         ) : (
           <ul className="flex flex-col gap-2">
             {lists.map((l) => (
-              <li
-                key={l.id}
-                className="rounded-xl border border-line bg-surface-2/50 px-3 py-2.5 text-sm"
-              >
+              <SurfaceListRow as="li" key={l.id} className="px-3 py-2.5 text-sm">
                 <div className="flex flex-wrap items-baseline justify-between gap-2">
                   <strong>{l.label}</strong>
                   <Muted className="text-xs">
@@ -73,7 +63,7 @@ export function RankingIngest({ leagueId }: { leagueId: UUID }) {
                   {" · "}
                   {l.unmatched_count} unmatched
                 </Muted>
-              </li>
+              </SurfaceListRow>
             ))}
           </ul>
         )}

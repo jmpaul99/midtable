@@ -3,9 +3,10 @@
 import { useRouter } from "next/navigation";
 import type { ReactNode } from "react";
 import { cn } from "@/lib/cn";
+import { SurfaceListRow } from "@/components/ui/SurfaceListRow";
 
 const SHELL_CLASS = cn(
-  "block min-w-0 cursor-pointer rounded-xl border border-line bg-surface-2/50 p-3 transition",
+  "block min-w-0 cursor-pointer transition",
   "hover:border-brand/40 hover:bg-surface active:scale-[0.99] sm:p-3.5",
   "focus-visible:border-brand/40 focus-visible:outline-none",
 );
@@ -22,7 +23,7 @@ export function MatchRowShell({
 }) {
   const router = useRouter();
   return (
-    <div
+    <SurfaceListRow
       role="link"
       tabIndex={0}
       onClick={() => router.push(href)}
@@ -35,6 +36,6 @@ export function MatchRowShell({
       className={cn(SHELL_CLASS, className)}
     >
       {children}
-    </div>
+    </SurfaceListRow>
   );
 }

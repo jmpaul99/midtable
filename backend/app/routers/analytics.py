@@ -7,6 +7,16 @@ from sqlalchemy.orm import Session
 from app.db import get_db
 from app.deps import require_league_member
 from app.models import League, LeagueMember, Match, ScoringEvent, StandingsSnapshot, Team
+from app.schemas.analytics import (
+    FormStatRow,
+    MatchEventsResponse,
+    MatchweekStatRow,
+    MemberHighlightsResponse,
+    PointsPerGameRow,
+    StandingsResponse,
+    UpsetStatRow,
+    VenueSplitRow,
+)
 from app.services import analytics as analytics_service
 from app.services.analytics import phase_match_counts
 from app.services.match_queries import (
@@ -15,12 +25,13 @@ from app.services.match_queries import (
     pool_lookup_for_league,
     scoring_pools_for_league,
 )
+from app.services.phases import phase_match_filter_fields
 
 
 router = APIRouter(tags=["analytics"])
 
 
-@router.get("/leagues/{league_id}/standings")
+@router.get("/leagues/{league_id}/standings", response_model=StandingsResponse)
 def standings(
     phase: str | None = Query(default=None),
     membership: tuple[League, LeagueMember] = Depends(require_league_member),
@@ -60,12 +71,7 @@ def standings(
         scoring_pool_ids=scoring_pool_ids or None,
         pool_by_match_id=pool_by_match_id,
     )
-    mf = (phase_meta or {}).get("match_filter") or {}
-    matchweek_range = mf.get("matchweek_range")
-    if not matchweek_range and mf.get("type") == "matchweek_range":
-        fr, to = mf.get("from"), mf.get("to")
-        if fr is not None and to is not None:
-            matchweek_range = [int(fr), int(to)]
+    fields = phase_match_filter_fields((phase_meta or {}).get("match_filter") or {})
     return {
         "phase": {
             "key": (phase_meta or {}).get("key") or phase or "season",
@@ -73,8 +79,8 @@ def standings(
             or (phase_meta or {}).get("label")
             or phase
             or "Season",
-            "matchweek_range": matchweek_range,
-            "stage_in": mf.get("stage_in") or mf.get("stages"),
+            "matchweek_range": fields.matchweek_range,
+            "stage_in": fields.stage_in,
             "include_bonus_types": (phase_meta or {}).get("include_bonus_types") or [],
             **counts,
         },
@@ -82,7 +88,7 @@ def standings(
     }
 
 
-@router.get("/leagues/{league_id}/stats/points-per-game")
+@router.get("/leagues/{league_id}/stats/points-per-game", response_model=list[PointsPerGameRow])
 def points_per_game(
     member_id: UUID | None = Query(default=None),
     membership: tuple[League, LeagueMember] = Depends(require_league_member),
@@ -92,7 +98,7 @@ def points_per_game(
     return analytics_service.points_per_game(db, league, member_public_id=member_id)
 
 
-@router.get("/leagues/{league_id}/stats/matchweeks")
+@router.get("/leagues/{league_id}/stats/matchweeks", response_model=list[MatchweekStatRow])
 def matchweek_stats(
     membership: tuple[League, LeagueMember] = Depends(require_league_member),
     db: Session = Depends(get_db),
@@ -101,7 +107,7 @@ def matchweek_stats(
     return analytics_service.matchweek_breakdown(db, league)
 
 
-@router.get("/leagues/{league_id}/stats/upsets")
+@router.get("/leagues/{league_id}/stats/upsets", response_model=list[UpsetStatRow])
 def upset_stats(
     membership: tuple[League, LeagueMember] = Depends(require_league_member),
     db: Session = Depends(get_db),
@@ -110,7 +116,7 @@ def upset_stats(
     return analytics_service.upset_stats(db, league)
 
 
-@router.get("/leagues/{league_id}/stats/form")
+@router.get("/leagues/{league_id}/stats/form", response_model=list[FormStatRow])
 def form_stats(
     member_id: UUID | None = Query(default=None),
     team_id: UUID | None = Query(default=None),
@@ -130,7 +136,7 @@ def form_stats(
     )
 
 
-@router.get("/leagues/{league_id}/stats/splits")
+@router.get("/leagues/{league_id}/stats/splits", response_model=list[VenueSplitRow])
 def venue_splits(
     member_id: UUID | None = Query(default=None),
     membership: tuple[League, LeagueMember] = Depends(require_league_member),
@@ -142,7 +148,7 @@ def venue_splits(
     return match_stats_service.venue_splits(db, league, member_public_id=member_id)
 
 
-@router.get("/leagues/{league_id}/stats/highlights")
+@router.get("/leagues/{league_id}/stats/highlights", response_model=MemberHighlightsResponse)
 def member_highlights(
     member_id: UUID = Query(...),
     membership: tuple[League, LeagueMember] = Depends(require_league_member),
@@ -157,7 +163,7 @@ def member_highlights(
     return result
 
 
-@router.get("/leagues/{league_id}/matches/{match_id}/events")
+@router.get("/leagues/{league_id}/matches/{match_id}/events", response_model=MatchEventsResponse)
 def match_events(
     match_id: UUID,
     membership: tuple[League, LeagueMember] = Depends(require_league_member),

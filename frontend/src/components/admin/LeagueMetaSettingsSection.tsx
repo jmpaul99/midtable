@@ -18,6 +18,7 @@ import {
 } from "@/components/ui/icons";
 import { Card, Muted, Stack } from "@/components/ui/Card";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
+import { SurfaceListRow } from "@/components/ui/SurfaceListRow";
 import { Input, Label, Switch } from "@/components/ui/Field";
 import { cn } from "@/lib/cn";
 import { defaultFootballSeasonYear } from "@/lib/availableCompetitions";
@@ -551,7 +552,7 @@ function ManagersInvitesPanel({
 
   return (
     <Stack>
-      <div className="rounded-xl border border-line bg-surface-2/50 p-3">
+      <SurfaceListRow>
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div className="min-w-0">
             <strong className="text-sm">Share join link</strong>
@@ -608,7 +609,7 @@ function ManagersInvitesPanel({
             </div>
           </div>
         )}
-      </div>
+      </SurfaceListRow>
 
       {!preDraft && (
         <Muted className="text-xs">
@@ -621,8 +622,8 @@ function ManagersInvitesPanel({
           const demoteOk = canDemote(m);
           const removeOk = canRemove(m);
           return (
-            <div
-              className="flex flex-col gap-3 rounded-xl border border-line bg-surface-2/50 p-3 sm:flex-row sm:items-center sm:justify-between"
+            <SurfaceListRow
+              className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"
               key={m.id}
             >
               <div className="min-w-0">
@@ -669,7 +670,7 @@ function ManagersInvitesPanel({
                   </IconButton>
                 )}
               </div>
-            </div>
+            </SurfaceListRow>
           );
         })}
       </Stack>
@@ -714,8 +715,8 @@ function ManagersInvitesPanel({
             const deliveries = i.email_deliveries || [];
             const latest = deliveries[0];
             return (
-              <div
-                className="flex flex-col gap-3 rounded-xl border border-line bg-surface-2/50 p-3"
+              <SurfaceListRow
+                className="flex flex-col gap-3"
                 key={i.id}
               >
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -780,7 +781,7 @@ function ManagersInvitesPanel({
                     ))}
                   </ul>
                 )}
-              </div>
+            </SurfaceListRow>
             );
           })}
         </Stack>

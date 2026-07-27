@@ -20,8 +20,15 @@ from app.models import (
     RosterEntry,
     Team,
 )
-from app.schemas.admin import BonusTypeCreate, BonusTypeUpdate, ManualBonusCreate
-from app.services.bonuses import bonus_target, match_label
+from app.schemas.admin import (
+    BonusTypeCreate,
+    BonusTypeResponse,
+    BonusTypeUpdate,
+    ManualBonusAwardResponse,
+    ManualBonusCreate,
+    ManualBonusResponse,
+)
+from app.services.bonuses import bonus_target, load_bonus_context, match_label
 from app.services.match_queries import pool_for_match
 from app.services.members import member_label
 
@@ -30,7 +37,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["admin"])
 
 
-@router.get("/leagues/{league_id}/bonus-types")
+@router.get("/leagues/{league_id}/bonus-types", response_model=list[BonusTypeResponse])
 def list_bonus_types(
     membership: tuple[League, LeagueMember] = Depends(require_league_member),
     db: Session = Depends(get_db),
@@ -144,30 +151,14 @@ def delete_bonus_type(
     db.commit()
 
 
-@router.get("/leagues/{league_id}/manual-bonuses")
+@router.get("/leagues/{league_id}/manual-bonuses", response_model=list[ManualBonusResponse])
 def list_manual_bonuses(
     membership: tuple[League, LeagueMember] = Depends(require_commissioner),
     db: Session = Depends(get_db),
 ) -> list[dict]:
     league, _ = membership
-    rows = db.scalars(select(ManualBonus).where(ManualBonus.league_id == league.id)).all()
-    types = {
-        b.id: b
-        for b in db.scalars(select(BonusType).where(BonusType.league_id == league.id)).all()
-    }
-    team_ids = {r.team_id for r in rows if r.team_id is not None}
-    match_ids = {r.match_id for r in rows if r.match_id is not None}
-    matches = {
-        m.id: m
-        for m in db.scalars(select(Match).where(Match.id.in_(match_ids or [0]))).all()
-    }
-    for match in matches.values():
-        team_ids.add(match.home_team_id)
-        team_ids.add(match.away_team_id)
-    teams = {
-        t.id: t
-        for t in db.scalars(select(Team).where(Team.id.in_(team_ids or [0]))).all()
-    }
+    rows = list(db.scalars(select(ManualBonus).where(ManualBonus.league_id == league.id)).all())
+    types, teams, matches = load_bonus_context(db, league.id, rows)
     roster = {
         r.team_id: r
         for r in db.scalars(select(RosterEntry).where(RosterEntry.league_id == league.id)).all()
@@ -208,7 +199,11 @@ def list_manual_bonuses(
     return out
 
 
-@router.post("/leagues/{league_id}/manual-bonuses", status_code=201)
+@router.post(
+    "/leagues/{league_id}/manual-bonuses",
+    status_code=201,
+    response_model=ManualBonusAwardResponse,
+)
 def award_manual_bonus(
     payload: ManualBonusCreate,
     membership: tuple[League, LeagueMember] = Depends(require_commissioner),

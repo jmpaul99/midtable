@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { api, errorMessage } from "@/lib/api";
+import { useApiQuery } from "@/lib/useApiQuery";
 import { formatNumber } from "@/lib/format";
 import type { ManagerDetail, ManagerHighlights, UUID, VenueSplitRow } from "@/lib/types";
+import { managerLabel } from "@/lib/types";
 import { Empty, ErrorState, Loading } from "@/components/ui/State";
 import {
   Card,
@@ -43,34 +43,32 @@ export function ManagerPage({
   eventTypeLabels?: Record<string, string>;
 }) {
   const clubOrder = effectiveRosterClubOrder(leagueStatus, rosterClubOrder);
-  const [detail, setDetail] = useState<ManagerDetail>();
-  const [highlights, setHighlights] = useState<ManagerHighlights>();
-  const [splits, setSplits] = useState<VenueSplitRow[]>();
-  const [error, setError] = useState("");
-
-  useEffect(() => {
-    setDetail(undefined);
-    setHighlights(undefined);
-    setSplits(undefined);
-    setError("");
-    Promise.all([
-      api<ManagerDetail>(`/leagues/${leagueId}/members/${managerId}`),
-      api<ManagerHighlights>(`/leagues/${leagueId}/stats/highlights?member_id=${managerId}`),
-      api<VenueSplitRow[]>(`/leagues/${leagueId}/stats/splits?member_id=${managerId}`),
-    ])
-      .then(([d, h, s]) => {
-        setDetail(d);
-        setHighlights(h);
-        setSplits(s);
-      })
-      .catch((e) => setError(errorMessage(e)));
-  }, [leagueId, managerId]);
+  const detailQ = useApiQuery<ManagerDetail>(
+    `/leagues/${leagueId}/members/${managerId}`,
+    [leagueId, managerId],
+  );
+  const highlightsQ = useApiQuery<ManagerHighlights>(
+    `/leagues/${leagueId}/stats/highlights?member_id=${managerId}`,
+    [leagueId, managerId],
+  );
+  const splitsQ = useApiQuery<VenueSplitRow[]>(
+    `/leagues/${leagueId}/stats/splits?member_id=${managerId}`,
+    [leagueId, managerId],
+  );
+  const detail = detailQ.data ?? undefined;
+  const highlights = highlightsQ.data ?? undefined;
+  const splits = splitsQ.data ?? undefined;
+  const error = detailQ.error || highlightsQ.error || splitsQ.error || "";
+  const reloadDetail = detailQ.reload;
 
   if (error) return <ErrorState error={error} />;
   if (!detail) return <Loading label="Loading roster" />;
 
   const s = detail.stats;
-  const teamName = detail.team_name?.trim() || detail.display_name || "Roster";
+  const teamName = managerLabel(
+    { team_name: detail.team_name, display_name: detail.display_name },
+    "Roster",
+  );
   const ownerName = detail.display_name?.trim() || null;
   const eventEntries = Object.entries(s.event_points_by_type || {}).sort(
     (a, b) => b[1] - a[1],
@@ -110,7 +108,7 @@ export function ManagerPage({
               titleContent={teamName}
               onSaved={() => {
                 onTeamNameSaved?.();
-                api<ManagerDetail>(`/leagues/${leagueId}/members/${managerId}`).then(setDetail);
+                reloadDetail();
               }}
             />
           </div>

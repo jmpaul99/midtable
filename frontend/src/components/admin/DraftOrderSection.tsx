@@ -10,6 +10,7 @@ import { Card, Muted, RankBadge, Stack } from "@/components/ui/Card";
 import { Input, Label, Select } from "@/components/ui/Field";
 import { FieldHelp, LabelRow } from "@/components/ui/FieldHelp";
 import { ChoiceToggle } from "@/components/ui/ChoiceToggle";
+import { PoolFilterSelect } from "@/components/ui/PoolFilterSelect";
 import { DraftTimingFields } from "@/components/settings/DraftTimingFields";
 
 export type PreassignMode = "off" | "optional" | "required";
@@ -268,18 +269,12 @@ export function DraftOrderSection({
                 {multiPool ? (
                   <Label>
                     Competition
-                    <Select
+                    <PoolFilterSelect
                       name="pool"
+                      pools={league.pools}
                       value={teamPool}
-                      onChange={(e) => onTeamPool(e.target.value)}
-                    >
-                      <option value="">All competitions</option>
-                      {league.pools.map((p) => (
-                        <option value={p.id} key={p.id}>
-                          {p.label}
-                        </option>
-                      ))}
-                    </Select>
+                      onChange={onTeamPool}
+                    />
                   </Label>
                 ) : (
                   league.pools[0] && (

@@ -1,19 +1,20 @@
 "use client";
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useMemo, type ReactNode } from "react";
 import type { League } from "@/lib/types";
-import { api } from "@/lib/api";
 import { formatDateTimeWithZone } from "@/lib/format";
 import { Card, Muted, Stack } from "@/components/ui/Card";
 import {
+  ReviewBlock,
+  formatPhaseFilter,
   normalizePayouts,
   normalizePhases,
   normalizeResultPoints,
   normalizeTiebreaks,
   normalizeUpsetRules,
-  type LeaderboardPhase,
   type TiebreakRung,
 } from "@/components/settings";
+import { useApiQuery } from "@/lib/useApiQuery";
 
 type BonusTypeSummary = {
   key: string;
@@ -22,32 +23,11 @@ type BonusTypeSummary = {
   sort_order?: number;
 };
 
-function ReviewBlock({ title, children }: { title: string; children: ReactNode }) {
-  return (
-    <div className="min-w-0 max-w-full overflow-hidden rounded-xl border border-line bg-surface-2/40 px-3 py-2.5">
-      <h4 className="mb-1 text-xs font-bold uppercase tracking-wide text-muted">{title}</h4>
-      <div className="min-w-0 space-y-0.5 font-semibold text-ink">{children}</div>
-    </div>
-  );
-}
-
 function humanizeKey(key: string): string {
   return key
     .split("_")
     .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
     .join(" ");
-}
-
-function formatPhaseFilter(filter: LeaderboardPhase["match_filter"]): string {
-  if (filter.type === "matchweek_range") {
-    return `Matchweeks ${filter.from}–${filter.to}`;
-  }
-  if (filter.type === "stage_in") {
-    return filter.stages.length
-      ? `Stages: ${filter.stages.map(humanizeKey).join(", ")}`
-      : "Stages: none";
-  }
-  return "—";
 }
 
 function tiebreakRuleLabel(
@@ -92,24 +72,17 @@ function pointLine(
 }
 
 export function LeagueSettingsView({ league }: { league: League }) {
-  const [bonusTypes, setBonusTypes] = useState<BonusTypeSummary[]>([]);
-
-  useEffect(() => {
-    let cancelled = false;
-    api<BonusTypeSummary[]>(`/leagues/${league.id}/bonus-types`)
-      .then((rows) => {
-        if (cancelled) return;
-        setBonusTypes(
-          [...rows].sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0)),
-        );
-      })
-      .catch(() => {
-        if (!cancelled) setBonusTypes([]);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [league.id]);
+  const { data: bonusTypeRows } = useApiQuery<BonusTypeSummary[]>(
+    `/leagues/${league.id}/bonus-types`,
+    [league.id],
+  );
+  const bonusTypes = useMemo(
+    () =>
+      [...(bonusTypeRows || [])].sort(
+        (a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0),
+      ),
+    [bonusTypeRows],
+  );
 
   const phases = useMemo(
     () => normalizePhases(league.leaderboard_phases),

@@ -22,8 +22,10 @@ from app.models import (
     Team,
 )
 from app.services.match_queries import FINISHED_STATUSES, matches_for_league
+from app.services.match_stats import UPSET_TYPES, finished_games_for_team, sum_upset_points
 from app.services.members import member_label
 from app.services.payouts import apply_payouts
+from app.services.roster_owners import member_id_by_team_id_for_league
 from app.services.scoring import (
     MemberPoints,
     match_passes_phase_filter,
@@ -49,12 +51,7 @@ def leaderboard(
     phase_key: str | None = None,
 ) -> list[dict[str, Any]]:
     match_filter = _phase_filter(league, phase_key)
-    roster = {
-        r.team_id: r.member_id
-        for r in db.scalars(
-            select(RosterEntry).where(RosterEntry.league_id == league.id)
-        ).all()
-    }
+    roster = member_id_by_team_id_for_league(db, league)
     events = db.scalars(
         select(ScoringEvent).where(ScoringEvent.league_id == league.id)
     ).all()
@@ -173,10 +170,8 @@ def leaderboard(
         upset = 0.0
         win_count = 0
         if mp:
-            upset = float(
-                mp.event_points_by_type.get("minor_upset", 0)
-                + mp.event_points_by_type.get("major_upset", 0)
-                + mp.event_points_by_type.get("major_upset_draw", 0)
+            upset = sum_upset_points(
+                {k: float(v) for k, v in mp.event_points_by_type.items()}
             )
             win_count = int(mp.event_counts_by_type.get("win", 0) or 0)
         metric_values = []
@@ -265,25 +260,45 @@ def points_per_game(
             return []
         roster_q = roster_q.where(RosterEntry.member_id == member.id)
     roster = list(db.scalars(roster_q).all())
+    if not roster:
+        return []
+
+    team_ids = {e.team_id for e in roster}
+    member_ids = {e.member_id for e in roster}
+    teams = {
+        t.id: t for t in db.scalars(select(Team).where(Team.id.in_(team_ids))).all()
+    }
+    members = {
+        m.id: m
+        for m in db.scalars(select(LeagueMember).where(LeagueMember.id.in_(member_ids))).all()
+    }
+    profile_ids = {m.profile_id for m in members.values() if m.profile_id}
+    profiles = {
+        p.id: p
+        for p in (
+            db.scalars(select(Profile).where(Profile.id.in_(profile_ids))).all()
+            if profile_ids
+            else []
+        )
+    }
+    all_matches = matches_for_league(db, league)
+    events_by_team: dict[int, list[ScoringEvent]] = defaultdict(list)
+    for event in db.scalars(
+        select(ScoringEvent).where(
+            ScoringEvent.league_id == league.id,
+            ScoringEvent.team_id.in_(team_ids),
+        )
+    ).all():
+        events_by_team[event.team_id].append(event)
+
     results: list[dict[str, Any]] = []
     for entry in roster:
-        team = db.get(Team, entry.team_id)
-        events = db.scalars(
-            select(ScoringEvent).where(
-                ScoringEvent.league_id == league.id,
-                ScoringEvent.team_id == entry.team_id,
-            )
-        ).all()
+        team = teams.get(entry.team_id)
+        events = events_by_team.get(entry.team_id, [])
         points = sum((Decimal(e.points) for e in events), Decimal(0))
-        games = [
-            m
-            for m in matches_for_league(db, league)
-            if m.status in FINISHED_STATUSES
-            and (m.home_team_id == entry.team_id or m.away_team_id == entry.team_id)
-        ]
-        gp = len(games)
-        member = db.get(LeagueMember, entry.member_id)
-        profile = db.get(Profile, member.profile_id) if member else None
+        gp = finished_games_for_team(all_matches, entry.team_id)
+        member = members.get(entry.member_id)
+        profile = profiles.get(member.profile_id) if member and member.profile_id else None
         results.append(
             {
                 "team_id": str(team.public_id) if team else None,
@@ -299,10 +314,7 @@ def points_per_game(
 
 
 def matchweek_breakdown(db: Session, league: League) -> list[dict[str, Any]]:
-    roster = {
-        r.team_id: r.member_id
-        for r in db.scalars(select(RosterEntry).where(RosterEntry.league_id == league.id)).all()
-    }
+    roster = member_id_by_team_id_for_league(db, league)
     members = {
         m.id: m
         for m in db.scalars(select(LeagueMember).where(LeagueMember.league_id == league.id)).all()
@@ -334,20 +346,16 @@ def matchweek_breakdown(db: Session, league: League) -> list[dict[str, Any]]:
 
 
 def upset_stats(db: Session, league: League) -> list[dict[str, Any]]:
-    roster = {
-        r.team_id: r.member_id
-        for r in db.scalars(select(RosterEntry).where(RosterEntry.league_id == league.id)).all()
-    }
+    roster = member_id_by_team_id_for_league(db, league)
     members = {
         m.id: m
         for m in db.scalars(select(LeagueMember).where(LeagueMember.league_id == league.id)).all()
     }
-    upset_types = {"minor_upset", "major_upset", "major_upset_draw"}
     stats: dict[int, dict[str, Any]] = defaultdict(
         lambda: {"count": 0, "points": Decimal(0), "by_type": defaultdict(lambda: Decimal(0))}
     )
     for event in db.scalars(select(ScoringEvent).where(ScoringEvent.league_id == league.id)).all():
-        if event.event_type not in upset_types:
+        if event.event_type not in UPSET_TYPES:
             continue
         member_id = roster.get(event.team_id)
         if member_id is None:

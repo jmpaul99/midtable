@@ -1,21 +1,12 @@
 "use client";
 
-import type { ReactNode } from "react";
 import type { League } from "@/lib/types";
 import { managerLabel } from "@/lib/types";
 import { formatDateTimeWithZone } from "@/lib/format";
 import { Card, RankBadge, Stack } from "@/components/ui/Card";
 import { cn } from "@/lib/cn";
+import { ReviewBlock } from "@/components/settings";
 import { ManagerLink } from "./ManagerLink";
-
-function ReviewBlock({ title, children }: { title: string; children: ReactNode }) {
-  return (
-    <div className="min-w-0 max-w-full overflow-hidden rounded-xl border border-line bg-surface-2/40 px-3 py-2.5">
-      <h4 className="mb-1 text-xs font-bold uppercase tracking-wide text-muted">{title}</h4>
-      <div className="min-w-0 space-y-0.5 font-semibold text-ink">{children}</div>
-    </div>
-  );
-}
 
 function humanizeKey(key: string): string {
   return key

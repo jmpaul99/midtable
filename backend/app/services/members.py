@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+from fastapi import HTTPException
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
 from app.auth.jwt import MAX_DISPLAY_NAME_LEN
-from app.models import LeagueMember, Profile
+from app.models import League, LeagueMember, Profile
 
 
 def default_team_name(display_name: str | None) -> str:
@@ -62,3 +66,49 @@ def required_manager_count(league) -> int | None:
         return max(2, int(config["max_members"]))
     except (TypeError, ValueError):
         return None
+
+
+def join_or_return_member(
+    db: Session,
+    league: League,
+    profile: Profile,
+    *,
+    is_commissioner: bool = False,
+    draft_slot: int | None = None,
+) -> tuple[LeagueMember, bool]:
+    """Return existing membership or create one. Does not commit.
+
+    Raises HTTPException 409 when the league is closed or full.
+    Caller owns draft_slot uniqueness checks and invite/audit side effects.
+    """
+    if league.status not in {"pre_draft", "drafting"}:
+        raise HTTPException(status_code=409, detail="League is not accepting new managers")
+
+    existing = db.scalars(
+        select(LeagueMember).where(
+            LeagueMember.league_id == league.id,
+            LeagueMember.profile_id == profile.id,
+        )
+    ).first()
+    if existing:
+        return existing, False
+
+    member_count = len(
+        list(db.scalars(select(LeagueMember).where(LeagueMember.league_id == league.id)).all())
+    )
+    max_members = required_manager_count(league)
+    if max_members is not None and member_count >= max_members:
+        raise HTTPException(
+            status_code=409,
+            detail=f"League is full ({max_members} managers)",
+        )
+
+    member = LeagueMember(
+        league_id=league.id,
+        profile_id=profile.id,
+        is_commissioner=is_commissioner,
+        draft_slot=draft_slot,
+        team_name=default_team_name(profile.display_name),
+    )
+    db.add(member)
+    return member, True

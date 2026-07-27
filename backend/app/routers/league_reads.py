@@ -28,7 +28,7 @@ from app.routers.league_mappers import effective_roster_club_order
 from app.services import analytics as analytics_service
 from app.services import match_stats as match_stats_service
 from app.services.bonuses import (
-    bonus_award_row,
+    accumulate_bonus_awards,
     load_bonus_context,
 )
 from app.services.match_queries import (
@@ -49,7 +49,6 @@ from app.services.roster_owners import (
     team_ids_for_member,
 )
 from app.schemas.leagues import (
-    BonusAwardRow,
     MatchLogPage,
     MatchLogRow,
     MemberClubRow,
@@ -514,9 +513,6 @@ def member_detail(
             event.points
         )
 
-    bonus_points = 0.0
-    bonus_by_type: dict[str, float] = {}
-    awarded_bonuses: list[BonusAwardRow] = []
     bonus_conditions = [ManualBonus.member_id == member.id]
     if team_ids:
         bonus_conditions.append(ManualBonus.team_id.in_(team_ids))
@@ -533,23 +529,17 @@ def member_detail(
     bonus_types, bonus_teams, bonus_matches = load_bonus_context(
         db, league.id, bonuses, known_teams=teams
     )
-    for bonus in bonuses:
-        pts = float(bonus.points)
-        bonus_points += pts
-        total_points += pts
-        bt = bonus_types.get(bonus.bonus_type_id)
-        label = (bt.label or bt.key) if bt else "bonus"
-        bonus_by_type[label] = bonus_by_type.get(label, 0.0) + pts
-        if bonus.team_id is not None:
-            points_by_team[bonus.team_id] = points_by_team.get(bonus.team_id, 0.0) + pts
-        awarded_bonuses.append(
-            bonus_award_row(
-                bonus,
-                bonus_types=bonus_types,
-                teams=bonus_teams,
-                matches=bonus_matches,
-            )
-        )
+    acc = accumulate_bonus_awards(
+        bonuses,
+        bonus_types=bonus_types,
+        teams=bonus_teams,
+        matches=bonus_matches,
+        points_by_team=points_by_team,
+    )
+    bonus_points = acc.bonus_points
+    bonus_by_type = acc.bonus_by_type
+    awarded_bonuses = acc.awarded
+    total_points += bonus_points
 
     finished = (
         [
@@ -561,12 +551,9 @@ def member_detail(
         if team_ids
         else []
     )
-    games_by_team: dict[int, int] = {}
-    for match in finished:
-        if match.home_team_id in teams:
-            games_by_team[match.home_team_id] = games_by_team.get(match.home_team_id, 0) + 1
-        if match.away_team_id in teams:
-            games_by_team[match.away_team_id] = games_by_team.get(match.away_team_id, 0) + 1
+    games_by_team: dict[int, int] = {
+        tid: match_stats_service.finished_games_for_team(finished, tid) for tid in team_ids
+    }
 
     clubs: list[MemberClubRow] = []
     pick_by_team = match_stats_service.draft_pick_numbers(db, league.id)
@@ -675,7 +662,6 @@ def team_detail(
         )
     points_by_stage = match_stats_service.points_by_stage_from_events(events)
 
-    bonus_points = 0.0
     bonuses = list(
         db.scalars(
             select(ManualBonus)
@@ -689,22 +675,15 @@ def team_detail(
     bonus_types, bonus_teams, bonus_matches = load_bonus_context(
         db, league.id, bonuses, known_teams={team.id: team}
     )
-    bonus_by_type: dict[str, float] = {}
-    awarded_bonuses: list[BonusAwardRow] = []
-    for bonus in bonuses:
-        pts = float(bonus.points)
-        bonus_points += pts
-        bt = bonus_types.get(bonus.bonus_type_id)
-        label = (bt.label or bt.key) if bt else "bonus"
-        bonus_by_type[label] = bonus_by_type.get(label, 0.0) + pts
-        awarded_bonuses.append(
-            bonus_award_row(
-                bonus,
-                bonus_types=bonus_types,
-                teams=bonus_teams,
-                matches=bonus_matches,
-            )
-        )
+    acc = accumulate_bonus_awards(
+        bonuses,
+        bonus_types=bonus_types,
+        teams=bonus_teams,
+        matches=bonus_matches,
+    )
+    bonus_points = acc.bonus_points
+    bonus_by_type = acc.bonus_by_type
+    awarded_bonuses = acc.awarded
     total_points += bonus_points
 
     matches = [

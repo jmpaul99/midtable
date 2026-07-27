@@ -13,6 +13,7 @@ import type {
   Readiness,
   UUID,
 } from "@/lib/types";
+import { fetchPoolTeamsByPoolId } from "@/lib/poolTeams";
 import { useToast } from "@/components/ui/ToastProvider";
 
 export interface BonusTypeRow {
@@ -76,14 +77,7 @@ export function useAdminLeagueData(league: League, onLeagueChange?: () => void) 
         errors: ["Could not load readiness"],
         warnings: [],
       }),
-      Promise.all(
-        league.pools.map(async (p) =>
-          [
-            p.id,
-            await safe(api<PoolTeam[]>(`/leagues/${league.id}/pools/${p.id}/teams`), []),
-          ] as const,
-        ),
-      ),
+      fetchPoolTeamsByPoolId(league.id, league.pools, { safe }),
     ])
       .then(([a, link, b, types, jobs, d, teams]) => {
         setInvites(a);
@@ -92,7 +86,7 @@ export function useAdminLeagueData(league: League, onLeagueChange?: () => void) 
         setBonusTypes(types);
         setLatestJobs(jobs);
         setReadiness(d);
-        setPoolTeams(Object.fromEntries(teams));
+        setPoolTeams(teams);
         if (isActiveJob(jobs.manual)) {
           setPollingJobId(jobs.manual!.id);
         }

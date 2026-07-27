@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -83,3 +85,39 @@ def bonus_award_row(
         reason=bonus.notes,
         awarded_at=bonus.created_at,
     )
+
+
+@dataclass
+class BonusAccumulation:
+    bonus_points: float = 0.0
+    bonus_by_type: dict[str, float] = field(default_factory=dict)
+    awarded: list[BonusAwardRow] = field(default_factory=list)
+
+
+def accumulate_bonus_awards(
+    bonuses: list[ManualBonus],
+    *,
+    bonus_types: dict[int, BonusType],
+    teams: dict[int, Team],
+    matches: dict[int, Match],
+    points_by_team: dict[int, float] | None = None,
+) -> BonusAccumulation:
+    """Fold bonuses into totals, by-type map, award rows; optionally mutate points_by_team."""
+    acc = BonusAccumulation()
+    for bonus in bonuses:
+        pts = float(bonus.points)
+        acc.bonus_points += pts
+        bt = bonus_types.get(bonus.bonus_type_id)
+        label = (bt.label or bt.key) if bt else "bonus"
+        acc.bonus_by_type[label] = acc.bonus_by_type.get(label, 0.0) + pts
+        if points_by_team is not None and bonus.team_id is not None:
+            points_by_team[bonus.team_id] = points_by_team.get(bonus.team_id, 0.0) + pts
+        acc.awarded.append(
+            bonus_award_row(
+                bonus,
+                bonus_types=bonus_types,
+                teams=teams,
+                matches=matches,
+            )
+        )
+    return acc

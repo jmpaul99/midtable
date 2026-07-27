@@ -1,11 +1,14 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { api, errorMessage, formatDate } from "@/lib/api";
+import { useMemo } from "react";
+import { formatDate } from "@/lib/api";
+import { formatScoreline } from "@/lib/format";
 import type { Json, Snapshot, UUID } from "@/lib/types";
 import { Empty, ErrorState, Loading } from "@/components/ui/State";
 import { Card, Eyebrow, Muted, Stack } from "@/components/ui/Card";
+import { SurfaceListRow } from "@/components/ui/SurfaceListRow";
 import { TeamLink } from "./TeamLink";
+import { useApiQuery } from "@/lib/useApiQuery";
 
 type MatchEventsPayload = {
   match_id: string;
@@ -29,37 +32,24 @@ export function SnapshotAudit({
   leagueId: UUID;
   matchId?: UUID;
 }) {
-  const [snapshots, setSnapshots] = useState<Snapshot[]>();
-  const [matchEvents, setMatchEvents] = useState<MatchEventsPayload>();
-  const [error, setError] = useState("");
+  const {
+    data: snapshots,
+    error,
+    loading,
+  } = useApiQuery<Snapshot[]>(`/leagues/${leagueId}/snapshot-audit`, [leagueId]);
+  const { data: matchEvents } = useApiQuery<MatchEventsPayload>(
+    matchId ? `/leagues/${leagueId}/matches/${matchId}/events` : null,
+    [leagueId, matchId],
+  );
 
-  useEffect(() => {
-    api<Snapshot[]>(`/leagues/${leagueId}/snapshot-audit`)
-      .then(setSnapshots)
-      .catch((e) => setError(errorMessage(e)));
-  }, [leagueId]);
-
-  useEffect(() => {
-    if (!matchId) {
-      setMatchEvents(undefined);
-      return;
-    }
-    api<MatchEventsPayload>(`/leagues/${leagueId}/matches/${matchId}/events`)
-      .then(setMatchEvents)
-      .catch(() => setMatchEvents(undefined));
-  }, [leagueId, matchId]);
-
-  const filtered = useMemo(() => {
-    if (!snapshots) return [];
-    return snapshots;
-  }, [snapshots]);
+  const filtered = useMemo(() => snapshots ?? [], [snapshots]);
 
   const upsetRows = (matchEvents?.events || []).filter((e) =>
     String(e.event_type).includes("upset"),
   );
 
   if (error) return <ErrorState error={error} />;
-  if (!snapshots) return <Loading label="Loading snapshots" />;
+  if (loading || !snapshots) return <Loading label="Loading snapshots" />;
   if (!filtered.length && !upsetRows.length) return <Empty title="No table snapshots recorded" />;
 
   return (
@@ -72,7 +62,7 @@ export function SnapshotAudit({
             <Muted className="mt-1">
               Context match <code className="break-all rounded bg-surface-2 px-1.5 py-0.5 text-xs">{matchId}</code>
               {matchEvents
-                ? ` · ${matchEvents.home_goals ?? "-"}–${matchEvents.away_goals ?? "-"}`
+                ? ` · ${formatScoreline(matchEvents.home_goals, matchEvents.away_goals)}`
                 : null}
               .
             </Muted>
@@ -80,7 +70,7 @@ export function SnapshotAudit({
         </div>
 
         {upsetRows.length > 0 && (
-          <div className="rounded-xl border border-line bg-surface-2/50 p-3.5">
+          <SurfaceListRow className="p-3.5">
             <h3 className="mb-2 text-base font-extrabold">Upset call</h3>
             <Stack gap="sm">
               {upsetRows.map((e) => {
@@ -101,7 +91,7 @@ export function SnapshotAudit({
                 );
               })}
             </Stack>
-          </div>
+          </SurfaceListRow>
         )}
 
         <Stack gap="sm">

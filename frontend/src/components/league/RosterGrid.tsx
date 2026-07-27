@@ -1,7 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { api, errorMessage } from "@/lib/api";
+import { useMemo } from "react";
 import { formatNumber } from "@/lib/format";
 import type { Manager, RosterRow, UUID } from "@/lib/types";
 import { managerLabel } from "@/lib/types";
@@ -12,6 +11,7 @@ import {
   effectiveRosterClubOrder,
   type RosterClubOrder,
 } from "@/lib/rosterClubOrder";
+import { useApiQuery } from "@/lib/useApiQuery";
 import { TeamCrest } from "./TeamCrest";
 import { TeamLink } from "./TeamLink";
 import { ManagerLink } from "./ManagerLink";
@@ -56,20 +56,17 @@ export function RosterGrid({
   rosterClubOrder?: RosterClubOrder;
 }) {
   const clubOrder = effectiveRosterClubOrder(leagueStatus, rosterClubOrder);
-  const [rows, setRows] = useState<RosterRow[]>();
-  const [error, setError] = useState("");
+  const {
+    data: rows,
+    error,
+    loading,
+  } = useApiQuery<RosterRow[]>(`/leagues/${leagueId}/rosters`, [leagueId]);
 
   const membersById = useMemo(() => {
     const map = new Map<UUID, Manager>();
     for (const m of members) map.set(m.id, m);
     return map;
   }, [members]);
-
-  useEffect(() => {
-    api<RosterRow[]>(`/leagues/${leagueId}/rosters`)
-      .then(setRows)
-      .catch((e) => setError(errorMessage(e)));
-  }, [leagueId]);
 
   const draftOrder = useMemo(() => {
     const order = new Map<UUID, number>();
@@ -121,7 +118,7 @@ export function RosterGrid({
   }, [rows, draftOrder, membersById, clubOrder]);
 
   if (error) return <ErrorState error={error} />;
-  if (!rows) return <Loading label="Loading rosters" />;
+  if (loading || !rows) return <Loading label="Loading rosters" />;
   if (!rows.length) return <Empty title="No roster slots found" />;
 
   return (

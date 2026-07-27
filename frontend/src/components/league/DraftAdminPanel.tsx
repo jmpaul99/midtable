@@ -3,6 +3,7 @@
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { api, errorMessage, json } from "@/lib/api";
 import type { League, PoolTeam, RosterRow, UUID } from "@/lib/types";
+import { fetchPoolTeamsByPoolId } from "@/lib/poolTeams";
 import { ErrorState } from "@/components/ui/State";
 import { Stack } from "@/components/ui/Card";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
@@ -107,17 +108,8 @@ export function DraftAdminPanel({
 
   const loadPoolTeams = useCallback(() => {
     setLoadError("");
-    Promise.all(
-      league.pools.map(async (p) => {
-        try {
-          const teams = await api<PoolTeam[]>(`/leagues/${league.id}/pools/${p.id}/teams`);
-          return [p.id, teams] as const;
-        } catch {
-          return [p.id, [] as PoolTeam[]] as const;
-        }
-      }),
-    )
-      .then((entries) => setPoolTeams(Object.fromEntries(entries)))
+    fetchPoolTeamsByPoolId(league.id, league.pools)
+      .then(setPoolTeams)
       .catch((e) => setLoadError(errorMessage(e)));
   }, [league.id, league.pools]);
 

@@ -24,7 +24,7 @@ from app.schemas.leagues import (
     PendingInviteResponse,
 )
 from app.services.mailjet import send_invite_email
-from app.services.members import default_team_name, required_manager_count
+from app.services.members import join_or_return_member
 
 logger = logging.getLogger(__name__)
 
@@ -317,64 +317,49 @@ def accept_invite(
     league = db.get(League, invite.league_id)
     if league is None:
         raise HTTPException(status_code=404, detail="League not found")
-    if league.status not in {"pre_draft", "drafting"}:
-        raise HTTPException(status_code=409, detail="League is not accepting new managers")
-    existing = db.scalars(
-        select(LeagueMember).where(
-            LeagueMember.league_id == invite.league_id,
-            LeagueMember.profile_id == profile.id,
+
+    draft_slot = invite.draft_slot
+    if draft_slot is not None:
+        existing = db.scalars(
+            select(LeagueMember).where(
+                LeagueMember.league_id == invite.league_id,
+                LeagueMember.profile_id == profile.id,
+            )
+        ).first()
+        if existing is None:
+            taken = db.scalars(
+                select(LeagueMember).where(
+                    LeagueMember.league_id == league.id,
+                    LeagueMember.draft_slot == draft_slot,
+                )
+            ).first()
+            if taken is not None:
+                raise HTTPException(status_code=409, detail=f"Draft slot {draft_slot} already taken")
+
+    member, created = join_or_return_member(
+        db,
+        league,
+        profile,
+        is_commissioner=invite.is_commissioner,
+        draft_slot=draft_slot,
+    )
+    invite.status = "accepted"
+    db.commit()
+    if created:
+        db.refresh(member)
+        logger.info(
+            "invite accepted new_member invite_id=%s league_id=%s profile_id=%s member_id=%s",
+            invite.public_id,
+            league.public_id,
+            profile.public_id,
+            member.public_id,
         )
-    ).first()
-    if existing:
-        invite.status = "accepted"
-        db.commit()
+    else:
         logger.info(
             "invite accepted existing_member invite_id=%s league_id=%s profile_id=%s",
             invite.public_id,
             league.public_id,
             profile.public_id,
         )
-        base = _member_response(existing, profile)
-        return InviteAcceptResponse(**base.model_dump(), league_id=league.public_id)
-
-    member_count = len(
-        list(db.scalars(select(LeagueMember).where(LeagueMember.league_id == league.id)).all())
-    )
-    max_members = required_manager_count(league)
-    if max_members is not None and member_count >= max_members:
-        raise HTTPException(
-            status_code=409,
-            detail=f"League is full ({max_members} managers)",
-        )
-
-    draft_slot = invite.draft_slot
-    if draft_slot is not None:
-        taken = db.scalars(
-            select(LeagueMember).where(
-                LeagueMember.league_id == league.id,
-                LeagueMember.draft_slot == draft_slot,
-            )
-        ).first()
-        if taken is not None:
-            raise HTTPException(status_code=409, detail=f"Draft slot {draft_slot} already taken")
-
-    member = LeagueMember(
-        league_id=invite.league_id,
-        profile_id=profile.id,
-        is_commissioner=invite.is_commissioner,
-        draft_slot=draft_slot,
-        team_name=default_team_name(profile.display_name),
-    )
-    db.add(member)
-    invite.status = "accepted"
-    db.commit()
-    db.refresh(member)
-    logger.info(
-        "invite accepted new_member invite_id=%s league_id=%s profile_id=%s member_id=%s",
-        invite.public_id,
-        league.public_id,
-        profile.public_id,
-        member.public_id,
-    )
     base = _member_response(member, profile)
     return InviteAcceptResponse(**base.model_dump(), league_id=league.public_id)

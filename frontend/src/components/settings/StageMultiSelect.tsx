@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { XIcon } from "@/components/ui/icons";
 import { cn } from "@/lib/cn";
+import { useComboboxDismiss } from "@/lib/useComboboxDismiss";
 import {
   MATCH_STAGES,
   filterMatchStages,
@@ -40,16 +41,11 @@ export function StageMultiSelect({
     setActiveIndex(0);
   }, [query, open, filtered.length]);
 
-  useEffect(() => {
-    function onDocPointerDown(e: MouseEvent) {
-      if (!rootRef.current?.contains(e.target as Node)) {
-        setOpen(false);
-        setQuery("");
-      }
-    }
-    document.addEventListener("mousedown", onDocPointerDown);
-    return () => document.removeEventListener("mousedown", onDocPointerDown);
+  const dismiss = useCallback(() => {
+    setOpen(false);
+    setQuery("");
   }, []);
+  useComboboxDismiss(rootRef, dismiss);
 
   function add(stage: MatchStage) {
     if (selectedSet.has(stage.code)) return;

@@ -1,8 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
-import { api, errorMessage } from "@/lib/api";
+import { useMemo } from "react";
 import { formatDate, formatNumber, formatTeamOrientedScoreline } from "@/lib/format";
 import type {
   BonusAward,
@@ -11,7 +10,7 @@ import type {
   TeamFixture,
   UUID,
 } from "@/lib/types";
-import { matchOwnerLabel } from "@/lib/types";
+import { matchOwnerLabel, managerLabel } from "@/lib/types";
 import { Empty, ErrorState, Loading, Status } from "@/components/ui/State";
 import {
   Card,
@@ -22,6 +21,7 @@ import {
   StatTile,
 } from "@/components/ui/Card";
 import { Breadcrumbs } from "@/components/ui/Breadcrumbs";
+import { useApiQuery } from "@/lib/useApiQuery";
 import { TeamCrest } from "./TeamCrest";
 import { TeamLink } from "./TeamLink";
 import { ManagerLink } from "./ManagerLink";
@@ -197,16 +197,11 @@ export function TeamPage({
   teamId: UUID;
   eventTypeLabels?: Record<string, string>;
 }) {
-  const [team, setTeam] = useState<TeamDetail>();
-  const [error, setError] = useState("");
-
-  useEffect(() => {
-    setTeam(undefined);
-    setError("");
-    api<TeamDetail>(`/leagues/${leagueId}/teams/${teamId}`)
-      .then(setTeam)
-      .catch((e) => setError(errorMessage(e)));
-  }, [leagueId, teamId]);
+  const {
+    data: team,
+    error,
+    loading,
+  } = useApiQuery<TeamDetail>(`/leagues/${leagueId}/teams/${teamId}`, [leagueId, teamId]);
 
   const eventsByMatchId = useMemo(() => {
     const map = new Map<string, ScoringEventMatch[]>();
@@ -230,7 +225,7 @@ export function TeamPage({
   }, [team?.bonuses]);
 
   if (error) return <ErrorState error={error} />;
-  if (!team) return <Loading label="Loading team" />;
+  if (loading || !team) return <Loading label="Loading team" />;
 
   const s = team.stats;
   const bonuses = team.bonuses || [];
@@ -282,10 +277,10 @@ export function TeamPage({
                 href={`/leagues/${leagueId}/managers/${team.owner.member_id}`}
                 className="font-semibold text-ink hover:text-brand"
               >
-                {team.owner.display_name || "Unknown"}
+                {managerLabel(team.owner, "Unknown")}
               </Link>
             ) : (
-              team.owner.display_name || "Unknown"
+              managerLabel(team.owner, "Unknown")
             )}
             {team.owner.acquired_via
               ? ` · ${team.owner.acquired_via.replaceAll("_", " ")}`

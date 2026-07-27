@@ -130,6 +130,11 @@ def team_results_from_matches(
     return out
 
 
+def finished_games_for_team(matches: Sequence[Match], team_id: int) -> int:
+    """Games played with recorded goals (same rule as club/PPG stats)."""
+    return len(team_results_from_matches(matches, team_id))
+
+
 def wdl_from_results(results: Sequence[TeamMatchResult]) -> dict[str, int]:
     wins = draws = losses = 0
     for row in results:
