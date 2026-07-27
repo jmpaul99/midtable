@@ -40,11 +40,29 @@ export function JoinForm() {
   const { toast } = useToast();
   const token = search.get("token") || "";
   const [preview, setPreview] = useState<JoinPreview | null>(null);
+  const [previewToken, setPreviewToken] = useState("");
   const [previewError, setPreviewError] = useState("");
   const [claimError, setClaimError] = useState("");
   const [busy, setBusy] = useState(false);
   const [loadingPreview, setLoadingPreview] = useState(Boolean(token));
   const [autoClaimAttempted, setAutoClaimAttempted] = useState(false);
+  const [activeToken, setActiveToken] = useState(token);
+
+  // Reset join state in the same render as a token change so effects and UI
+  // never see the previous token's preview / loading flags.
+  if (token !== activeToken) {
+    setActiveToken(token);
+    setPreview(null);
+    setPreviewToken("");
+    setPreviewError("");
+    setClaimError("");
+    setBusy(false);
+    setLoadingPreview(Boolean(token));
+    setAutoClaimAttempted(false);
+  }
+
+  const previewReady = Boolean(token) && previewToken === token && !loadingPreview;
+  const previewOk = previewReady && !previewError && preview;
 
   useEffect(() => {
     if (!token) {
@@ -56,10 +74,15 @@ export function JoinForm() {
     setPreviewError("");
     api<JoinPreview>(`/join-links/preview?token=${encodeURIComponent(token)}`)
       .then((out) => {
-        if (!cancelled) setPreview(out);
+        if (cancelled) return;
+        setPreview(out);
+        setPreviewToken(token);
       })
       .catch((err) => {
-        if (!cancelled) setPreviewError(errorMessage(err));
+        if (cancelled) return;
+        setPreview(null);
+        setPreviewToken(token);
+        setPreviewError(errorMessage(err));
       })
       .finally(() => {
         if (!cancelled) setLoadingPreview(false);
@@ -70,7 +93,7 @@ export function JoinForm() {
   }, [token]);
 
   useEffect(() => {
-    if (!token || loadingPreview || previewError) return;
+    if (!previewOk || !token) return;
 
     let cancelled = false;
     setBusy(true);
@@ -97,7 +120,7 @@ export function JoinForm() {
     return () => {
       cancelled = true;
     };
-  }, [token, loadingPreview, previewError, router, toast]);
+  }, [previewOk, token, router, toast]);
 
   async function retryClaim() {
     if (!token || busy) return;
@@ -119,12 +142,18 @@ export function JoinForm() {
     }
   }
 
-  if (token && !previewError && !claimError && (loadingPreview || busy || !autoClaimAttempted)) {
-    return (
-      <Loading
-        label={preview?.league_name ? `Joining ${preview.league_name}` : "Joining league"}
-      />
-    );
+  const showJoining =
+    Boolean(token) &&
+    !previewError &&
+    !claimError &&
+    (loadingPreview || !previewReady || busy || !autoClaimAttempted);
+
+  if (showJoining) {
+    const label =
+      previewOk && preview?.league_name
+        ? `Joining ${preview.league_name}`
+        : "Joining league";
+    return <Loading label={label} />;
   }
 
   return (
@@ -135,10 +164,10 @@ export function JoinForm() {
           <div>
             <Eyebrow>Join</Eyebrow>
             <h1 className="text-3xl">
-              {preview?.league_name ? preview.league_name : "Join a league"}
+              {previewOk && preview?.league_name ? preview.league_name : "Join a league"}
             </h1>
             <Muted className="mt-1">
-              {preview?.season_label
+              {previewOk && preview?.season_label
                 ? `${preview.season_label}. Claim a place in the dugout.`
                 : "Use a shareable league link to claim a place in the dugout."}
             </Muted>
