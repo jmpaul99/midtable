@@ -112,13 +112,14 @@ def _ready_pool():
     )
 
 
-def test_open_draft_requires_supported_preassigns():
+def test_open_draft_requires_required_preassigns():
     from app.services.draft import open_draft
 
     league = SimpleNamespace(
         id=1,
         status="pre_draft",
-        preassign_mode="supported",
+        preassign_mode="required",
+        preassign_count=1,
         config={"max_members": 2},
     )
     members = [
@@ -154,9 +155,7 @@ def test_open_draft_requires_supported_preassigns():
 
     with pytest.raises(ConflictError) as exc:
         open_draft(db, league)
-    detail = exc.value.message
-    assert isinstance(detail, dict)
-    assert detail.get("blockers")
+    assert "exactly 1" in str(exc.value.message).lower() or "preassign" in str(exc.value.message).lower()
 
 
 def test_open_draft_requires_exact_manager_count():
@@ -165,7 +164,7 @@ def test_open_draft_requires_exact_manager_count():
     league = SimpleNamespace(
         id=1,
         status="pre_draft",
-        preassign_mode="none",
+        preassign_mode="off",
         config={"max_members": 4},
     )
     members = [
@@ -203,7 +202,7 @@ def test_open_draft_requires_manager_count_configured():
     league = SimpleNamespace(
         id=1,
         status="pre_draft",
-        preassign_mode="none",
+        preassign_mode="off",
         config={},
     )
     db = MagicMock()

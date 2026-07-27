@@ -226,23 +226,25 @@ def test_update_settings_rejects_season_year_after_draft_starts():
 def test_update_settings_allows_draft_style_in_pre_draft():
     league = _league(status="pre_draft")
     league.draft_style = "linear"
-    league.preassign_mode = "none"
+    league.preassign_mode = "off"
+    league.preassign_count = 1
     member = SimpleNamespace(id=1)
     db = MagicMock()
     detail = SimpleNamespace(id=league.id)
-    payload = LeagueSettingsUpdate(draft_style="snake", preassign_mode="supported")
+    payload = LeagueSettingsUpdate(draft_style="snake", preassign_mode="required")
     with patch("app.routers.leagues_core._league_detail", return_value=detail):
         result = update_settings(payload=payload, membership=(league, member), db=db)
     assert result is detail
     assert league.draft_style == "snake"
-    assert league.preassign_mode == "supported"
+    assert league.preassign_mode == "required"
     db.commit.assert_called_once()
 
 
-def test_update_settings_clears_preassigns_when_mode_becomes_none():
+def test_update_settings_clears_preassigns_when_mode_becomes_off():
     league = _league(status="pre_draft")
     league.draft_style = "linear"
-    league.preassign_mode = "supported"
+    league.preassign_mode = "required"
+    league.preassign_count = 1
     member = SimpleNamespace(id=1)
     entry = SimpleNamespace(id=99, league_id=league.id, source="preassigned")
     db = MagicMock()
@@ -250,13 +252,25 @@ def test_update_settings_clears_preassigns_when_mode_becomes_none():
     scalars_out.all.return_value = [entry]
     db.scalars.return_value = scalars_out
     detail = SimpleNamespace(id=league.id)
-    payload = LeagueSettingsUpdate(preassign_mode="none")
+    payload = LeagueSettingsUpdate(preassign_mode="off")
     with patch("app.routers.leagues_core._league_detail", return_value=detail):
         update_settings(payload=payload, membership=(league, member), db=db)
-    assert league.preassign_mode == "none"
+    assert league.preassign_mode == "off"
     db.delete.assert_called_once_with(entry)
     db.flush.assert_called()
     db.commit.assert_called_once()
+
+
+def test_update_settings_rejects_required_with_zero_count():
+    league = _league(status="pre_draft")
+    league.preassign_mode = "optional"
+    league.preassign_count = 0
+    member = SimpleNamespace(id=1)
+    payload = LeagueSettingsUpdate(preassign_mode="required")
+    with pytest.raises(HTTPException) as exc:
+        update_settings(payload=payload, membership=(league, member), db=MagicMock())
+    assert exc.value.status_code == 400
+    assert "at least 1" in str(exc.value.detail).lower()
 
 
 def test_update_settings_creates_pool_in_pre_draft():
@@ -612,3 +626,250 @@ def test_readiness_check_model():
         detail="Add competitions",
     )
     assert check.status == "error"
+
+
+def test_readiness_required_preassigns_exact_count():
+    from app.services.readiness import evaluate_readiness
+
+    league = _league(status="pre_draft")
+    league.config = {"max_members": 2}
+    league.preassign_mode = "required"
+    league.preassign_count = 2
+    members = [
+        SimpleNamespace(id=10, draft_slot=1),
+        SimpleNamespace(id=11, draft_slot=2),
+    ]
+    pool = SimpleNamespace(
+        id=1,
+        key="premier_league",
+        label="Premier League",
+        slot_count=5,
+        scores_match_results=True,
+        competition_code="PL",
+        season_year=2026,
+    )
+    db = MagicMock()
+
+    def scalars(stmt):
+        sql = str(stmt).lower()
+        out = MagicMock()
+        if "team_pool" in sql:
+            out.all.return_value = [pool]
+            return out
+        if "league_member" in sql:
+            out.all.return_value = members
+            return out
+        if "roster" in sql:
+            out.all.return_value = [
+                SimpleNamespace(member_id=10, team_id=1, source="preassigned"),
+                SimpleNamespace(member_id=10, team_id=2, source="preassigned"),
+            ]
+            return out
+        out.all.return_value = [SimpleNamespace(id=1)]
+        return out
+
+    db.scalars.side_effect = scalars
+    result = evaluate_readiness(db, league, purpose="draft")
+    pre = next(c for c in result.checks if c.key == "preassigns")
+    assert pre.status == "error"
+    assert "exactly 2" in (pre.detail or "")
+    assert result.ready is False
+
+
+def test_readiness_optional_preassigns_allows_zero_errors_on_over_max():
+    from app.services.readiness import evaluate_readiness
+
+    league = _league(status="pre_draft")
+    league.config = {"max_members": 2}
+    league.preassign_mode = "optional"
+    league.preassign_count = 1
+    members = [
+        SimpleNamespace(id=10, draft_slot=1),
+        SimpleNamespace(id=11, draft_slot=2),
+    ]
+    pool = SimpleNamespace(
+        id=1,
+        key="premier_league",
+        label="Premier League",
+        slot_count=5,
+        scores_match_results=True,
+        competition_code="PL",
+        season_year=2026,
+    )
+
+    def make_db(preassigns):
+        db = MagicMock()
+
+        def scalars(stmt):
+            sql = str(stmt).lower()
+            out = MagicMock()
+            if "team_pool" in sql:
+                out.all.return_value = [pool]
+                return out
+            if "league_member" in sql:
+                out.all.return_value = members
+                return out
+            if "roster" in sql:
+                out.all.return_value = preassigns
+                return out
+            out.all.return_value = [SimpleNamespace(id=1)]
+            return out
+
+        db.scalars.side_effect = scalars
+        return db
+
+    ok = evaluate_readiness(make_db([]), league, purpose="draft")
+    pre_ok = next(c for c in ok.checks if c.key == "preassigns")
+    assert pre_ok.status == "ok"
+
+    over = evaluate_readiness(
+        make_db(
+            [
+                SimpleNamespace(member_id=10, team_id=1, source="preassigned"),
+                SimpleNamespace(member_id=10, team_id=2, source="preassigned"),
+            ]
+        ),
+        league,
+        purpose="draft",
+    )
+    pre_over = next(c for c in over.checks if c.key == "preassigns")
+    assert pre_over.status == "error"
+    assert over.ready is False
+
+
+def test_league_response_preserves_zero_preassign_count():
+    from decimal import Decimal
+
+    from app.routers.league_mappers import _league_response
+
+    league = SimpleNamespace(
+        public_id=uuid4(),
+        name="Test",
+        season_label="2026-27",
+        status="pre_draft",
+        draft_style="linear",
+        preassign_mode="optional",
+        preassign_count=0,
+        result_points={"win": 3},
+        upset_rules={},
+        leaderboard_phases=[],
+        leaderboard_tiebreaks=[],
+        buy_in=Decimal("0"),
+        payouts=[],
+        scheduled_start_date=None,
+        scheduled_end_date=None,
+        draft_scheduled_at=None,
+        pick_timer_seconds=None,
+        template_id=None,
+        config={"max_members": 4},
+    )
+    resp = _league_response(league)
+    assert resp.preassign_count == 0
+
+
+def test_effective_preassign_count_keeps_zero():
+    from app.services.preassign import effective_preassign_count
+
+    assert effective_preassign_count(0) == 0
+    assert effective_preassign_count(None) == 1
+    assert effective_preassign_count(3) == 3
+
+
+def test_readiness_errors_when_preassigns_exceed_pool_slot_count():
+    from app.services.readiness import evaluate_readiness
+
+    league = _league(status="pre_draft")
+    league.config = {"max_members": 2}
+    league.preassign_mode = "optional"
+    league.preassign_count = 5
+    members = [
+        SimpleNamespace(id=10, draft_slot=1),
+        SimpleNamespace(id=11, draft_slot=2),
+    ]
+    pool = SimpleNamespace(
+        id=1,
+        key="cup",
+        label="Cup",
+        slot_count=1,
+        scores_match_results=True,
+        competition_code="PL",
+        season_year=2026,
+    )
+    db = MagicMock()
+
+    def scalars(stmt):
+        sql = str(stmt).lower()
+        out = MagicMock()
+        if "team_pool" in sql:
+            out.all.return_value = [pool]
+            return out
+        if "league_member" in sql:
+            out.all.return_value = members
+            return out
+        if "roster" in sql:
+            out.all.return_value = [
+                SimpleNamespace(
+                    member_id=10, team_id=1, pool_id=1, source="preassigned"
+                ),
+                SimpleNamespace(
+                    member_id=10, team_id=2, pool_id=1, source="preassigned"
+                ),
+            ]
+            return out
+        out.all.return_value = [SimpleNamespace(id=1)]
+        return out
+
+    db.scalars.side_effect = scalars
+    result = evaluate_readiness(db, league, purpose="draft")
+    slots = next(c for c in result.checks if c.key == "preassigns:pool_slots")
+    assert slots.status == "error"
+    assert result.ready is False
+
+
+def test_preassign_rejects_when_pool_slot_full():
+    from app.routers.draft import preassign_team
+    from app.schemas.leagues import PreassignRequest
+
+    member_id = uuid4()
+    pool_id = uuid4()
+    team_id = uuid4()
+    league = SimpleNamespace(
+        id=1,
+        public_id=uuid4(),
+        status="pre_draft",
+        preassign_mode="optional",
+        preassign_count=5,
+    )
+    member = SimpleNamespace(id=10, public_id=member_id)
+    pool = SimpleNamespace(id=20, public_id=pool_id, slot_count=1, league_id=1)
+    commissioner = SimpleNamespace(id=99)
+    db = MagicMock()
+    roster_calls = {"n": 0}
+
+    def scalars(stmt):
+        sql = str(stmt).lower()
+        out = MagicMock()
+        if "league_member" in sql:
+            out.first.return_value = member
+            return out
+        if "team_pool" in sql:
+            out.first.return_value = pool
+            return out
+        if "roster" in sql:
+            roster_calls["n"] += 1
+            # 1st: league-wide preassign limit check (under limit)
+            # 2nd: member_pool_filled (already at slot_count)
+            out.all.return_value = (
+                [] if roster_calls["n"] == 1 else [SimpleNamespace(id=1)]
+            )
+            return out
+        out.first.return_value = None
+        out.all.return_value = []
+        return out
+
+    db.scalars.side_effect = scalars
+    payload = PreassignRequest(member_id=member_id, pool_id=pool_id, team_id=team_id)
+    with pytest.raises(HTTPException) as exc:
+        preassign_team(payload=payload, membership=(league, commissioner), db=db)
+    assert exc.value.status_code == 409
+    assert "competition is full" in str(exc.value.detail).lower()

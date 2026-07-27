@@ -18,10 +18,18 @@ class LeagueCreate(BaseModel):
     season_label: str
     template_id: UUID | None = None
     draft_style: str = "linear"
-    preassign_mode: str = "none"
+    preassign_mode: Literal["off", "optional", "required"] = "off"
+    preassign_count: int = Field(default=1, ge=0)
     max_members: int = Field(ge=2, le=100)
     draft_scheduled_at: datetime | None = None
     pick_timer_seconds: int | None = Field(default=None, ge=1)
+
+    @model_validator(mode="after")
+    def reject_required_with_zero(self) -> Self:
+        from app.services.preassign import validate_preassign_pair
+
+        validate_preassign_pair(self.preassign_mode, self.preassign_count)
+        return self
 
 
 class PoolResponse(IdSchema):
@@ -84,6 +92,7 @@ class LeagueResponse(IdSchema):
     status: str
     draft_style: str
     preassign_mode: str
+    preassign_count: int = 1
     result_points: dict[str, Any]
     upset_rules: dict[str, Any]
     leaderboard_phases: list[Any]
@@ -272,7 +281,8 @@ class LeagueSettingsUpdate(BaseModel):
     max_members: int | None = Field(default=None, ge=2, le=100)
     roster_club_order: Literal["draft", "competition"] | None = None
     draft_style: Literal["linear", "snake"] | None = None
-    preassign_mode: Literal["none", "supported", "optional"] | None = None
+    preassign_mode: Literal["off", "optional", "required"] | None = None
+    preassign_count: int | None = Field(default=None, ge=0)
     draft_scheduled_at: datetime | None = None
     pick_timer_seconds: int | None = Field(default=None, ge=1)
     pools: list[PoolSettingsPatch] | None = None

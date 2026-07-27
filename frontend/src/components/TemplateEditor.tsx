@@ -121,6 +121,7 @@ type FormState = {
   max_members: number | "";
   draft_style: string;
   preassign_mode: string;
+  preassign_count: number;
   buy_in: number | "";
   featured: boolean;
   made_by_staff: boolean;
@@ -138,7 +139,8 @@ const blank: FormState = {
   label: "",
   max_members: "",
   draft_style: "linear",
-  preassign_mode: "none",
+  preassign_mode: "off",
+  preassign_count: 1,
   buy_in: "",
   featured: false,
   made_by_staff: false,
@@ -176,7 +178,16 @@ function fromTemplate(item: CompetitionTemplate): FormState {
     label: item.label,
     max_members: Number.isFinite(maxMembers) && maxMembers >= 2 ? maxMembers : "",
     draft_style: item.draft_style,
-    preassign_mode: item.preassign_mode,
+    preassign_mode:
+      item.preassign_mode === "supported"
+        ? "required"
+        : item.preassign_mode === "none"
+          ? "off"
+          : item.preassign_mode || "off",
+    preassign_count:
+      typeof item.preassign_count === "number" && item.preassign_count >= 0
+        ? Math.floor(item.preassign_count)
+        : 1,
     buy_in: Number.isFinite(buyIn) ? buyIn : "",
     featured: Boolean(item.featured),
     made_by_staff: Boolean(item.made_by_staff),
@@ -199,6 +210,7 @@ function toWrite(form: FormState, includeStaffFlags: boolean): TemplateWrite {
     max_members: maxMembers != null && Number.isFinite(maxMembers) ? maxMembers : null,
     draft_style: form.draft_style,
     preassign_mode: form.preassign_mode,
+    preassign_count: form.preassign_count,
     buy_in: buyIn,
     result_points: serializeResultPoints(form.result_points) as Record<string, Json>,
     upset_rules: serializeUpsetRules(form.upset_rules) as Record<string, Json>,
@@ -309,11 +321,13 @@ function TemplateSettingsSummary({ form }: { form: FormState }) {
           Draft: {form.draft_style === "snake" ? "Snake" : "Linear"}
           {" · "}
           Preassign:{" "}
-          {form.preassign_mode === "none"
-            ? "None"
-            : form.preassign_mode === "supported"
-              ? "Supported"
-              : humanizeKey(form.preassign_mode)}
+          {form.preassign_mode === "off" || form.preassign_mode === "none"
+            ? "Off"
+            : form.preassign_mode === "required" || form.preassign_mode === "supported"
+              ? `Required (${form.preassign_count})`
+              : form.preassign_mode === "optional"
+                ? `Optional (max ${form.preassign_count})`
+                : humanizeKey(form.preassign_mode)}
         </div>
         {(form.featured || form.made_by_staff) && (
           <div className="flex flex-wrap gap-1.5 pt-1">
@@ -695,6 +709,11 @@ export function TemplateEditor({
       setStepError(competitionsErr);
       return;
     }
+    if (form.preassign_mode === "required" && form.preassign_count < 1) {
+      setStepIndex(0);
+      setStepError("Required preassign mode needs at least 1 team per manager.");
+      return;
+    }
     setBusy(true);
     setError("");
     try {
@@ -947,38 +966,75 @@ export function TemplateEditor({
                   onChange={(draft_style) => setForm((f) => ({ ...f, draft_style }))}
                 />
               </div>
-              <div className="flex flex-col gap-1.5 text-sm font-semibold text-muted sm:items-start">
-                <LabelRow>
-                  Preassign mode
-                  <FieldHelp label="Preassign mode">
-                    <p className="mb-2">Whether clubs can be assigned before the live draft.</p>
-                    <ul className="list-disc space-y-1 pl-4">
-                      <li>
-                        <strong className="text-ink">None</strong> — no pre-draft assignments.
-                      </li>
-                      <li>
-                        <strong className="text-ink">Supported</strong> — commissioners can
-                        preassign clubs; the draft continues for the rest.
-                      </li>
-                      <li>
-                        <strong className="text-ink">Optional</strong> — preassign is available but
-                        not required; each league chooses whether to use it.
-                      </li>
-                    </ul>
-                  </FieldHelp>
-                </LabelRow>
-                <ChoiceToggle
-                  label="Preassign mode"
-                  value={form.preassign_mode}
-                  options={
-                    [
-                      { id: "none", label: "None" },
-                      { id: "supported", label: "Supported" },
-                      { id: "optional", label: "Optional" },
-                    ] as const
-                  }
-                  onChange={(preassign_mode) => setForm((f) => ({ ...f, preassign_mode }))}
-                />
+              <div
+                className={
+                  form.preassign_mode !== "off"
+                    ? "grid grid-cols-1 gap-3 sm:col-span-2 sm:grid-cols-[minmax(0,1fr)_minmax(6.5rem,8rem)] sm:items-start"
+                    : "flex flex-col gap-1.5 text-sm font-semibold text-muted sm:items-start"
+                }
+              >
+                <div className="flex flex-col gap-1.5 text-sm font-semibold text-muted sm:items-start">
+                  <LabelRow>
+                    Preassign mode
+                    <FieldHelp label="Preassign mode">
+                      <p className="mb-2">Whether clubs can be assigned before the live draft.</p>
+                      <ul className="list-disc space-y-1 pl-4">
+                        <li>
+                          <strong className="text-ink">Off</strong> — no pre-draft assignments.
+                        </li>
+                        <li>
+                          <strong className="text-ink">Optional</strong> — preassign is available;
+                          each manager may have up to the configured number.
+                        </li>
+                        <li>
+                          <strong className="text-ink">Required</strong> — every manager must have
+                          exactly the configured number before the draft opens.
+                        </li>
+                      </ul>
+                    </FieldHelp>
+                  </LabelRow>
+                  <ChoiceToggle
+                    label="Preassign mode"
+                    value={form.preassign_mode}
+                    options={
+                      [
+                        { id: "off", label: "Off" },
+                        { id: "optional", label: "Optional" },
+                        { id: "required", label: "Required" },
+                      ] as const
+                    }
+                    onChange={(preassign_mode) =>
+                      setForm((f) => ({
+                        ...f,
+                        preassign_mode,
+                        preassign_count:
+                          preassign_mode === "required" && f.preassign_count < 1
+                            ? 1
+                            : f.preassign_count,
+                      }))
+                    }
+                  />
+                </div>
+                {form.preassign_mode !== "off" && (
+                  <Label>
+                    Per manager
+                    <Input
+                      type="number"
+                      min={form.preassign_mode === "required" ? 1 : 0}
+                      step={1}
+                      value={form.preassign_count}
+                      onChange={(e) => {
+                        const raw = Number(e.target.value);
+                        if (!Number.isFinite(raw)) return;
+                        const min = form.preassign_mode === "required" ? 1 : 0;
+                        setForm((f) => ({
+                          ...f,
+                          preassign_count: Math.max(min, Math.floor(raw)),
+                        }));
+                      }}
+                    />
+                  </Label>
+                )}
               </div>
               {isAdmin && (
                 <div className="flex flex-wrap items-center gap-x-6 gap-y-2 sm:col-span-2">

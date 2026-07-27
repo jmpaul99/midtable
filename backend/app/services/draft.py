@@ -541,39 +541,6 @@ def open_draft(db: Session, league: League) -> DraftState:
     members = list(db.scalars(select(LeagueMember).where(LeagueMember.league_id == league.id)).all())
     ordered = ordered_members(members)
 
-    mode = (league.preassign_mode or "none").lower()
-    if mode in {"supported", "optional"}:
-        preassigns = list(
-            db.scalars(
-                select(RosterEntry).where(
-                    RosterEntry.league_id == league.id,
-                    RosterEntry.source == "preassigned",
-                )
-            ).all()
-        )
-        team_ids = [e.team_id for e in preassigns]
-        if len(team_ids) != len(set(team_ids)):
-            raise ConflictError(
-                {
-                    "message": "preassign validation failed",
-                    "blockers": ["duplicate preassigned team"],
-                }
-            )
-        if mode == "supported":
-            by_member = {m.id: 0 for m in ordered}
-            for entry in preassigns:
-                if entry.member_id in by_member:
-                    by_member[entry.member_id] += 1
-            missing = [mid for mid, count in by_member.items() if count < 1]
-            extras = [mid for mid, count in by_member.items() if count > 1]
-            blockers: list[str] = []
-            if missing:
-                blockers.append(f"managers missing supported preassign: {missing}")
-            if extras:
-                blockers.append(f"managers with multiple preassigns: {extras}")
-            if blockers:
-                raise ConflictError({"message": "preassign validation failed", "blockers": blockers})
-
     state = db.scalars(select(DraftState).where(DraftState.league_id == league.id)).first()
     if state is None:
         state = DraftState(league_id=league.id, current_pick_number=1, status="open")

@@ -26,6 +26,7 @@ from app.services.draft import (
     find_idempotent_pick,
     enforce_league_draft_timers,
     make_pick,
+    member_pool_filled,
     open_draft,
     ordered_members,
     peek_on_clock_member,
@@ -34,6 +35,7 @@ from app.services.draft import (
     undo_last_pick,
 )
 from app.services.errors import DomainError
+from app.services.preassign import effective_preassign_count, normalize_preassign_mode
 
 logger = logging.getLogger(__name__)
 
@@ -238,7 +240,8 @@ def preassign_team(
             status_code=409,
             detail="Preassign only allowed before the draft opens",
         )
-    if (league.preassign_mode or "none").lower() == "none":
+    mode = normalize_preassign_mode(league.preassign_mode)
+    if mode == "off":
         raise HTTPException(
             status_code=409,
             detail="Preassign is disabled for this league",
@@ -257,6 +260,26 @@ def preassign_team(
     ).first()
     if not member or not pool:
         raise HTTPException(status_code=404, detail="Manager or competition not found")
+    limit = effective_preassign_count(getattr(league, "preassign_count", None))
+    existing_for_member = list(
+        db.scalars(
+            select(RosterEntry).where(
+                RosterEntry.league_id == league.id,
+                RosterEntry.member_id == member.id,
+                RosterEntry.source == "preassigned",
+            )
+        ).all()
+    )
+    if len(existing_for_member) >= limit:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Manager already has the maximum of {limit} preassigned club(s)",
+        )
+    if member_pool_filled(db, member.id, pool.id, pool.slot_count):
+        raise HTTPException(
+            status_code=409,
+            detail="Roster slot for this competition is full",
+        )
     team = team_in_league(db, league.id, payload.team_id)
     in_pool = db.scalars(
         select(PoolTeam).where(PoolTeam.pool_id == pool.id, PoolTeam.team_id == team.id)

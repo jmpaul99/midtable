@@ -149,6 +149,9 @@ def create_league(
         season_label=payload.season_label,
         draft_style=payload.draft_style if not template else template.draft_style,
         preassign_mode=payload.preassign_mode if not template else template.preassign_mode,
+        preassign_count=(
+            payload.preassign_count if not template else template.preassign_count
+        ),
         result_points=(template.result_points if template else {"win": 3, "draw": 1}),
         upset_rules=(template.upset_rules if template else {}),
         leaderboard_phases=(template.leaderboard_phases if template else []),
@@ -320,11 +323,29 @@ def update_settings(
     remove_pool_ids = data.pop("remove_pool_ids", None)
     draft_style = data.get("draft_style")
     preassign_mode = data.get("preassign_mode")
-    if (draft_style is not None or preassign_mode is not None) and league.status != "pre_draft":
+    preassign_count = data.get("preassign_count")
+    if (
+        draft_style is not None or preassign_mode is not None or preassign_count is not None
+    ) and league.status != "pre_draft":
         raise HTTPException(
             status_code=409,
-            detail="Draft style and preassign mode can only be changed before the draft opens.",
+            detail="Draft style and preassign settings can only be changed before the draft opens.",
         )
+    if preassign_mode is not None or preassign_count is not None:
+        effective_mode = (
+            preassign_mode if preassign_mode is not None else league.preassign_mode
+        )
+        effective_count = (
+            preassign_count
+            if preassign_count is not None
+            else getattr(league, "preassign_count", 1)
+        )
+        try:
+            from app.services.preassign import validate_preassign_pair
+
+            validate_preassign_pair(effective_mode, effective_count)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
     if max_members is not None and league.status != "pre_draft":
         raise HTTPException(
             status_code=409,
@@ -369,7 +390,7 @@ def update_settings(
                 seconds=int(new_timer)
             )
     clear_preassigns = (
-        preassign_mode is not None and str(preassign_mode).lower() == "none"
+        preassign_mode is not None and str(preassign_mode).lower() == "off"
     )
     for key, value in data.items():
         setattr(league, key, value)
@@ -383,7 +404,7 @@ def update_settings(
             db.delete(entry)
         db.flush()
         logger.info(
-            "preassigns cleared league_id=%s reason=preassign_mode_none",
+            "preassigns cleared league_id=%s reason=preassign_mode_off",
             log_id(league),
         )
     if max_members is not None or roster_club_order is not None:
