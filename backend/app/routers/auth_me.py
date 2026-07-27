@@ -105,6 +105,7 @@ def update_me(
 @router.delete("/auth/me", status_code=status.HTTP_204_NO_CONTENT)
 def delete_me(
     profile: Profile = Depends(require_existing_profile),
+    user: AuthenticatedUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> Response:
     """Permanently delete the current account, profile, and related app data."""
@@ -159,7 +160,15 @@ def delete_me(
         )
         db.delete(league)
 
-    db.execute(delete(Invite).where(func.lower(Invite.email) == profile.email.lower()))
+    # Purge invites for both the stored profile email and the JWT email so an
+    # IdP address change cannot leave pending invites for the old address.
+    invite_emails = {
+        email.strip().lower()
+        for email in (profile.email, user.email)
+        if email and email.strip()
+    }
+    if invite_emails:
+        db.execute(delete(Invite).where(func.lower(Invite.email).in_(invite_emails)))
 
     auth_user_id = profile.auth_user_id
     logger.warning(

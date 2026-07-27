@@ -283,13 +283,15 @@ def test_get_or_create_profile_resolves_insert_race():
 def test_get_or_create_profile_syncs_stale_email():
     auth_id = uuid4()
     existing = SimpleNamespace(
+        id=1,
         public_id=uuid4(),
         email="old@example.com",
         auth_user_id=auth_id,
         display_name="Alex",
     )
     db = MagicMock()
-    db.scalars.return_value.first.return_value = existing
+    # Find by auth, then conflict check finds no other owner.
+    db.scalars.return_value.first.side_effect = [existing, None]
 
     profile = get_or_create_profile(
         db,
@@ -302,12 +304,36 @@ def test_get_or_create_profile_syncs_stale_email():
     db.add.assert_not_called()
 
 
+def test_get_or_create_profile_skips_email_sync_on_conflict():
+    auth_id = uuid4()
+    existing = SimpleNamespace(
+        id=1,
+        public_id=uuid4(),
+        email="old@example.com",
+        auth_user_id=auth_id,
+        display_name="Alex",
+    )
+    other = SimpleNamespace(id=2, email="new@example.com")
+    db = MagicMock()
+    db.scalars.return_value.first.side_effect = [existing, other]
+
+    profile = get_or_create_profile(
+        db,
+        email="new@example.com",
+        auth_user_id=auth_id,
+        display_name=None,
+    )
+    assert profile is existing
+    assert profile.email == "old@example.com"
+
+
 def test_require_existing_profile_raises_when_missing():
     from fastapi import HTTPException
 
     from app.auth.jwt import AuthenticatedUser, require_existing_profile
 
     db = MagicMock()
+    db.execute.return_value.first.return_value = (1,)
     db.scalars.return_value.first.return_value = None
     user = AuthenticatedUser(
         auth_user_id=uuid4(),
@@ -324,7 +350,7 @@ def test_require_existing_profile_raises_when_missing():
     db.add.assert_not_called()
 
 
-def test_require_existing_profile_returns_without_creating():
+def test_require_existing_profile_returns_without_creating_or_email_sync():
     from app.auth.jwt import AuthenticatedUser, require_existing_profile
 
     auth_id = uuid4()
@@ -335,6 +361,7 @@ def test_require_existing_profile_returns_without_creating():
         display_name="Alex",
     )
     db = MagicMock()
+    db.execute.return_value.first.return_value = (1,)
     db.scalars.return_value.first.return_value = existing
     user = AuthenticatedUser(
         auth_user_id=auth_id,
@@ -346,6 +373,28 @@ def test_require_existing_profile_returns_without_creating():
     profile = require_existing_profile(user=user, db=db)
 
     assert profile is existing
-    assert profile.email == "new@example.com"
+    assert profile.email == "old@example.com"
+    db.add.assert_not_called()
+    db.commit.assert_not_called()
+
+
+def test_get_current_profile_rejects_deleted_auth_user():
+    from fastapi import HTTPException
+
+    from app.auth.jwt import AuthenticatedUser, get_current_profile
+
+    db = MagicMock()
+    db.execute.return_value.first.return_value = None
+    user = AuthenticatedUser(
+        auth_user_id=uuid4(),
+        email="deleted@example.com",
+        role="authenticated",
+        claims={},
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        get_current_profile(user=user, db=db)
+
+    assert exc.value.status_code == 401
     db.add.assert_not_called()
     db.commit.assert_not_called()

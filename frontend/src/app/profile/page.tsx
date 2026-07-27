@@ -81,9 +81,6 @@ function ProfileForm() {
     setDeleteBusy(true);
     try {
       await api("/auth/me", json("DELETE"));
-      await signOut();
-      router.replace("/");
-      router.refresh();
     } catch (err) {
       toast({
         message: errorMessage(err),
@@ -92,7 +89,17 @@ function ProfileForm() {
         dismissible: true,
       });
       setDeleteBusy(false);
+      return;
     }
+    // Account is already gone; sign-out is best-effort so a local session
+    // failure does not look like a failed deletion.
+    try {
+      await signOut();
+    } catch {
+      /* ignore */
+    }
+    router.replace("/");
+    router.refresh();
   }
   if (loadError && !me) {
     return <ErrorState error={loadError} retry={load} />;

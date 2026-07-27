@@ -13,7 +13,7 @@ import jwt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jwt import InvalidTokenError, PyJWK
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -150,7 +150,24 @@ def _find_profile(
     return db.scalars(select(Profile).where(Profile.email == email)).first()
 
 
+def _require_live_auth_user(db: Session, auth_user_id: UUID | None) -> None:
+    """Reject JWTs whose Supabase auth row was already deleted."""
+    if auth_user_id is None:
+        return
+    row = db.execute(
+        text("SELECT 1 FROM auth.users WHERE id = :id LIMIT 1"),
+        {"id": str(auth_user_id)},
+    ).first()
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Account no longer exists",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+
 def _apply_profile_updates(
+    db: Session,
     profile: Profile,
     *,
     auth_user_id: UUID | None,
@@ -162,7 +179,20 @@ def _apply_profile_updates(
     if email is not None:
         normalized_email = email.strip().lower()
         if normalized_email and profile.email != normalized_email:
-            profile.email = normalized_email
+            conflict = db.scalars(
+                select(Profile).where(
+                    Profile.email == normalized_email,
+                    Profile.id != profile.id,
+                )
+            ).first()
+            if conflict is None:
+                profile.email = normalized_email
+            else:
+                logger.warning(
+                    "profile email sync skipped conflict profile_id=%s email=%s",
+                    profile.public_id,
+                    normalized_email,
+                )
     chosen = normalize_display_name(display_name)
     if chosen and profile.display_name == DEFAULT_DISPLAY_NAME:
         profile.display_name = chosen
@@ -185,6 +215,7 @@ def get_or_create_profile(
     existing = _find_profile(db, email=normalized, auth_user_id=auth_user_id)
     if existing is not None:
         return _apply_profile_updates(
+            db,
             existing,
             auth_user_id=auth_user_id,
             display_name=display_name,
@@ -210,6 +241,7 @@ def get_or_create_profile(
             raced.public_id,
         )
         return _apply_profile_updates(
+            db,
             raced,
             auth_user_id=auth_user_id,
             display_name=display_name,
@@ -268,6 +300,9 @@ def get_current_profile(
     user: AuthenticatedUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> Profile:
+    # Deleted accounts remove auth.users; reject lingering JWTs so they cannot
+    # resurrect a profile via get_or_create_profile.
+    _require_live_auth_user(db, user.auth_user_id)
     profile = get_or_create_profile(
         db,
         email=user.email,
@@ -286,8 +321,10 @@ def require_existing_profile(
     """Return the caller's profile without creating one.
 
     Used by destructive endpoints (e.g. account deletion) so a valid JWT
-    cannot recreate a profile that was already removed.
+    cannot recreate a profile that was already removed. Does not sync email so
+    callers can still purge invites addressed to the previous address.
     """
+    _require_live_auth_user(db, user.auth_user_id)
     normalized = user.email.strip().lower()
     profile = _find_profile(db, email=normalized, auth_user_id=user.auth_user_id)
     if profile is None:
@@ -295,9 +332,4 @@ def require_existing_profile(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Profile not found",
         )
-    return _apply_profile_updates(
-        profile,
-        auth_user_id=user.auth_user_id,
-        display_name=display_name_from_claims(user.claims),
-        email=normalized,
-    )
+    return profile

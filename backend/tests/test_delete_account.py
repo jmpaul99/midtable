@@ -9,6 +9,7 @@ from uuid import uuid4
 import pytest
 from fastapi import HTTPException
 
+from app.auth.jwt import AuthenticatedUser
 from app.routers.auth_me import delete_me
 
 
@@ -18,6 +19,15 @@ def _profile(*, pid: int = 10, auth_user_id=None, email: str = "user@example.com
         public_id=uuid4(),
         auth_user_id=auth_user_id if auth_user_id is not None else uuid4(),
         email=email,
+    )
+
+
+def _user(*, email: str = "user@example.com", auth_user_id=None) -> AuthenticatedUser:
+    return AuthenticatedUser(
+        auth_user_id=auth_user_id if auth_user_id is not None else uuid4(),
+        email=email,
+        role="authenticated",
+        claims={},
     )
 
 
@@ -81,7 +91,7 @@ def test_delete_me_blocks_sole_commissioner_of_active_league():
     )
 
     with pytest.raises(HTTPException) as exc:
-        delete_me(profile=profile, db=db)
+        delete_me(profile=profile, user=_user(email=profile.email), db=db)
 
     assert exc.value.status_code == 409
     assert "World Cup" in exc.value.detail
@@ -100,7 +110,7 @@ def test_delete_me_blocks_sole_commissioner_of_drafting_league():
     )
 
     with pytest.raises(HTTPException) as exc:
-        delete_me(profile=profile, db=db)
+        delete_me(profile=profile, user=_user(email=profile.email), db=db)
 
     assert exc.value.status_code == 409
     assert "Draft Night" in exc.value.detail
@@ -121,7 +131,11 @@ def test_delete_me_deletes_pre_draft_sole_comm_league_profile_and_auth_user():
         all_members=[sole, other],
     )
 
-    result = delete_me(profile=profile, db=db)
+    result = delete_me(
+        profile=profile,
+        user=_user(email=profile.email, auth_user_id=auth_user_id),
+        db=db,
+    )
 
     assert result.status_code == 204
     assert db.delete.call_args_list == [call(league), call(profile)]
@@ -142,7 +156,7 @@ def test_delete_me_deletes_complete_sole_comm_league():
         all_members=[sole],
     )
 
-    result = delete_me(profile=profile, db=db)
+    result = delete_me(profile=profile, user=_user(email=profile.email), db=db)
 
     assert result.status_code == 204
     db.delete.assert_any_call(league)
@@ -162,7 +176,11 @@ def test_delete_me_allows_non_commissioner_in_active_league():
         all_members=[member, commissioner],
     )
 
-    result = delete_me(profile=profile, db=db)
+    result = delete_me(
+        profile=profile,
+        user=_user(email=profile.email, auth_user_id=auth_user_id),
+        db=db,
+    )
 
     assert result.status_code == 204
     db.delete.assert_called_once_with(profile)
@@ -180,7 +198,7 @@ def test_delete_me_allows_co_commissioner_in_active_league():
         all_members=[self_member, other_comm],
     )
 
-    result = delete_me(profile=profile, db=db)
+    result = delete_me(profile=profile, user=_user(email=profile.email), db=db)
 
     assert result.status_code == 204
     db.delete.assert_called_once_with(profile)
@@ -198,7 +216,11 @@ def test_delete_me_fails_when_auth_user_missing():
     )
 
     with pytest.raises(HTTPException) as exc:
-        delete_me(profile=profile, db=db)
+        delete_me(
+            profile=profile,
+            user=_user(email=profile.email, auth_user_id=auth_user_id),
+            db=db,
+        )
 
     assert exc.value.status_code == 500
     assert "auth user" in exc.value.detail.lower()
@@ -214,9 +236,43 @@ def test_delete_me_skips_auth_delete_when_auth_user_id_null():
     db.scalars.side_effect = [membership_scalars]
     db.execute.side_effect = [MagicMock()]  # delete invites
 
-    result = delete_me(profile=profile, db=db)
+    result = delete_me(
+        profile=profile,
+        user=_user(email=profile.email, auth_user_id=None),
+        db=db,
+    )
 
     assert result.status_code == 204
     db.delete.assert_called_once_with(profile)
     assert db.execute.call_count == 1
+    db.commit.assert_called_once()
+
+
+def test_delete_me_purges_invites_for_profile_and_jwt_emails():
+    profile = _profile(email="old@example.com")
+    db = MagicMock()
+    membership_scalars = MagicMock()
+    membership_scalars.all.return_value = []
+    db.scalars.side_effect = [membership_scalars]
+    auth_result = MagicMock()
+    auth_result.rowcount = 1
+    db.execute.side_effect = [MagicMock(), auth_result]
+
+    result = delete_me(
+        profile=profile,
+        user=_user(email="new@example.com", auth_user_id=profile.auth_user_id),
+        db=db,
+    )
+
+    assert result.status_code == 204
+    invite_stmt = db.execute.call_args_list[0].args[0]
+    param_values = list(invite_stmt.compile().params.values())
+    flat = []
+    for value in param_values:
+        if isinstance(value, (list, tuple, set)):
+            flat.extend(value)
+        else:
+            flat.append(value)
+    assert "old@example.com" in flat
+    assert "new@example.com" in flat
     db.commit.assert_called_once()
