@@ -102,8 +102,16 @@ class League(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
-    members: Mapped[list["LeagueMember"]] = relationship(back_populates="league")
-    pools: Mapped[list["TeamPool"]] = relationship(back_populates="league")
+    # DB FKs use ON DELETE CASCADE; passive_deletes keeps the ORM from SETting
+    # child FKs to NULL when a League is deleted while related rows are in session.
+    members: Mapped[list["LeagueMember"]] = relationship(
+        back_populates="league",
+        passive_deletes=True,
+    )
+    pools: Mapped[list["TeamPool"]] = relationship(
+        back_populates="league",
+        passive_deletes=True,
+    )
 
 
 class Invite(Base):

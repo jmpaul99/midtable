@@ -111,7 +111,7 @@ export function RankBadge({
   return (
     <span
       className={cn(
-        "grid size-9 shrink-0 place-items-center rounded-lg text-sm font-extrabold",
+        "inline-grid h-9 min-w-9 shrink-0 place-items-center rounded-lg px-1.5 text-sm font-extrabold tabular-nums",
         first ? "bg-accent text-on-accent" : "bg-brand/15 text-ink",
         className,
       )}
