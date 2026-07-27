@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { api, errorMessage, json } from "@/lib/api";
 import type { Manager } from "@/lib/types";
@@ -18,6 +18,22 @@ type JoinPreview = {
   season_label?: string | null;
 };
 
+/** Deduplicate Strict Mode / remount claim attempts for the same token. */
+const claimInFlight = new Map<string, Promise<Manager & { league_id: string }>>();
+
+function claimJoinToken(token: string) {
+  const existing = claimInFlight.get(token);
+  if (existing) return existing;
+  const request = api<Manager & { league_id: string }>(
+    "/join-links/claim",
+    json("POST", { token }),
+  ).finally(() => {
+    claimInFlight.delete(token);
+  });
+  claimInFlight.set(token, request);
+  return request;
+}
+
 export function JoinForm() {
   const search = useSearchParams();
   const router = useRouter();
@@ -25,8 +41,10 @@ export function JoinForm() {
   const token = search.get("token") || "";
   const [preview, setPreview] = useState<JoinPreview | null>(null);
   const [previewError, setPreviewError] = useState("");
+  const [claimError, setClaimError] = useState("");
   const [busy, setBusy] = useState(false);
   const [loadingPreview, setLoadingPreview] = useState(Boolean(token));
+  const [autoClaimAttempted, setAutoClaimAttempted] = useState(false);
 
   useEffect(() => {
     if (!token) {
@@ -51,32 +69,69 @@ export function JoinForm() {
     };
   }, [token]);
 
-  async function submit(e: FormEvent) {
-    e.preventDefault();
+  useEffect(() => {
+    if (!token || loadingPreview || previewError) return;
+
+    let cancelled = false;
     setBusy(true);
+    setClaimError("");
+    setAutoClaimAttempted(true);
+
+    claimJoinToken(token)
+      .then((out) => {
+        if (!cancelled) router.replace(`/leagues/${out.league_id}`);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        const message = errorMessage(err);
+        setClaimError(message);
+        toast({
+          message,
+          tone: "error",
+          durationMs: 6000,
+          dismissible: true,
+        });
+        setBusy(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [token, loadingPreview, previewError, router, toast]);
+
+  async function retryClaim() {
+    if (!token || busy) return;
+    setBusy(true);
+    setClaimError("");
     try {
-      const out = await api<Manager & { league_id: string }>(
-        "/join-links/claim",
-        json("POST", { token }),
-      );
+      const out = await claimJoinToken(token);
       router.replace(`/leagues/${out.league_id}`);
     } catch (err) {
+      const message = errorMessage(err);
+      setClaimError(message);
       toast({
-        message: errorMessage(err),
+        message,
         tone: "error",
         durationMs: 6000,
         dismissible: true,
       });
-    } finally {
       setBusy(false);
     }
+  }
+
+  if (token && !previewError && !claimError && (loadingPreview || busy || !autoClaimAttempted)) {
+    return (
+      <Loading
+        label={preview?.league_name ? `Joining ${preview.league_name}` : "Joining league"}
+      />
+    );
   }
 
   return (
     <section className="mx-auto flex min-h-[60dvh] max-w-md flex-col items-center justify-center gap-6 py-6 animate-in">
       <MidtableLogo className="h-16 w-auto sm:h-20" />
       <Card className="w-full">
-        <form className="flex flex-col gap-4" onSubmit={submit}>
+        <div className="flex flex-col gap-4">
           <div>
             <Eyebrow>Join</Eyebrow>
             <h1 className="text-3xl">
@@ -84,25 +139,27 @@ export function JoinForm() {
             </h1>
             <Muted className="mt-1">
               {preview?.season_label
-                ? `${preview.season_label}. Sign in, then claim a place in the dugout.`
+                ? `${preview.season_label}. Claim a place in the dugout.`
                 : "Use a shareable league link to claim a place in the dugout."}
             </Muted>
           </div>
           {!token && <StatusBanner tone="error">Missing join token.</StatusBanner>}
-          {loadingPreview && <Muted>Checking join link…</Muted>}
           {previewError && <StatusBanner tone="error">{previewError}</StatusBanner>}
-          <div className="flex justify-start">
-            <IconButton
-              type="submit"
-              label="Join league"
-              variant="primary"
-              busy={busy}
-              disabled={!token || Boolean(previewError)}
-            >
-              <CheckIcon />
-            </IconButton>
-          </div>
-        </form>
+          {claimError && <StatusBanner tone="error">{claimError}</StatusBanner>}
+          {token && !previewError && (
+            <div className="flex justify-start">
+              <IconButton
+                type="button"
+                label="Join league"
+                variant="primary"
+                busy={busy}
+                onClick={() => void retryClaim()}
+              >
+                <CheckIcon />
+              </IconButton>
+            </div>
+          )}
+        </div>
       </Card>
     </section>
   );

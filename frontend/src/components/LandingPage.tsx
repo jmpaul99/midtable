@@ -73,6 +73,9 @@ export function LandingPage() {
   const search = useSearchParams();
   const next = safeNext(search.get("next"));
   const loginHref = next ? `/login?next=${encodeURIComponent(next)}` : "/login";
+  // Preserve invite/join destinations from RequireAuth redirects (e.g. /join?token=…).
+  const joinHref =
+    next && (next === "/join" || next.startsWith("/join?")) ? next : "/join";
 
   return (
     <div className="flex flex-col gap-16 sm:gap-20 pb-8">
@@ -89,7 +92,7 @@ export function LandingPage() {
           </Muted>
           <div className="mt-7 flex flex-wrap items-center justify-center gap-3">
             <CtaLink href={loginHref}>Sign in</CtaLink>
-            <CtaLink href="/join" variant="secondary">
+            <CtaLink href={joinHref} variant="secondary">
               Join a league
             </CtaLink>
           </div>

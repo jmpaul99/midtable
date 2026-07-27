@@ -81,9 +81,6 @@ def join_or_return_member(
     Raises HTTPException 409 when the league is closed or full.
     Caller owns draft_slot uniqueness checks and invite/audit side effects.
     """
-    if league.status not in {"pre_draft", "drafting"}:
-        raise HTTPException(status_code=409, detail="League is not accepting new managers")
-
     existing = db.scalars(
         select(LeagueMember).where(
             LeagueMember.league_id == league.id,
@@ -92,6 +89,9 @@ def join_or_return_member(
     ).first()
     if existing:
         return existing, False
+
+    if league.status not in {"pre_draft", "drafting"}:
+        raise HTTPException(status_code=409, detail="League is not accepting new managers")
 
     member_count = len(
         list(db.scalars(select(LeagueMember).where(LeagueMember.league_id == league.id)).all())

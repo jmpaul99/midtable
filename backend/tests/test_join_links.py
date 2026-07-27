@@ -159,7 +159,8 @@ def test_claim_rejects_wrong_status():
         status="active",
     )
     db = MagicMock()
-    db.scalars.return_value.first.return_value = league
+    # league lookup, then no existing membership → status gate fires
+    db.scalars.return_value.first.side_effect = [league, None]
     with pytest.raises(HTTPException) as exc:
         claim_join_link(
             payload=JoinLinkClaimRequest(token="join-tok"),
@@ -171,6 +172,39 @@ def test_claim_rejects_wrong_status():
 
 def test_claim_already_member_idempotent():
     league = _league(join_token="join-tok", join_link_enabled=True)
+    profile = _profile()
+    existing = SimpleNamespace(id=3, public_id=uuid4())
+    db = MagicMock()
+    db.scalars.return_value.first.side_effect = [league, existing, None]
+
+    with patch("app.routers.join_links._member_response") as member_resp:
+        member_resp.return_value = SimpleNamespace(
+            model_dump=lambda: {
+                "id": existing.public_id,
+                "display_name": "Joiner",
+                "team_name": "Joiner's Team",
+                "email": profile.email,
+                "is_commissioner": False,
+                "draft_slot": 1,
+                "role": "member",
+            }
+        )
+        out = claim_join_link(
+            payload=JoinLinkClaimRequest(token="join-tok"),
+            profile=profile,
+            db=db,
+        )
+    assert out.league_id == league.public_id
+    db.commit.assert_called()
+
+
+def test_claim_already_member_allows_closed_league():
+    """Returning members can reopen the join link after draft/season starts."""
+    league = _league(
+        join_token="join-tok",
+        join_link_enabled=True,
+        status="active",
+    )
     profile = _profile()
     existing = SimpleNamespace(id=3, public_id=uuid4())
     db = MagicMock()
