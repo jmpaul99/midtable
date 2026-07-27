@@ -170,7 +170,9 @@ def delete_me(
     if invite_emails:
         db.execute(delete(Invite).where(func.lower(Invite.email).in_(invite_emails)))
 
-    auth_user_id = profile.auth_user_id
+    # Prefer the linked profile id; fall back to the JWT subject so a profile
+    # that never got auth_user_id linked still deletes the Supabase auth row.
+    auth_user_id = profile.auth_user_id or user.auth_user_id
     logger.warning(
         "account deleted profile_id=%s auth_user_id=%s email=%s",
         log_id(profile),

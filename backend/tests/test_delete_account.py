@@ -22,9 +22,14 @@ def _profile(*, pid: int = 10, auth_user_id=None, email: str = "user@example.com
     )
 
 
-def _user(*, email: str = "user@example.com", auth_user_id=None) -> AuthenticatedUser:
+def _user(
+    *,
+    email: str = "user@example.com",
+    auth_user_id=...,
+) -> AuthenticatedUser:
+    resolved_auth = uuid4() if auth_user_id is ... else auth_user_id
     return AuthenticatedUser(
-        auth_user_id=auth_user_id if auth_user_id is not None else uuid4(),
+        auth_user_id=resolved_auth,
         email=email,
         role="authenticated",
         claims={},
@@ -245,6 +250,31 @@ def test_delete_me_skips_auth_delete_when_auth_user_id_null():
     assert result.status_code == 204
     db.delete.assert_called_once_with(profile)
     assert db.execute.call_count == 1
+    db.commit.assert_called_once()
+
+
+def test_delete_me_uses_jwt_auth_user_id_when_profile_unlinked():
+    auth_user_id = uuid4()
+    profile = _profile()
+    profile.auth_user_id = None
+    db = MagicMock()
+    membership_scalars = MagicMock()
+    membership_scalars.all.return_value = []
+    db.scalars.side_effect = [membership_scalars]
+    auth_result = MagicMock()
+    auth_result.rowcount = 1
+    db.execute.side_effect = [MagicMock(), auth_result]
+
+    result = delete_me(
+        profile=profile,
+        user=_user(email=profile.email, auth_user_id=auth_user_id),
+        db=db,
+    )
+
+    assert result.status_code == 204
+    auth_call = db.execute.call_args_list[1]
+    assert "DELETE FROM auth.users" in str(auth_call.args[0])
+    assert auth_call.args[1]["id"] == str(auth_user_id)
     db.commit.assert_called_once()
 
 
