@@ -156,16 +156,22 @@ def _json_safe_summary(result: dict[str, Any]) -> dict[str, Any]:
 
 def recompute_league_scores(db: Session, league: League) -> dict[str, Any]:
     """Shared recompute: seed from earliest finished match per scoring pool."""
-    from app.services.match_queries import matches_for_league, pool_for_match, scoring_pools_for_league
+    from app.services.match_queries import (
+        matches_for_league,
+        pool_for_match,
+        pool_lookup_for_league,
+        scoring_pools_for_league,
+    )
     from app.services.sync import earliest_finished_seeds_per_pool, score_changed_matches
 
     started = time.perf_counter()
     matches = matches_for_league(db, league)
     scoring_pools = scoring_pools_for_league(db, league)
     scoring_pool_ids = {p.id for p in scoring_pools}
+    pool_lookup = pool_lookup_for_league(db, league, pools=scoring_pools)
     pool_by_match_id: dict[int, int] = {}
     for m in matches:
-        pool = pool_for_match(db, league, m)
+        pool = pool_for_match(db, league, m, lookup=pool_lookup)
         if pool:
             pool_by_match_id[m.id] = pool.id
     finished, seeds = earliest_finished_seeds_per_pool(

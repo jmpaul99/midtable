@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
-import { formatDate, formatNumber } from "@/lib/format";
+import { formatDate, formatNumber, formatTeamOrientedScoreline } from "@/lib/format";
 import type { BonusAward, ScoringEventMatch, UUID } from "@/lib/types";
 import { Card, Eyebrow, Muted, Stack } from "@/components/ui/Card";
 import { TeamLink } from "./TeamLink";
@@ -216,9 +216,7 @@ export function TeamScoringBreakdown({
                   {cat.matchEvents.map((e) => {
                     const gap =
                       typeof e.metadata?.gap === "number" ? e.metadata.gap : null;
-                    const score = e.is_home
-                      ? `${e.home_goals ?? "—"}–${e.away_goals ?? "—"}`
-                      : `${e.away_goals ?? "—"}–${e.home_goals ?? "—"}`;
+                    const score = formatTeamOrientedScoreline(e);
                     return (
                       <li key={e.id}>
                         <Link

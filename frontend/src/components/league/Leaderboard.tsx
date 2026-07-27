@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { api, errorMessage, formatNumber } from "@/lib/api";
+import { formatNumber } from "@/lib/api";
 import type { League, PhaseMetadata, Standing, StandingsResponse } from "@/lib/types";
 import { managerLabel } from "@/lib/types";
 import { Empty, ErrorState, Loading } from "@/components/ui/State";
@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/Button";
 import { Card, Eyebrow, Muted, RankBadge, Stack } from "@/components/ui/Card";
 import { cn } from "@/lib/cn";
 import { matchStageLabel } from "@/lib/matchStages";
+import { useApiQuery } from "@/lib/useApiQuery";
 import { managerHref } from "./ManagerLink";
 
 const SEASON_KEY = "";
@@ -99,20 +100,11 @@ function rowLabels(league: League, row: Standing) {
 export function Leaderboard({ league }: { league: League }) {
   const router = useRouter();
   const [phase, setPhase] = useState(SEASON_KEY);
-  const [result, setResult] = useState<StandingsResponse>();
-  const [error, setError] = useState("");
-
-  useEffect(() => {
-    setResult(undefined);
-    setError("");
-    const path =
-      phase === SEASON_KEY
-        ? `/leagues/${league.id}/standings`
-        : `/leagues/${league.id}/standings?phase=${encodeURIComponent(phase)}`;
-    api<StandingsResponse>(path)
-      .then(setResult)
-      .catch((e) => setError(errorMessage(e)));
-  }, [league.id, phase]);
+  const path =
+    phase === SEASON_KEY
+      ? `/leagues/${league.id}/standings`
+      : `/leagues/${league.id}/standings?phase=${encodeURIComponent(phase)}`;
+  const { data: result, error, loading } = useApiQuery<StandingsResponse>(path, [league.id, phase]);
 
   const rows = result?.entries;
   const phases = uniquePhases(league);
@@ -163,7 +155,7 @@ export function Leaderboard({ league }: { league: League }) {
 
         {error ? (
           <ErrorState error={error} />
-        ) : !rows ? (
+        ) : loading || !rows ? (
           <Loading label="Loading standings" />
         ) : !rows.length ? (
           <Empty title="No scored matches yet" />

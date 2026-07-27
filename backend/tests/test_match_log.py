@@ -18,6 +18,36 @@ from app.services.match_queries import (
 )
 from app.services.roster_owners import owner_by_team_id_for_league, team_ids_for_member
 
+_MATCH_LOG_PATCHES = (
+    "app.routers.league_reads.competition_keys_from_pools",
+    "app.routers.league_reads.scoring_pools_for_league",
+    "app.routers.league_reads.pool_lookup_for_league",
+    "app.routers.league_reads.owner_by_team_id_for_league",
+)
+
+
+def _patch_match_log(fn):
+    # Apply in list order so the first target is the innermost patch (first arg).
+    for target in _MATCH_LOG_PATCHES:
+        fn = patch(target)(fn)
+    return fn
+
+
+def _call_match_log(**kwargs):
+    defaults = dict(
+        section="results",
+        limit=20,
+        offset=0,
+        pool_id=None,
+        team_id=None,
+        member_id=None,
+        mine=False,
+        sort="kickoff",
+        q=None,
+    )
+    defaults.update(kwargs)
+    return match_log(**defaults)
+
 
 def _pool(**kwargs):
     base = dict(
@@ -136,10 +166,7 @@ def _db_for_matches(matches, teams, events=None):
     return db
 
 
-@patch("app.routers.league_reads.owner_by_team_id_for_league")
-@patch("app.routers.league_reads.pool_lookup_for_league")
-@patch("app.routers.league_reads.scoring_pools_for_league")
-@patch("app.routers.league_reads.competition_keys_from_pools")
+@_patch_match_log
 def test_match_log_results_pagination_and_owners(
     keys_mock, pools_mock, lookup_mock, owners_mock
 ):
@@ -192,15 +219,12 @@ def test_match_log_results_pagination_and_owners(
     )
     assert page.has_more is True
     assert len(page.items) == 2
-    assert page.items[0].home_owner["team_name"] == "Gunners"
-    assert page.items[0].away_owner["display_name"] == "Sam"
+    assert page.items[0].home_owner.team_name == "Gunners"
+    assert page.items[0].away_owner.display_name == "Sam"
     assert page.items[0].pool_label == "Premier League"
 
 
-@patch("app.routers.league_reads.owner_by_team_id_for_league")
-@patch("app.routers.league_reads.pool_lookup_for_league")
-@patch("app.routers.league_reads.scoring_pools_for_league")
-@patch("app.routers.league_reads.competition_keys_from_pools")
+@_patch_match_log
 def test_match_log_kickoff_pages_after_dropped_rows(
     keys_mock, pools_mock, lookup_mock, owners_mock
 ):
@@ -267,10 +291,7 @@ def test_match_log_kickoff_pages_after_dropped_rows(
     assert page1.has_more is False
 
 
-@patch("app.routers.league_reads.owner_by_team_id_for_league")
-@patch("app.routers.league_reads.pool_lookup_for_league")
-@patch("app.routers.league_reads.scoring_pools_for_league")
-@patch("app.routers.league_reads.competition_keys_from_pools")
+@_patch_match_log
 def test_match_log_points_sort(
     keys_mock, pools_mock, lookup_mock, owners_mock
 ):
@@ -315,10 +336,7 @@ def test_match_log_points_sort(
     assert page.has_more is False
 
 
-@patch("app.routers.league_reads.owner_by_team_id_for_league")
-@patch("app.routers.league_reads.pool_lookup_for_league")
-@patch("app.routers.league_reads.scoring_pools_for_league")
-@patch("app.routers.league_reads.competition_keys_from_pools")
+@_patch_match_log
 def test_match_log_points_sort_stable_ties(
     keys_mock, pools_mock, lookup_mock, owners_mock
 ):
@@ -387,18 +405,10 @@ def test_match_log_unknown_pool_404(pools_mock):
     league = SimpleNamespace(id=1)
     member = SimpleNamespace(id=99, public_id=uuid4())
     with pytest.raises(HTTPException) as exc:
-        match_log(
+        _call_match_log(
             membership=(league, member),
             db=MagicMock(),
-            section="results",
-            limit=20,
-            offset=0,
             pool_id=uuid4(),
-            team_id=None,
-            member_id=None,
-            mine=False,
-            sort="kickoff",
-            q=None,
         )
     assert exc.value.status_code == 404
 

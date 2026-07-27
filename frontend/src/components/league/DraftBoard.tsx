@@ -2,14 +2,17 @@
 
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, errorMessage, json } from "@/lib/api";
-import type { DraftState, League, PoolTeam, Readiness } from "@/lib/types";
+import type { DraftState, League, Readiness } from "@/lib/types";
 import { managerLabel } from "@/lib/types";
 import { formatDateTimeWithZone } from "@/lib/format";
+import { fetchPoolTeams, type AnnotatedPoolTeam } from "@/lib/poolTeams";
 import { Empty, ErrorState, Loading, StatusBanner } from "@/components/ui/State";
 import { IconButton } from "@/components/ui/IconButton";
 import { CheckIcon, PlayIcon, RefreshIcon } from "@/components/ui/icons";
 import { Card, Eyebrow, Muted, RankBadge, Stack } from "@/components/ui/Card";
-import { Label, Select } from "@/components/ui/Field";
+import { Label } from "@/components/ui/Field";
+import { PoolFilterSelect } from "@/components/ui/PoolFilterSelect";
+import { SurfaceListRow } from "@/components/ui/SurfaceListRow";
 import { cn } from "@/lib/cn";
 import { ReadinessChecklist } from "@/components/ReadinessChecklist";
 import { TeamCrest } from "./TeamCrest";
@@ -18,7 +21,7 @@ import { ManagerLink } from "./ManagerLink";
 import { DraftAdminPanel } from "./DraftAdminPanel";
 import { DraftSettingsSummary } from "./DraftSettingsSummary";
 
-type DraftableTeam = PoolTeam & { pool_id: string; pool_label: string };
+type DraftableTeam = AnnotatedPoolTeam;
 type DraftPhase = "pre" | "live" | "done";
 
 function formatCountdown(ms: number): string {
@@ -117,30 +120,12 @@ export function DraftBoard({
     const poolList = league.pools;
     Promise.all([
       api<DraftState>(`/leagues/${league.id}/draft`, { signal: controller.signal }),
-      Promise.all(
-        poolList.map(async (p) => {
-          try {
-            const poolTeams = await api<PoolTeam[]>(
-              `/leagues/${league.id}/pools/${p.id}/teams`,
-              { signal: controller.signal },
-            );
-            return poolTeams.map(
-              (t): DraftableTeam => ({
-                ...t,
-                pool_id: p.id,
-                pool_label: p.label || p.key,
-              }),
-            );
-          } catch {
-            return [] as DraftableTeam[];
-          }
-        }),
-      ),
+      fetchPoolTeams(league.id, poolList, { annotatePool: true, signal: controller.signal }),
     ])
-      .then(([draft, poolTeamLists]) => {
+      .then(([draft, poolTeams]) => {
         if (controller.signal.aborted) return;
         setState(draft);
-        setTeams(poolTeamLists.flat());
+        setTeams(poolTeams);
         setUpdatedAt(new Date());
         setError("");
         if (draft.league_status && draft.league_status !== leagueStatusRef.current) {
@@ -323,8 +308,9 @@ export function DraftBoard({
                   (p.team_id ? crestByTeamId.get(p.team_id) : null) ??
                   null;
                 return (
-                  <li
-                    className="flex items-center gap-3 rounded-xl border border-line bg-surface-2/50 p-3"
+                  <SurfaceListRow
+                    as="li"
+                    className="flex items-center gap-3"
                     key={String(p.id || i)}
                   >
                     <RankBadge value={String(p.pick_number || i + 1)} />
@@ -348,7 +334,7 @@ export function DraftBoard({
                     <span className="rounded-full border border-line bg-surface px-2.5 py-1 text-xs font-bold">
                       R{String(p.round_number || "—")}
                     </span>
-                  </li>
+                  </SurfaceListRow>
                 );
               })}
             </ul>
@@ -365,14 +351,11 @@ export function DraftBoard({
         {multiPool && phase === "live" ? (
           <Label className="min-w-0 w-full sm:max-w-xs sm:flex-1">
             Competition
-            <Select value={poolFilter} onChange={(e) => setPoolFilter(e.target.value)}>
-              <option value="">All competitions</option>
-              {league.pools.map((p) => (
-                <option value={p.id} key={p.id}>
-                  {p.label}
-                </option>
-              ))}
-            </Select>
+            <PoolFilterSelect
+              pools={league.pools}
+              value={poolFilter}
+              onChange={setPoolFilter}
+            />
           </Label>
         ) : (
           <div className="min-w-0 flex-1" />

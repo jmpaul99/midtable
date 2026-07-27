@@ -1,5 +1,6 @@
 from decimal import Decimal
-from typing import Literal
+from datetime import datetime
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, model_validator
@@ -47,3 +48,34 @@ class ManualBonusCreate(BaseModel):
             if self.team_id is not None or self.match_id is not None:
                 raise ValueError("team_id and match_id must be omitted for manager bonuses")
         return self
+
+
+class BonusTypeResponse(BaseModel):
+    id: UUID
+    key: str
+    label: str
+    default_points: float
+    sort_order: int
+    include_in_phases: list[Any] | None = None
+
+
+class ManualBonusResponse(BaseModel):
+    id: UUID
+    target: str
+    team_id: UUID | None = None
+    team_name: str | None = None
+    match_id: UUID | None = None
+    match_label: str | None = None
+    member_id: UUID | None = None
+    display_name: str | None = None
+    bonus_type: str | None = None
+    points: float
+    reason: str | None = None
+    awarded_at: datetime | None = None
+    revoked_at: datetime | None = None
+
+
+class ManualBonusAwardResponse(BaseModel):
+    id: UUID
+    points: float
+    target: str

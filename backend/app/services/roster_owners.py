@@ -11,6 +11,20 @@ from app.models import League, LeagueMember, Profile, RosterEntry
 from app.services.members import member_label
 
 
+def owner_dict(
+    member: LeagueMember,
+    profile: Profile | None,
+    source: str | None,
+) -> dict[str, Any]:
+    """Canonical owner payload for API read models."""
+    return {
+        "member_id": str(member.public_id),
+        "display_name": member_label(member, profile),
+        "team_name": (member.team_name.strip() if member.team_name else None),
+        "acquired_via": source,
+    }
+
+
 def owner_by_team_id_for_league(db: Session, league: League) -> dict[int, dict[str, Any]]:
     """Map internal team id → owner dict for clubs on the league roster."""
     roster_entries = list(
@@ -40,22 +54,33 @@ def owner_by_team_id_for_league(db: Session, league: League) -> dict[int, dict[s
         if not member:
             continue
         profile = profiles_by_id.get(member.profile_id) if member.profile_id else None
-        owner_by_team_id[roster_entry.team_id] = {
-            "member_id": str(member.public_id),
-            "display_name": member_label(member, profile),
-            "team_name": (member.team_name.strip() if member.team_name else None),
-            "acquired_via": roster_entry.source,
-        }
+        owner_by_team_id[roster_entry.team_id] = owner_dict(
+            member, profile, roster_entry.source
+        )
     return owner_by_team_id
 
 
-def team_ids_for_member(db: Session, *, league_id: int, member_id: int) -> set[int]:
-    return {
-        e.team_id
-        for e in db.scalars(
+def roster_entries_for_member(
+    db: Session, *, league_id: int, member_id: int
+) -> list[RosterEntry]:
+    return list(
+        db.scalars(
             select(RosterEntry).where(
                 RosterEntry.league_id == league_id,
                 RosterEntry.member_id == member_id,
             )
         ).all()
+    )
+
+
+def team_ids_for_member(db: Session, *, league_id: int, member_id: int) -> set[int]:
+    return {e.team_id for e in roster_entries_for_member(db, league_id=league_id, member_id=member_id)}
+
+
+def member_id_by_team_id_for_league(db: Session, league: League) -> dict[int, int]:
+    """Map internal team id → owning member id for the league roster."""
+    return {
+        r.team_id: r.member_id
+        for r in db.scalars(select(RosterEntry).where(RosterEntry.league_id == league.id)).all()
     }
+

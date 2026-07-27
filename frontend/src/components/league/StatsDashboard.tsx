@@ -1,34 +1,32 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
-import { api, errorMessage, formatNumber } from "@/lib/api";
+import { useMemo } from "react";
+import { formatNumber } from "@/lib/api";
 import type { MatchweekRow, PpgRow, UpsetRow, UUID } from "@/lib/types";
+import { managerLabel } from "@/lib/types";
 import { Empty, ErrorState, Loading } from "@/components/ui/State";
 import { Card, Muted, Stack, StatTile } from "@/components/ui/Card";
+import { useApiQuery } from "@/lib/useApiQuery";
 import { MatchLog } from "./MatchLog";
 import { TeamLink } from "./TeamLink";
 import { ManagerLink } from "./ManagerLink";
 
-export function StatsDashboard({ leagueId }: { leagueId: UUID }) {
-  const [ppg, setPpg] = useState<PpgRow[]>();
-  const [weeks, setWeeks] = useState<MatchweekRow[]>();
-  const [upsets, setUpsets] = useState<UpsetRow[]>();
-  const [error, setError] = useState("");
+function statsManagerName(displayName: string | null | undefined, memberId: string | null | undefined) {
+  return managerLabel(
+    { display_name: displayName ?? null, team_name: null },
+    String(memberId || "Manager"),
+  );
+}
 
-  useEffect(() => {
-    Promise.all([
-      api<PpgRow[]>(`/leagues/${leagueId}/stats/points-per-game`),
-      api<MatchweekRow[]>(`/leagues/${leagueId}/stats/matchweeks`),
-      api<UpsetRow[]>(`/leagues/${leagueId}/stats/upsets`),
-    ])
-      .then(([a, c, d]) => {
-        setPpg(a);
-        setWeeks(c);
-        setUpsets(d);
-      })
-      .catch((e) => setError(errorMessage(e)));
-  }, [leagueId]);
+export function StatsDashboard({ leagueId }: { leagueId: UUID }) {
+  const ppgQ = useApiQuery<PpgRow[]>(`/leagues/${leagueId}/stats/points-per-game`, [leagueId]);
+  const weeksQ = useApiQuery<MatchweekRow[]>(`/leagues/${leagueId}/stats/matchweeks`, [leagueId]);
+  const upsetsQ = useApiQuery<UpsetRow[]>(`/leagues/${leagueId}/stats/upsets`, [leagueId]);
+  const ppg = ppgQ.data ?? undefined;
+  const weeks = weeksQ.data ?? undefined;
+  const upsets = upsetsQ.data ?? undefined;
+  const error = ppgQ.error || weeksQ.error || upsetsQ.error || "";
 
   const cumulative = useMemo(() => {
     if (!weeks) return [];
@@ -42,7 +40,7 @@ export function StatsDashboard({ leagueId }: { leagueId: UUID }) {
     for (const row of sorted) {
       const mid = String(row.member_id || "");
       const prev = byMember.get(mid) || {
-        name: String(row.display_name || row.member_id || "Manager"),
+        name: statsManagerName(row.display_name, row.member_id),
         points: 0,
         series: [],
       };
@@ -60,7 +58,7 @@ export function StatsDashboard({ leagueId }: { leagueId: UUID }) {
   for (const row of ppg) {
     const mid = String(row.member_id || "");
     const prev = byMember.get(mid) || {
-      name: String(row.display_name || row.member_id || "Manager"),
+      name: statsManagerName(row.display_name, row.member_id),
       points: 0,
       games: 0,
     };
@@ -222,7 +220,7 @@ export function StatsDashboard({ leagueId }: { leagueId: UUID }) {
                         managerId={u.member_id ? String(u.member_id) : null}
                         className="min-w-0 truncate font-bold"
                       >
-                        {String(u.display_name || u.member_id)}
+                        {statsManagerName(u.display_name, u.member_id)}
                       </ManagerLink>
                       <span className="shrink-0 text-sm tabular-nums text-muted">
                         {Number(u.count || u.upset_count || 0)} ·{" "}

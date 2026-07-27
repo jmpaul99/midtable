@@ -5,13 +5,12 @@ from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import and_, or_, select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.db import get_db
 from app.deps import require_commissioner, require_league_member, team_in_league
 from app.models import (
-    BonusType,
     League,
     LeagueMember,
     ManualBonus,
@@ -28,9 +27,14 @@ from app.models import (
 from app.routers.league_mappers import effective_roster_club_order
 from app.services import analytics as analytics_service
 from app.services import match_stats as match_stats_service
+from app.services.bonuses import (
+    accumulate_bonus_awards,
+    load_bonus_context,
+)
 from app.services.match_queries import (
     FINISHED_STATUSES,
     competition_key_predicate,
+    competition_key_predicate_for,
     competition_keys_from_pools,
     matches_for_league,
     pool_for_match,
@@ -38,9 +42,13 @@ from app.services.match_queries import (
     scoring_pools_for_league,
 )
 from app.services.members import member_label
-from app.services.roster_owners import owner_by_team_id_for_league, team_ids_for_member
+from app.services.roster_owners import (
+    owner_by_team_id_for_league,
+    owner_dict,
+    roster_entries_for_member,
+    team_ids_for_member,
+)
 from app.schemas.leagues import (
-    BonusAwardRow,
     MatchLogPage,
     MatchLogRow,
     MemberClubRow,
@@ -57,82 +65,6 @@ from app.schemas.leagues import (
 router = APIRouter(tags=["league-reads"])
 
 _FINISHED = FINISHED_STATUSES
-
-
-def _bonus_target(bonus: ManualBonus) -> str:
-    if bonus.member_id is not None:
-        return "manager"
-    if bonus.match_id is not None:
-        return "match"
-    return "team"
-
-
-def _match_label(match: Match, teams: dict[int, Team]) -> str:
-    home = teams.get(match.home_team_id)
-    away = teams.get(match.away_team_id)
-    home_name = home.name if home else "Home"
-    away_name = away.name if away else "Away"
-    label = f"{home_name} vs {away_name}"
-    if match.scheduled_matchweek is not None:
-        label = f"{label} · MW{match.scheduled_matchweek}"
-    return label
-
-
-def _bonus_award_row(
-    bonus: ManualBonus,
-    *,
-    bonus_types: dict[int, BonusType],
-    teams: dict[int, Team],
-    matches: dict[int, Match],
-) -> BonusAwardRow:
-    bt = bonus_types.get(bonus.bonus_type_id)
-    key = bt.key if bt else "bonus"
-    label = (bt.label or bt.key) if bt else "bonus"
-    team = teams.get(bonus.team_id) if bonus.team_id is not None else None
-    match = matches.get(bonus.match_id) if bonus.match_id is not None else None
-    return BonusAwardRow(
-        id=bonus.public_id,
-        target=_bonus_target(bonus),
-        team_id=team.public_id if team else None,
-        team_name=team.name if team else None,
-        crest_url=team.crest_url if team else None,
-        match_id=match.public_id if match else None,
-        match_label=_match_label(match, teams) if match else None,
-        scheduled_matchweek=match.scheduled_matchweek if match else None,
-        bonus_type=key,
-        bonus_type_label=label,
-        points=float(bonus.points),
-        reason=bonus.notes,
-        awarded_at=bonus.created_at,
-    )
-
-
-def _load_bonus_context(
-    db: Session,
-    league_id: int,
-    bonuses: list[ManualBonus],
-    *,
-    known_teams: dict[int, Team] | None = None,
-) -> tuple[dict[int, BonusType], dict[int, Team], dict[int, Match]]:
-    bonus_types = {
-        bt.id: bt
-        for bt in db.scalars(select(BonusType).where(BonusType.league_id == league_id)).all()
-    }
-    match_ids = {b.match_id for b in bonuses if b.match_id is not None}
-    matches = {
-        m.id: m
-        for m in db.scalars(select(Match).where(Match.id.in_(match_ids or [0]))).all()
-    }
-    team_ids = {b.team_id for b in bonuses if b.team_id is not None}
-    for match in matches.values():
-        team_ids.add(match.home_team_id)
-        team_ids.add(match.away_team_id)
-    teams = dict(known_teams or {})
-    missing = team_ids - set(teams)
-    if missing:
-        for t in db.scalars(select(Team).where(Team.id.in_(missing))).all():
-            teams[t.id] = t
-    return bonus_types, teams, matches
 
 
 @router.get("/leagues/{league_id}/pools/{pool_id}/teams", response_model=list[PoolTeamResponse])
@@ -166,18 +98,24 @@ def list_pool_teams(
         m.id: m
         for m in db.scalars(select(LeagueMember).where(LeagueMember.league_id == league.id)).all()
     }
+    profile_ids = {m.profile_id for m in members.values() if m.profile_id}
+    profiles = {
+        p.id: p
+        for p in (
+            db.scalars(select(Profile).where(Profile.id.in_(profile_ids))).all()
+            if profile_ids
+            else []
+        )
+    }
     out: list[PoolTeamResponse] = []
     for team in teams:
         entry = roster.get(team.id)
         owner = None
         if entry:
             member = members.get(entry.member_id)
-            profile = db.get(Profile, member.profile_id) if member else None
-            owner = {
-                "member_id": str(member.public_id) if member else None,
-                "display_name": member_label(member, profile) if member else None,
-                "acquired_via": entry.source,
-            }
+            if member:
+                profile = profiles.get(member.profile_id) if member.profile_id else None
+                owner = owner_dict(member, profile, entry.source)
         out.append(
             PoolTeamResponse(
                 id=team.public_id,
@@ -334,7 +272,7 @@ def match_log(
 ) -> MatchLogPage:
     league, current_member = membership
     pools = scoring_pools_for_league(db, league)
-    pool_by_key = pool_lookup_for_league(db, league)
+    pool_by_key = pool_lookup_for_league(db, league, pools=pools)
 
     if pool_id is not None:
         pool = next((p for p in pools if p.public_id == pool_id), None)
@@ -439,10 +377,7 @@ def match_log(
         if match_ids
         else []
     )
-    points_by_match_team: dict[tuple[int, int], float] = {}
-    for event in events:
-        key = (event.match_id, event.team_id)
-        points_by_match_team[key] = points_by_match_team.get(key, 0.0) + float(event.points)
+    points_by_match_team = match_stats_service.points_by_match_team(events)
 
     owner_by_team_id = owner_by_team_id_for_league(db, league)
 
@@ -544,12 +479,9 @@ def member_detail(
     standings = analytics_service.leaderboard(db, league, phase_key=None)
     standing = next((row for row in standings if row.get("member_id") == str(member.public_id)), None)
 
-    roster_entries = db.scalars(
-        select(RosterEntry).where(
-            RosterEntry.league_id == league.id,
-            RosterEntry.member_id == member.id,
-        )
-    ).all()
+    roster_entries = roster_entries_for_member(
+        db, league_id=league.id, member_id=member.id
+    )
     team_ids = [e.team_id for e in roster_entries]
     teams = {
         t.id: t for t in db.scalars(select(Team).where(Team.id.in_(team_ids))).all()
@@ -572,20 +504,15 @@ def member_detail(
         else []
     )
 
-    event_points: dict[str, float] = {}
-    event_counts: dict[str, int] = {}
+    event_points, event_counts, total_points = match_stats_service.aggregate_event_points(
+        events
+    )
     points_by_team: dict[int, float] = {}
-    total_points = 0.0
     for event in events:
-        pts = float(event.points)
-        total_points += pts
-        event_points[event.event_type] = event_points.get(event.event_type, 0.0) + pts
-        event_counts[event.event_type] = event_counts.get(event.event_type, 0) + 1
-        points_by_team[event.team_id] = points_by_team.get(event.team_id, 0.0) + pts
+        points_by_team[event.team_id] = points_by_team.get(event.team_id, 0.0) + float(
+            event.points
+        )
 
-    bonus_points = 0.0
-    bonus_by_type: dict[str, float] = {}
-    awarded_bonuses: list[BonusAwardRow] = []
     bonus_conditions = [ManualBonus.member_id == member.id]
     if team_ids:
         bonus_conditions.append(ManualBonus.team_id.in_(team_ids))
@@ -599,26 +526,20 @@ def member_detail(
             .order_by(ManualBonus.created_at.desc())
         ).all()
     )
-    bonus_types, bonus_teams, bonus_matches = _load_bonus_context(
+    bonus_types, bonus_teams, bonus_matches = load_bonus_context(
         db, league.id, bonuses, known_teams=teams
     )
-    for bonus in bonuses:
-        pts = float(bonus.points)
-        bonus_points += pts
-        total_points += pts
-        bt = bonus_types.get(bonus.bonus_type_id)
-        label = (bt.label or bt.key) if bt else "bonus"
-        bonus_by_type[label] = bonus_by_type.get(label, 0.0) + pts
-        if bonus.team_id is not None:
-            points_by_team[bonus.team_id] = points_by_team.get(bonus.team_id, 0.0) + pts
-        awarded_bonuses.append(
-            _bonus_award_row(
-                bonus,
-                bonus_types=bonus_types,
-                teams=bonus_teams,
-                matches=bonus_matches,
-            )
-        )
+    acc = accumulate_bonus_awards(
+        bonuses,
+        bonus_types=bonus_types,
+        teams=bonus_teams,
+        matches=bonus_matches,
+        points_by_team=points_by_team,
+    )
+    bonus_points = acc.bonus_points
+    bonus_by_type = acc.bonus_by_type
+    awarded_bonuses = acc.awarded
+    total_points += bonus_points
 
     finished = (
         [
@@ -630,12 +551,9 @@ def member_detail(
         if team_ids
         else []
     )
-    games_by_team: dict[int, int] = {}
-    for match in finished:
-        if match.home_team_id in teams:
-            games_by_team[match.home_team_id] = games_by_team.get(match.home_team_id, 0) + 1
-        if match.away_team_id in teams:
-            games_by_team[match.away_team_id] = games_by_team.get(match.away_team_id, 0) + 1
+    games_by_team: dict[int, int] = {
+        tid: match_stats_service.finished_games_for_team(finished, tid) for tid in team_ids
+    }
 
     clubs: list[MemberClubRow] = []
     pick_by_team = match_stats_service.draft_pick_numbers(db, league.id)
@@ -682,11 +600,7 @@ def member_detail(
     wins = int(wdl["wins"])
     draws = int(wdl["draws"])
     losses = int(wdl["losses"])
-    upset_points = float(
-        event_points.get("minor_upset", 0)
-        + event_points.get("major_upset", 0)
-        + event_points.get("major_upset_draw", 0)
-    )
+    upset_points = match_stats_service.sum_upset_points(event_points)
     games_played = int(wdl["games_played"])
 
     return MemberDetailResponse(
@@ -729,24 +643,8 @@ def team_detail(
     ).first()
     pool = db.get(TeamPool, pool_link.pool_id) if pool_link else None
 
-    entry = db.scalars(
-        select(RosterEntry).where(
-            RosterEntry.league_id == league.id,
-            RosterEntry.team_id == team.id,
-        )
-    ).first()
-    owner = None
-    if entry:
-        member = db.get(LeagueMember, entry.member_id)
-        profile = db.get(Profile, member.profile_id) if member else None
-        owner = {
-            "member_id": str(member.public_id) if member else None,
-            "display_name": member_label(member, profile) if member else None,
-            "team_name": (member.team_name.strip() if member and member.team_name else None),
-            "acquired_via": entry.source,
-        }
-
     owner_by_team_id = owner_by_team_id_for_league(db, league)
+    owner = owner_by_team_id.get(team.id)
 
     events = db.scalars(
         select(ScoringEvent).where(
@@ -754,19 +652,16 @@ def team_detail(
             ScoringEvent.team_id == team.id,
         )
     ).all()
-    event_points: dict[str, float] = {}
-    event_counts: dict[str, int] = {}
-    total_points = 0.0
+    event_points, event_counts, total_points = match_stats_service.aggregate_event_points(
+        events
+    )
     points_by_match: dict[int, float] = {}
     for event in events:
-        pts = float(event.points)
-        total_points += pts
-        event_points[event.event_type] = event_points.get(event.event_type, 0.0) + pts
-        event_counts[event.event_type] = event_counts.get(event.event_type, 0) + 1
-        points_by_match[event.match_id] = points_by_match.get(event.match_id, 0.0) + pts
+        points_by_match[event.match_id] = points_by_match.get(event.match_id, 0.0) + float(
+            event.points
+        )
     points_by_stage = match_stats_service.points_by_stage_from_events(events)
 
-    bonus_points = 0.0
     bonuses = list(
         db.scalars(
             select(ManualBonus)
@@ -777,25 +672,18 @@ def team_detail(
             .order_by(ManualBonus.created_at.desc())
         ).all()
     )
-    bonus_types, bonus_teams, bonus_matches = _load_bonus_context(
+    bonus_types, bonus_teams, bonus_matches = load_bonus_context(
         db, league.id, bonuses, known_teams={team.id: team}
     )
-    bonus_by_type: dict[str, float] = {}
-    awarded_bonuses: list[BonusAwardRow] = []
-    for bonus in bonuses:
-        pts = float(bonus.points)
-        bonus_points += pts
-        bt = bonus_types.get(bonus.bonus_type_id)
-        label = (bt.label or bt.key) if bt else "bonus"
-        bonus_by_type[label] = bonus_by_type.get(label, 0.0) + pts
-        awarded_bonuses.append(
-            _bonus_award_row(
-                bonus,
-                bonus_types=bonus_types,
-                teams=bonus_teams,
-                matches=bonus_matches,
-            )
-        )
+    acc = accumulate_bonus_awards(
+        bonuses,
+        bonus_types=bonus_types,
+        teams=bonus_teams,
+        matches=bonus_matches,
+    )
+    bonus_points = acc.bonus_points
+    bonus_by_type = acc.bonus_by_type
+    awarded_bonuses = acc.awarded
     total_points += bonus_points
 
     matches = [
@@ -815,9 +703,10 @@ def team_detail(
     teams = {
         t.id: t for t in db.scalars(select(Team).where(Team.id.in_(team_ids))).all()
     } if team_ids else {}
+    pool_lookup = pool_lookup_for_league(db, league)
     pool_by_match_id: dict[int, TeamPool] = {}
     for m in matches:
-        match_pool = pool_for_match(db, league, m)
+        match_pool = pool_for_match(db, league, m, lookup=pool_lookup)
         if match_pool:
             pool_by_match_id[m.id] = match_pool
 
@@ -916,11 +805,7 @@ def team_detail(
     wins = int(wdl["wins"])
     draws = int(wdl["draws"])
     losses = int(wdl["losses"])
-    upset_points = float(
-        event_points.get("minor_upset", 0)
-        + event_points.get("major_upset", 0)
-        + event_points.get("major_upset_draw", 0)
-    )
+    upset_points = match_stats_service.sum_upset_points(event_points)
     games_played = int(wdl["games_played"])
 
     return TeamDetailResponse(
@@ -971,20 +856,10 @@ def sync_status(
     keys = competition_keys_from_pools(scoring_pools)
     if not keys:
         return []
-    rows = db.scalars(
-        select(SyncStatus).where(
-            or_(
-                *[
-                    and_(
-                        SyncStatus.provider == provider,
-                        SyncStatus.competition_code == competition_code,
-                        SyncStatus.season_year == season_year,
-                    )
-                    for provider, competition_code, season_year in keys
-                ]
-            )
-        )
-    ).all()
+    key_pred = competition_key_predicate_for(SyncStatus, keys)
+    if key_pred is None:
+        return []
+    rows = db.scalars(select(SyncStatus).where(key_pred)).all()
     return [
         SyncStatusResponse(
             id=row.public_id,
@@ -1013,26 +888,13 @@ def snapshot_audit(
     keys = competition_keys_from_pools(scoring_pools)
     if not keys:
         return []
-    pool_by_key: dict[tuple[str, str, int], TeamPool] = {}
-    for pool in scoring_pools:
-        if pool.competition_code is None or pool.season_year is None:
-            continue
-        key = (pool.provider, pool.competition_code, pool.season_year)
-        pool_by_key.setdefault(key, pool)
+    pool_by_key = pool_lookup_for_league(db, league, pools=scoring_pools)
+    key_pred = competition_key_predicate_for(StandingsSnapshot, keys)
+    if key_pred is None:
+        return []
     snaps = db.scalars(
         select(StandingsSnapshot)
-        .where(
-            or_(
-                *[
-                    and_(
-                        StandingsSnapshot.provider == provider,
-                        StandingsSnapshot.competition_code == competition_code,
-                        StandingsSnapshot.season_year == season_year,
-                    )
-                    for provider, competition_code, season_year in keys
-                ]
-            )
-        )
+        .where(key_pred)
         .order_by(StandingsSnapshot.kickoff_at.desc())
     ).all()
     out: list[SnapshotAuditRow] = []

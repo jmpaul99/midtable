@@ -23,6 +23,7 @@ import {
 import {
   BonusTypesListEditor,
   eventOptionsFromUpsetKeys,
+  formatPhaseFilter,
   LeaguePoolsEditor,
   normalizeBonusTypes,
   normalizePhases,
@@ -35,6 +36,7 @@ import {
   PhasesEditor,
   PayoutsEditor,
   ResultPointsEditor,
+  ReviewBlock,
   serializeUpsetRules,
   TiebreaksEditor,
   UpsetRulesEditor,
@@ -245,32 +247,11 @@ function StepTip({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
-function ReviewBlock({ title, children }: { title: string; children: ReactNode }) {
-  return (
-    <div className="rounded-xl border border-line bg-surface-2/40 px-3 py-2.5">
-      <h4 className="mb-1 text-xs font-bold uppercase tracking-wide text-muted">{title}</h4>
-      <div className="space-y-0.5 font-semibold text-ink">{children}</div>
-    </div>
-  );
-}
-
 function humanizeKey(key: string): string {
   return key
     .split("_")
     .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
     .join(" ");
-}
-
-function formatPhaseFilter(filter: LeaderboardPhase["match_filter"]): string {
-  if (filter.type === "matchweek_range") {
-    return `Matchweeks ${filter.from}–${filter.to}`;
-  }
-  if (filter.type === "stage_in") {
-    return filter.stages.length
-      ? `Stages: ${filter.stages.map(humanizeKey).join(", ")}`
-      : "Stages: none";
-  }
-  return "—";
 }
 
 function formatTiebreak(r: TiebreakRung): string {

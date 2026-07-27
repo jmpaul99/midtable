@@ -20,6 +20,7 @@ from app.schemas.leagues import (
     PoolResponse,
 )
 from app.services.members import member_label
+from app.services.phases import phase_match_filter_fields
 from app.services.preassign import effective_preassign_count
 
 def _member_role(member: LeagueMember) -> str:
@@ -66,22 +67,13 @@ def effective_roster_club_order(league: League) -> str:
 def _phases(league: League) -> list[PhaseResponse]:
     out: list[PhaseResponse] = []
     for phase in league.leaderboard_phases or []:
-        mf = phase.get("match_filter") or {}
-        matchweek_range = None
-        stage_in = None
-        if mf.get("type") == "matchweek_range":
-            fr, to = mf.get("from"), mf.get("to")
-            if fr is not None and to is not None:
-                matchweek_range = [int(fr), int(to)]
-        elif mf.get("type") == "stage_in":
-            stages = mf.get("stages") or []
-            stage_in = [str(s) for s in stages]
+        fields = phase_match_filter_fields(phase.get("match_filter") or {})
         out.append(
             PhaseResponse(
                 key=str(phase.get("key", "")),
                 name=str(phase.get("name") or phase.get("label") or phase.get("key") or ""),
-                matchweek_range=matchweek_range,
-                stage_in=stage_in,
+                matchweek_range=fields.matchweek_range,
+                stage_in=fields.stage_in,
                 is_final=bool(phase.get("is_final", False)),
             )
         )

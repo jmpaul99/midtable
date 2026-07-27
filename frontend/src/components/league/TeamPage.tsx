@@ -1,10 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
-import { api, errorMessage } from "@/lib/api";
-import { formatDate, formatNumber } from "@/lib/format";
+import { useMemo } from "react";
+import { formatDate, formatNumber, formatTeamOrientedScoreline } from "@/lib/format";
 import type {
   BonusAward,
   ScoringEventMatch,
@@ -12,6 +10,7 @@ import type {
   TeamFixture,
   UUID,
 } from "@/lib/types";
+import { matchOwnerLabel } from "@/lib/types";
 import { Empty, ErrorState, Loading, Status } from "@/components/ui/State";
 import {
   Card,
@@ -22,12 +21,13 @@ import {
   StatTile,
 } from "@/components/ui/Card";
 import { Breadcrumbs } from "@/components/ui/Breadcrumbs";
+import { useApiQuery } from "@/lib/useApiQuery";
 import { TeamCrest } from "./TeamCrest";
 import { TeamLink } from "./TeamLink";
 import { ManagerLink } from "./ManagerLink";
+import { MatchRowShell } from "./MatchRowShell";
 import { TeamScoringBreakdown } from "./TeamScoringBreakdown";
 import { StagePointsBreakdown } from "./StagePointsBreakdown";
-import { cn } from "@/lib/cn";
 
 const EVENT_LABELS: Record<string, string> = {
   win: "Win",
@@ -69,12 +69,6 @@ function FormDots({ form }: { form?: string[] }) {
   );
 }
 
-function scoreline(m: TeamFixture) {
-  return m.is_home
-    ? `${m.home_goals ?? "—"}–${m.away_goals ?? "—"}`
-    : `${m.away_goals ?? "—"}–${m.home_goals ?? "—"}`;
-}
-
 function FixtureList({
   leagueId,
   fixtures,
@@ -92,7 +86,6 @@ function FixtureList({
   bonusesByMatchId?: Map<string, BonusAward[]>;
   eventTypeLabels?: Record<string, string>;
 }) {
-  const router = useRouter();
   if (!fixtures.length) return <Empty title={empty} />;
   return (
     <ul className="flex flex-col gap-2">
@@ -118,30 +111,12 @@ function FixtureList({
             ? (m.points ?? 0) + bonusPts
             : null;
         const showBreakdown = showPoints && parts.length > 1;
-        const ownerName =
-          m.opponent_owner?.team_name?.trim() ||
-          m.opponent_owner?.display_name?.trim() ||
-          null;
+        const ownerName = matchOwnerLabel(m.opponent_owner);
         const matchHref = `/leagues/${leagueId}/matches/${m.id}`;
 
         return (
           <li key={m.id}>
-            <div
-              role="link"
-              tabIndex={0}
-              onClick={() => router.push(matchHref)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" || e.key === " ") {
-                  e.preventDefault();
-                  router.push(matchHref);
-                }
-              }}
-              className={cn(
-                "block min-w-0 cursor-pointer rounded-xl border border-line bg-surface-2/50 p-3 transition",
-                "hover:border-brand/40 hover:bg-surface active:scale-[0.99] sm:p-3.5",
-                "focus-visible:border-brand/40 focus-visible:outline-none",
-              )}
-            >
+            <MatchRowShell href={matchHref}>
               <div className="flex items-start justify-between gap-2 sm:gap-3">
                 <div className="min-w-0 flex-1">
                   <Muted className="text-[11px] leading-snug sm:text-xs">
@@ -196,14 +171,14 @@ function FixtureList({
                           </span>
                         </div>
                         <Muted className="text-[11px] tabular-nums sm:text-xs">
-                          {scoreline(m)}
+                          {formatTeamOrientedScoreline(m)}
                         </Muted>
                       </>
                     ) : null}
                   </div>
                 </div>
               </div>
-            </div>
+            </MatchRowShell>
           </li>
         );
       })}
@@ -222,16 +197,11 @@ export function TeamPage({
   teamId: UUID;
   eventTypeLabels?: Record<string, string>;
 }) {
-  const [team, setTeam] = useState<TeamDetail>();
-  const [error, setError] = useState("");
-
-  useEffect(() => {
-    setTeam(undefined);
-    setError("");
-    api<TeamDetail>(`/leagues/${leagueId}/teams/${teamId}`)
-      .then(setTeam)
-      .catch((e) => setError(errorMessage(e)));
-  }, [leagueId, teamId]);
+  const {
+    data: team,
+    error,
+    loading,
+  } = useApiQuery<TeamDetail>(`/leagues/${leagueId}/teams/${teamId}`, [leagueId, teamId]);
 
   const eventsByMatchId = useMemo(() => {
     const map = new Map<string, ScoringEventMatch[]>();
@@ -255,15 +225,13 @@ export function TeamPage({
   }, [team?.bonuses]);
 
   if (error) return <ErrorState error={error} />;
-  if (!team) return <Loading label="Loading team" />;
+  if (loading || !team) return <Loading label="Loading team" />;
 
   const s = team.stats;
   const bonuses = team.bonuses || [];
   const scoringEvents = team.scoring_events || [];
-  const ownerTeamName =
-    team.owner?.team_name?.trim() ||
-    team.owner?.display_name?.trim() ||
-    null;
+  const ownerTeamName = matchOwnerLabel(team.owner);
+  const ownerPersonName = team.owner?.display_name?.trim() || "Unknown";
 
   return (
     <Stack gap="md" className="animate-in">
@@ -310,10 +278,10 @@ export function TeamPage({
                 href={`/leagues/${leagueId}/managers/${team.owner.member_id}`}
                 className="font-semibold text-ink hover:text-brand"
               >
-                {team.owner.display_name || "Unknown"}
+                {ownerPersonName}
               </Link>
             ) : (
-              team.owner.display_name || "Unknown"
+              ownerPersonName
             )}
             {team.owner.acquired_via
               ? ` · ${team.owner.acquired_via.replaceAll("_", " ")}`

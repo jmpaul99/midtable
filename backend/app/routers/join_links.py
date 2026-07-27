@@ -21,7 +21,7 @@ from app.schemas.leagues import (
     JoinLinkResponse,
     JoinLinkUpdate,
 )
-from app.services.members import default_team_name, required_manager_count
+from app.services.members import join_or_return_member
 
 logger = logging.getLogger(__name__)
 
@@ -136,53 +136,24 @@ def claim_join_link(
     ).first()
     if league is None:
         raise HTTPException(status_code=404, detail="Join link not found or disabled")
-    if league.status not in {"pre_draft", "drafting"}:
-        raise HTTPException(status_code=409, detail="League is not accepting new managers")
 
-    existing = db.scalars(
-        select(LeagueMember).where(
-            LeagueMember.league_id == league.id,
-            LeagueMember.profile_id == profile.id,
+    member, created = join_or_return_member(db, league, profile)
+    _ensure_accepted_invite_audit(db, league=league, profile=profile)
+    db.commit()
+    if created:
+        db.refresh(member)
+        logger.info(
+            "join link claim new_member league_id=%s profile_id=%s member_id=%s",
+            league.public_id,
+            profile.public_id,
+            member.public_id,
         )
-    ).first()
-    if existing:
-        _ensure_accepted_invite_audit(db, league=league, profile=profile)
-        db.commit()
+    else:
         logger.info(
             "join link claim existing_member league_id=%s profile_id=%s",
             league.public_id,
             profile.public_id,
         )
-        base = _member_response(existing, profile)
-        return InviteAcceptResponse(**base.model_dump(), league_id=league.public_id)
-
-    member_count = len(
-        list(db.scalars(select(LeagueMember).where(LeagueMember.league_id == league.id)).all())
-    )
-    max_members = required_manager_count(league)
-    if max_members is not None and member_count >= max_members:
-        raise HTTPException(
-            status_code=409,
-            detail=f"League is full ({max_members} managers)",
-        )
-
-    member = LeagueMember(
-        league_id=league.id,
-        profile_id=profile.id,
-        is_commissioner=False,
-        draft_slot=None,
-        team_name=default_team_name(profile.display_name),
-    )
-    db.add(member)
-    _ensure_accepted_invite_audit(db, league=league, profile=profile)
-    db.commit()
-    db.refresh(member)
-    logger.info(
-        "join link claim new_member league_id=%s profile_id=%s member_id=%s",
-        league.public_id,
-        profile.public_id,
-        member.public_id,
-    )
     base = _member_response(member, profile)
     return InviteAcceptResponse(**base.model_dump(), league_id=league.public_id)
 
