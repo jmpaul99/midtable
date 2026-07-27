@@ -10,7 +10,7 @@ import type {
   TeamFixture,
   UUID,
 } from "@/lib/types";
-import { matchOwnerLabel, managerLabel } from "@/lib/types";
+import { matchOwnerLabel } from "@/lib/types";
 import { Empty, ErrorState, Loading, Status } from "@/components/ui/State";
 import {
   Card,
@@ -231,6 +231,7 @@ export function TeamPage({
   const bonuses = team.bonuses || [];
   const scoringEvents = team.scoring_events || [];
   const ownerTeamName = matchOwnerLabel(team.owner);
+  const ownerPersonName = team.owner?.display_name?.trim() || "Unknown";
 
   return (
     <Stack gap="md" className="animate-in">
@@ -277,10 +278,10 @@ export function TeamPage({
                 href={`/leagues/${leagueId}/managers/${team.owner.member_id}`}
                 className="font-semibold text-ink hover:text-brand"
               >
-                {managerLabel(team.owner, "Unknown")}
+                {ownerPersonName}
               </Link>
             ) : (
-              managerLabel(team.owner, "Unknown")
+              ownerPersonName
             )}
             {team.owner.acquired_via
               ? ` · ${team.owner.acquired_via.replaceAll("_", " ")}`
