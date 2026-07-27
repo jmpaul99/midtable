@@ -260,7 +260,6 @@ def award_manual_bonus(
         bonus_type_id=bonus_type.id,
         points=points,
         notes=payload.notes,
-        created_by_profile_id=profile.id,
     )
     db.add(row)
     db.commit()

@@ -140,6 +140,17 @@ export function RequireAuth({ children }: { children: ReactNode }) {
         router.replace("/");
         return;
       }
+      // Join / invite links should start sign-in immediately; other gated pages
+      // bounce through the marketing home with a resume `next` param.
+      const startAuth =
+        pathname === "/join" ||
+        pathname.startsWith("/join/") ||
+        pathname === "/invites/accept" ||
+        pathname.startsWith("/invites/accept/");
+      if (startAuth) {
+        router.replace(`/login?next=${encodeURIComponent(next)}`);
+        return;
+      }
       router.replace(`/?next=${encodeURIComponent(next)}`);
     }
   }, [loading, session, router, pathname]);

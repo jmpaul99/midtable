@@ -13,7 +13,8 @@ import jwt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jwt import InvalidTokenError, PyJWK
-from sqlalchemy import select
+from sqlalchemy import select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.config import Settings, get_settings
@@ -134,6 +135,70 @@ def display_name_from_claims(claims: dict[str, Any]) -> str | None:
     return normalize_display_name(str(raw) if raw is not None else None)
 
 
+def _find_profile(
+    db: Session,
+    *,
+    email: str,
+    auth_user_id: UUID | None,
+) -> Profile | None:
+    if auth_user_id is not None:
+        by_auth = db.scalars(
+            select(Profile).where(Profile.auth_user_id == auth_user_id)
+        ).first()
+        if by_auth is not None:
+            return by_auth
+    return db.scalars(select(Profile).where(Profile.email == email)).first()
+
+
+def _require_live_auth_user(db: Session, auth_user_id: UUID | None) -> None:
+    """Reject JWTs whose Supabase auth row was already deleted."""
+    if auth_user_id is None:
+        return
+    row = db.execute(
+        text("SELECT 1 FROM auth.users WHERE id = :id LIMIT 1"),
+        {"id": str(auth_user_id)},
+    ).first()
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Account no longer exists",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+
+def _apply_profile_updates(
+    db: Session,
+    profile: Profile,
+    *,
+    auth_user_id: UUID | None,
+    display_name: str | None,
+    email: str | None = None,
+) -> Profile:
+    if auth_user_id and profile.auth_user_id is None:
+        profile.auth_user_id = auth_user_id
+    if email is not None:
+        normalized_email = email.strip().lower()
+        if normalized_email and profile.email != normalized_email:
+            conflict = db.scalars(
+                select(Profile).where(
+                    Profile.email == normalized_email,
+                    Profile.id != profile.id,
+                )
+            ).first()
+            if conflict is None:
+                profile.email = normalized_email
+            else:
+                logger.warning(
+                    "profile email sync skipped conflict profile_id=%s email=%s",
+                    profile.public_id,
+                    normalized_email,
+                )
+    chosen = normalize_display_name(display_name)
+    if chosen and profile.display_name == DEFAULT_DISPLAY_NAME:
+        profile.display_name = chosen
+    return profile
+
+
 def get_or_create_profile(
     db: Session,
     *,
@@ -144,24 +209,52 @@ def get_or_create_profile(
     """Create or return a profile for any authenticated user.
 
     League membership remains gated by personal invite accept or join-link claim.
+    Concurrent first-login requests are safe: insert races re-load the winner.
     """
     normalized = email.strip().lower()
-    profile = db.scalars(select(Profile).where(Profile.email == normalized)).first()
-    if profile:
-        if auth_user_id and profile.auth_user_id is None:
-            profile.auth_user_id = auth_user_id
-        chosen = normalize_display_name(display_name)
-        if chosen and profile.display_name == DEFAULT_DISPLAY_NAME:
-            profile.display_name = chosen
-        return profile
+    existing = _find_profile(db, email=normalized, auth_user_id=auth_user_id)
+    if existing is not None:
+        return _apply_profile_updates(
+            db,
+            existing,
+            auth_user_id=auth_user_id,
+            display_name=display_name,
+            email=normalized,
+        )
+
     chosen = normalize_display_name(display_name) or DEFAULT_DISPLAY_NAME
-    profile = Profile(
-        email=normalized,
-        auth_user_id=auth_user_id,
-        display_name=chosen,
-    )
-    db.add(profile)
-    db.flush()
+    try:
+        with db.begin_nested():
+            profile = Profile(
+                email=normalized,
+                auth_user_id=auth_user_id,
+                display_name=chosen,
+            )
+            db.add(profile)
+            db.flush()
+    except IntegrityError:
+        # Loser of a concurrent insert may not see the winner immediately;
+        # retry the lookup briefly before surfacing the conflict.
+        raced: Profile | None = None
+        for _ in range(3):
+            raced = _find_profile(db, email=normalized, auth_user_id=auth_user_id)
+            if raced is not None:
+                break
+            db.expire_all()
+        if raced is None:
+            raise
+        logger.info(
+            "profile create race resolved profile_id=%s",
+            raced.public_id,
+        )
+        return _apply_profile_updates(
+            db,
+            raced,
+            auth_user_id=auth_user_id,
+            display_name=display_name,
+            email=normalized,
+        )
+
     logger.info("profile created profile_id=%s", profile.public_id)
     logger.debug("profile created email=%s", normalized)
     return profile
@@ -214,6 +307,9 @@ def get_current_profile(
     user: AuthenticatedUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> Profile:
+    # Deleted accounts remove auth.users; reject lingering JWTs so they cannot
+    # resurrect a profile via get_or_create_profile.
+    _require_live_auth_user(db, user.auth_user_id)
     profile = get_or_create_profile(
         db,
         email=user.email,
@@ -222,4 +318,25 @@ def get_current_profile(
     )
     db.commit()
     db.refresh(profile)
+    return profile
+
+
+def require_existing_profile(
+    user: AuthenticatedUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> Profile:
+    """Return the caller's profile without creating one.
+
+    Used by destructive endpoints (e.g. account deletion) so a valid JWT
+    cannot recreate a profile that was already removed. Does not sync email so
+    callers can still purge invites addressed to the previous address.
+    """
+    _require_live_auth_user(db, user.auth_user_id)
+    normalized = user.email.strip().lower()
+    profile = _find_profile(db, email=normalized, auth_user_id=user.auth_user_id)
+    if profile is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Profile not found",
+        )
     return profile

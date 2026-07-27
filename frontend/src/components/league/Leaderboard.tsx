@@ -174,7 +174,9 @@ export function Leaderboard({ league }: { league: League }) {
               </thead>
               <tbody>
                 {rows.map((r, i) => {
-                  const tied = i > 0 && rows[i - 1].rank === r.rank;
+                  const tied =
+                    (i > 0 && rows[i - 1].rank === r.rank) ||
+                    (i < rows.length - 1 && rows[i + 1].rank === r.rank);
                   const { teamName, ownerName } = rowLabels(league, r);
                   const href = managerHref(league.id, r.member_id);
                   return (
@@ -200,10 +202,10 @@ export function Leaderboard({ league }: { league: League }) {
                       )}
                     >
                       <td className="px-3 py-3 align-middle">
-                        <div className="flex items-center gap-1.5">
-                          <RankBadge value={r.rank} first={r.rank === 1} />
-                          {tied && <Muted className="text-xs">T</Muted>}
-                        </div>
+                        <RankBadge
+                          value={tied ? `T-${r.rank}` : r.rank}
+                          first={r.rank === 1}
+                        />
                       </td>
                       <td className="max-w-[8rem] truncate px-3 py-3 align-middle sm:max-w-[14rem]">
                         <span className="font-semibold text-ink transition group-hover:text-brand">

@@ -1,0 +1,45 @@
+---
+description: Always use backend/.venv for Python and pytest
+alwaysApply: true
+---
+
+# Python virtualenv
+
+Backend Python lives in `backend/`. Local deps and pytest are installed in `backend/.venv`.
+
+**Never** run `python`, `pip`, or `pytest` from the system interpreter for this repo. Always use the venv.
+
+## Commands (prefer these)
+
+From repo root on Windows (PowerShell):
+
+```powershell
+backend\.venv\Scripts\python.exe -m pytest -q
+backend\.venv\Scripts\python.exe -m pip install -e "backend[dev]"
+backend\.venv\Scripts\python.exe -m app.scripts.seed_pl_template
+```
+
+From `backend/` on Windows:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest -q
+```
+
+macOS/Linux equivalents:
+
+```bash
+backend/.venv/bin/python -m pytest -q
+```
+
+## Working directory
+
+- Run pytest with cwd `backend/` (or pass paths that resolve correctly with `pythonpath = ["."]` from `backend/pyproject.toml`).
+- App modules are under `backend/app/`; scripts use `python -m app.scripts.<name>` from `backend/`.
+
+## If the venv is missing
+
+```powershell
+cd backend
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -e ".[dev]"
+```

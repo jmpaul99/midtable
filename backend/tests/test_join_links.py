@@ -100,6 +100,7 @@ def test_claim_join_link_success():
     # league lookup, existing member (none), member count, invite audit (none)
     db.scalars.return_value.first.side_effect = [league, None, None]
     db.scalars.return_value.all.return_value = []
+    db.scalar.return_value = None  # no existing draft slots → assign 1
     db.get = MagicMock()
 
     with patch("app.routers.join_links._member_response") as member_resp:
@@ -110,7 +111,7 @@ def test_claim_join_link_success():
                 "team_name": "Joiner's Team",
                 "email": profile.email,
                 "is_commissioner": False,
-                "draft_slot": None,
+                "draft_slot": 1,
                 "role": "member",
             }
         )
@@ -121,6 +122,8 @@ def test_claim_join_link_success():
         )
     assert out.league_id == league.public_id
     assert db.add.call_count >= 1
+    added_member = db.add.call_args_list[0].args[0]
+    assert added_member.draft_slot == 1
     db.commit.assert_called()
 
 
@@ -243,3 +246,190 @@ def test_get_or_create_profile_without_invite():
     assert profile.email == "newbie@example.com"
     db.add.assert_called_once()
     db.flush.assert_called_once()
+    db.begin_nested.assert_called_once()
+
+
+def test_get_or_create_profile_resolves_insert_race():
+    from sqlalchemy.exc import IntegrityError
+
+    auth_id = uuid4()
+    existing = SimpleNamespace(
+        public_id=uuid4(),
+        email="racer@example.com",
+        auth_user_id=auth_id,
+        display_name="Display Name",
+    )
+    db = MagicMock()
+    # First pass: no profile by auth or email. After flush race: find by auth.
+    db.scalars.return_value.first.side_effect = [None, None, existing]
+    nested = MagicMock()
+    nested.__enter__.return_value = nested
+    nested.__exit__.return_value = None
+    db.begin_nested.return_value = nested
+    db.flush.side_effect = IntegrityError("stmt", {}, Exception("duplicate"))
+
+    profile = get_or_create_profile(
+        db,
+        email="racer@example.com",
+        auth_user_id=auth_id,
+        display_name="Racer",
+    )
+    assert profile is existing
+    assert profile.display_name == "Racer"
+    db.add.assert_called_once()
+    db.flush.assert_called_once()
+
+
+def test_get_or_create_profile_retries_when_winner_not_yet_visible():
+    from sqlalchemy.exc import IntegrityError
+
+    auth_id = uuid4()
+    existing = SimpleNamespace(
+        public_id=uuid4(),
+        email="racer@example.com",
+        auth_user_id=auth_id,
+        display_name="Display Name",
+    )
+    db = MagicMock()
+    # Initial find miss; after IntegrityError, first recovery miss then hit.
+    db.scalars.return_value.first.side_effect = [
+        None,
+        None,
+        None,
+        None,
+        existing,
+    ]
+    nested = MagicMock()
+    nested.__enter__.return_value = nested
+    nested.__exit__.return_value = None
+    db.begin_nested.return_value = nested
+    db.flush.side_effect = IntegrityError("stmt", {}, Exception("duplicate"))
+
+    profile = get_or_create_profile(
+        db,
+        email="racer@example.com",
+        auth_user_id=auth_id,
+        display_name="Racer",
+    )
+    assert profile is existing
+    assert db.expire_all.call_count >= 1
+
+
+def test_get_or_create_profile_syncs_stale_email():
+    auth_id = uuid4()
+    existing = SimpleNamespace(
+        id=1,
+        public_id=uuid4(),
+        email="old@example.com",
+        auth_user_id=auth_id,
+        display_name="Alex",
+    )
+    db = MagicMock()
+    # Find by auth, then conflict check finds no other owner.
+    db.scalars.return_value.first.side_effect = [existing, None]
+
+    profile = get_or_create_profile(
+        db,
+        email="new@example.com",
+        auth_user_id=auth_id,
+        display_name=None,
+    )
+    assert profile is existing
+    assert profile.email == "new@example.com"
+    db.add.assert_not_called()
+
+
+def test_get_or_create_profile_skips_email_sync_on_conflict():
+    auth_id = uuid4()
+    existing = SimpleNamespace(
+        id=1,
+        public_id=uuid4(),
+        email="old@example.com",
+        auth_user_id=auth_id,
+        display_name="Alex",
+    )
+    other = SimpleNamespace(id=2, email="new@example.com")
+    db = MagicMock()
+    db.scalars.return_value.first.side_effect = [existing, other]
+
+    profile = get_or_create_profile(
+        db,
+        email="new@example.com",
+        auth_user_id=auth_id,
+        display_name=None,
+    )
+    assert profile is existing
+    assert profile.email == "old@example.com"
+
+
+def test_require_existing_profile_raises_when_missing():
+    from fastapi import HTTPException
+
+    from app.auth.jwt import AuthenticatedUser, require_existing_profile
+
+    db = MagicMock()
+    db.execute.return_value.first.return_value = (1,)
+    db.scalars.return_value.first.return_value = None
+    user = AuthenticatedUser(
+        auth_user_id=uuid4(),
+        email="gone@example.com",
+        role="authenticated",
+        claims={},
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        require_existing_profile(user=user, db=db)
+
+    assert exc.value.status_code == 404
+    db.commit.assert_not_called()
+    db.add.assert_not_called()
+
+
+def test_require_existing_profile_returns_without_creating_or_email_sync():
+    from app.auth.jwt import AuthenticatedUser, require_existing_profile
+
+    auth_id = uuid4()
+    existing = SimpleNamespace(
+        public_id=uuid4(),
+        email="old@example.com",
+        auth_user_id=auth_id,
+        display_name="Alex",
+    )
+    db = MagicMock()
+    db.execute.return_value.first.return_value = (1,)
+    db.scalars.return_value.first.return_value = existing
+    user = AuthenticatedUser(
+        auth_user_id=auth_id,
+        email="new@example.com",
+        role="authenticated",
+        claims={},
+    )
+
+    profile = require_existing_profile(user=user, db=db)
+
+    assert profile is existing
+    assert profile.email == "old@example.com"
+    db.add.assert_not_called()
+    db.commit.assert_not_called()
+
+
+def test_get_current_profile_rejects_deleted_auth_user():
+    from fastapi import HTTPException
+
+    from app.auth.jwt import AuthenticatedUser, get_current_profile
+
+    db = MagicMock()
+    db.execute.return_value.first.return_value = None
+    user = AuthenticatedUser(
+        auth_user_id=uuid4(),
+        email="deleted@example.com",
+        role="authenticated",
+        claims={},
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        get_current_profile(user=user, db=db)
+
+    assert exc.value.status_code == 401
+    db.add.assert_not_called()
+    db.commit.assert_not_called()

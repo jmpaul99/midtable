@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.auth.jwt import MAX_DISPLAY_NAME_LEN
-from app.models import League, LeagueMember, Profile
+from app.models import Invite, League, LeagueMember, Profile
 
 
 def default_team_name(display_name: str | None) -> str:
@@ -68,6 +68,42 @@ def required_manager_count(league) -> int | None:
         return None
 
 
+def next_draft_slot(db: Session, league_id: int) -> int:
+    """Return the lowest free draft slot (1, 2, …) for this league.
+
+    Considers both current members and pending invites that already reserved a
+    slot, so join-link auto-assignment cannot steal a reserved invite slot or
+    create gaps that break open_draft's contiguous 1..N requirement.
+
+    Locks the league row so concurrent join / invite-accept callers serialize
+    slot assignment and avoid colliding on the partial unique index.
+    """
+    db.get(League, league_id, with_for_update=True)
+    used = {
+        int(slot)
+        for slot in db.scalars(
+            select(LeagueMember.draft_slot).where(
+                LeagueMember.league_id == league_id,
+                LeagueMember.draft_slot.is_not(None),
+            )
+        ).all()
+    }
+    used.update(
+        int(slot)
+        for slot in db.scalars(
+            select(Invite.draft_slot).where(
+                Invite.league_id == league_id,
+                Invite.status == "pending",
+                Invite.draft_slot.is_not(None),
+            )
+        ).all()
+    )
+    slot = 1
+    while slot in used:
+        slot += 1
+    return slot
+
+
 def join_or_return_member(
     db: Session,
     league: League,
@@ -78,6 +114,9 @@ def join_or_return_member(
 ) -> tuple[LeagueMember, bool]:
     """Return existing membership or create one. Does not commit.
 
+    New members in pre_draft without an explicit draft_slot get the next
+    available slot. Mid-draft joiners keep a null slot so they are not folded
+    into the active turn order.
     Raises HTTPException 409 when the league is closed or full.
     Caller owns draft_slot uniqueness checks and invite/audit side effects.
     """
@@ -102,6 +141,12 @@ def join_or_return_member(
             status_code=409,
             detail=f"League is full ({max_members} managers)",
         )
+
+    if draft_slot is None and league.status == "pre_draft":
+        # Auto-append only before the draft starts. Mid-draft assignment would
+        # expand turn order while current_pick_number still reflects the
+        # earlier manager count.
+        draft_slot = next_draft_slot(db, league.id)
 
     member = LeagueMember(
         league_id=league.id,

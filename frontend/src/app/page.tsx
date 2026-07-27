@@ -82,6 +82,17 @@ export default function HomePage() {
   );
 }
 
+function isJoinOrInviteNext(next: string) {
+  return (
+    next === "/join" ||
+    next.startsWith("/join?") ||
+    next.startsWith("/join/") ||
+    next === "/invites/accept" ||
+    next.startsWith("/invites/accept?") ||
+    next.startsWith("/invites/accept/")
+  );
+}
+
 function HomeContent() {
   const { session, loading } = useAuth();
   const router = useRouter();
@@ -89,7 +100,13 @@ function HomeContent() {
   const next = safeNext(search.get("next"));
 
   useEffect(() => {
-    if (loading || !session || !next) return;
+    if (loading) return;
+    // Legacy join/invite `/?next=…` bookmarks should still open sign-in directly.
+    if (!session && next && isJoinOrInviteNext(next)) {
+      router.replace(`/login?next=${encodeURIComponent(next)}`);
+      return;
+    }
+    if (!session || !next) return;
     router.replace(next);
   }, [loading, session, next, router]);
 
@@ -98,6 +115,9 @@ function HomeContent() {
   }
 
   if (!session) {
+    if (next && isJoinOrInviteNext(next)) {
+      return <Loading label="Opening sign-in" />;
+    }
     return <LandingPage />;
   }
 

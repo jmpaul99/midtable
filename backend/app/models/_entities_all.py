@@ -42,6 +42,12 @@ class Profile(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
+    # DB FK uses ON DELETE CASCADE; passive_deletes keeps the ORM from SETting
+    # member.profile_id to NULL when a Profile is deleted while members are loaded.
+    memberships: Mapped[list["LeagueMember"]] = relationship(
+        back_populates="profile",
+        passive_deletes=True,
+    )
 
 class CompetitionTemplate(Base):
     __tablename__ = "competition_templates"
@@ -102,8 +108,16 @@ class League(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
-    members: Mapped[list["LeagueMember"]] = relationship(back_populates="league")
-    pools: Mapped[list["TeamPool"]] = relationship(back_populates="league")
+    # DB FKs use ON DELETE CASCADE; passive_deletes keeps the ORM from SETting
+    # child FKs to NULL when a League is deleted while related rows are in session.
+    members: Mapped[list["LeagueMember"]] = relationship(
+        back_populates="league",
+        passive_deletes=True,
+    )
+    pools: Mapped[list["TeamPool"]] = relationship(
+        back_populates="league",
+        passive_deletes=True,
+    )
 
 
 class Invite(Base):
@@ -156,7 +170,7 @@ class LeagueMember(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     league: Mapped[League] = relationship(back_populates="members")
-    profile: Mapped[Profile] = relationship()
+    profile: Mapped[Profile] = relationship(back_populates="memberships")
 
 
 class TeamPool(Base):
@@ -460,7 +474,6 @@ class ManualBonus(Base):
     bonus_type_id: Mapped[int] = mapped_column(ForeignKey("bonus_types.id", ondelete="CASCADE"))
     points: Mapped[Decimal] = mapped_column(Numeric(10, 2))
     notes: Mapped[str | None] = mapped_column(Text)
-    created_by_profile_id: Mapped[int | None] = mapped_column(ForeignKey("profiles.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
