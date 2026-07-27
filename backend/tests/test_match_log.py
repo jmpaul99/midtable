@@ -175,7 +175,7 @@ def test_match_log_results_pagination_and_owners(
     ]
     league = SimpleNamespace(id=1)
     member = SimpleNamespace(id=99, public_id=uuid4())
-    db = _db_for_matches(matches[:3], [home, away])  # limit+1 would be needed; we return 3 for limit=2
+    db = _db_for_matches(matches[:3], [home, away])
 
     page = match_log(
         membership=(league, member),
@@ -188,12 +188,83 @@ def test_match_log_results_pagination_and_owners(
         member_id=None,
         mine=False,
         sort="kickoff",
+        q=None,
     )
     assert page.has_more is True
     assert len(page.items) == 2
     assert page.items[0].home_owner["team_name"] == "Gunners"
     assert page.items[0].away_owner["display_name"] == "Sam"
     assert page.items[0].pool_label == "Premier League"
+
+
+@patch("app.routers.league_reads.owner_by_team_id_for_league")
+@patch("app.routers.league_reads.pool_lookup_for_league")
+@patch("app.routers.league_reads.scoring_pools_for_league")
+@patch("app.routers.league_reads.competition_keys_from_pools")
+def test_match_log_kickoff_pages_after_dropped_rows(
+    keys_mock, pools_mock, lookup_mock, owners_mock
+):
+    """Rows dropped post-query must not skew offset/has_more (Bugbot finding)."""
+    pool = _pool()
+    pools_mock.return_value = [pool]
+    keys_mock.return_value = [(pool.provider, pool.competition_code, pool.season_year)]
+    # First match has no pool mapping and is dropped before paging.
+    lookup_mock.return_value = {
+        (pool.provider, pool.competition_code, pool.season_year): pool
+    }
+    owners_mock.return_value = {}
+    home = _team(tid=10, name="Arsenal")
+    away = _team(tid=20, name="Chelsea")
+    t0 = datetime(2026, 8, 1, 12, tzinfo=UTC)
+    t1 = datetime(2026, 8, 8, 12, tzinfo=UTC)
+    t2 = datetime(2026, 8, 15, 12, tzinfo=UTC)
+    orphan = _match(
+        mid=1, home=10, away=20, status="FINISHED", kickoff=t2, home_goals=2, away_goals=1
+    )
+    orphan.competition_code = "CL"  # not in pool lookup → dropped
+    kept_a = _match(
+        mid=2, home=10, away=20, status="FINISHED", kickoff=t1, home_goals=0, away_goals=0
+    )
+    kept_b = _match(
+        mid=3, home=10, away=20, status="FINISHED", kickoff=t0, home_goals=1, away_goals=0
+    )
+    league = SimpleNamespace(id=1)
+    member = SimpleNamespace(id=99, public_id=uuid4())
+    db = _db_for_matches([orphan, kept_a, kept_b], [home, away])
+
+    page0 = match_log(
+        membership=(league, member),
+        db=db,
+        section="results",
+        limit=1,
+        offset=0,
+        pool_id=None,
+        team_id=None,
+        member_id=None,
+        mine=False,
+        sort="kickoff",
+        q=None,
+    )
+    assert len(page0.items) == 1
+    assert page0.items[0].id == kept_a.public_id
+    assert page0.has_more is True
+
+    page1 = match_log(
+        membership=(league, member),
+        db=db,
+        section="results",
+        limit=1,
+        offset=1,
+        pool_id=None,
+        team_id=None,
+        member_id=None,
+        mine=False,
+        sort="kickoff",
+        q=None,
+    )
+    assert len(page1.items) == 1
+    assert page1.items[0].id == kept_b.public_id
+    assert page1.has_more is False
 
 
 @patch("app.routers.league_reads.owner_by_team_id_for_league")
@@ -236,6 +307,7 @@ def test_match_log_points_sort(
         member_id=None,
         mine=False,
         sort="points",
+        q=None,
     )
     assert len(page.items) == 2
     assert page.items[0].id == high.public_id
@@ -260,6 +332,7 @@ def test_match_log_unknown_pool_404(pools_mock):
             member_id=None,
             mine=False,
             sort="kickoff",
+            q=None,
         )
     assert exc.value.status_code == 404
 

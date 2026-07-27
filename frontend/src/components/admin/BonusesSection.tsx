@@ -1,14 +1,14 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
-import { api } from "@/lib/api";
+import { FormEvent, useMemo, useRef, useState } from "react";
 import { formatNumber } from "@/lib/format";
-import type { Bonus, BonusTarget, League, Manager, MatchLogPage, MatchLogRow, PoolTeam, UUID } from "@/lib/types";
+import type { Bonus, BonusTarget, League, Manager, MatchLogRow, PoolTeam, UUID } from "@/lib/types";
 import { managerLabel } from "@/lib/types";
 import { Empty, StatusBanner } from "@/components/ui/State";
 import { IconButton } from "@/components/ui/IconButton";
 import { AwardIcon, BanIcon } from "@/components/ui/icons";
 import { Autocomplete } from "@/components/ui/Autocomplete";
+import { MatchAutocomplete } from "@/components/admin/MatchAutocomplete";
 import { Card, Muted, Stack } from "@/components/ui/Card";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { Input, Label } from "@/components/ui/Field";
@@ -23,15 +23,6 @@ const TARGETS: Array<{ id: BonusTarget; label: string }> = [
   { id: "match", label: "Match" },
   { id: "manager", label: "Manager" },
 ];
-
-function matchOptionLabel(m: MatchLogRow): string {
-  const score =
-    m.home_goals != null && m.away_goals != null
-      ? ` ${m.home_goals}-${m.away_goals}`
-      : "";
-  const mw = m.scheduled_matchweek != null ? ` · MW${m.scheduled_matchweek}` : "";
-  return `${m.home_team_name} vs ${m.away_team_name}${score}${mw}`;
-}
 
 function historyTargetLabel(b: Bonus): string {
   if (b.target === "manager" || (!b.team_id && b.display_name)) {
@@ -90,32 +81,12 @@ export function BonusesSection({
   const [target, setTarget] = useState<BonusTarget>("team");
   const [awardTeamId, setAwardTeamId] = useState("");
   const [awardMatchId, setAwardMatchId] = useState("");
+  const [selectedMatch, setSelectedMatch] = useState<MatchLogRow | null>(null);
   const [awardMemberId, setAwardMemberId] = useState("");
   const [awardTypeId, setAwardTypeId] = useState("");
-  const [matches, setMatches] = useState<MatchLogRow[]>([]);
-  const [matchesLoading, setMatchesLoading] = useState(false);
   const [awardConfirmOpen, setAwardConfirmOpen] = useState(false);
   const [pendingRevokeId, setPendingRevokeId] = useState<UUID | null>(null);
   const pendingAwardForm = useRef<HTMLFormElement | null>(null);
-
-  useEffect(() => {
-    if (tab !== "award" || target !== "match") return;
-    let cancelled = false;
-    setMatchesLoading(true);
-    api<MatchLogPage>(`/leagues/${leagueId}/match-log?section=results&limit=50`)
-      .then((page) => {
-        if (!cancelled) setMatches(page.items);
-      })
-      .catch(() => {
-        if (!cancelled) setMatches([]);
-      })
-      .finally(() => {
-        if (!cancelled) setMatchesLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [tab, target, leagueId]);
 
   const teamOptions = useMemo(
     () =>
@@ -125,17 +96,6 @@ export function BonusesSection({
       })),
     [allTeams],
   );
-
-  const matchOptions = useMemo(
-    () =>
-      matches.map((m) => ({
-        value: m.id,
-        label: matchOptionLabel(m),
-      })),
-    [matches],
-  );
-
-  const selectedMatch = matches.find((m) => m.id === awardMatchId);
 
   const matchTeamOptions = useMemo(() => {
     if (!selectedMatch) return [];
@@ -190,6 +150,7 @@ export function BonusesSection({
     form?.reset();
     setAwardTeamId("");
     setAwardMatchId("");
+    setSelectedMatch(null);
     setAwardMemberId("");
     setAwardTypeId("");
   }
@@ -198,6 +159,7 @@ export function BonusesSection({
     setTarget(next);
     setAwardTeamId("");
     setAwardMatchId("");
+    setSelectedMatch(null);
     setAwardMemberId("");
   }
 
@@ -322,18 +284,17 @@ export function BonusesSection({
                 <>
                   <Label>
                     Match
-                    <Autocomplete
+                    <MatchAutocomplete
+                      leagueId={leagueId}
                       value={awardMatchId}
-                      onChange={(id) => {
+                      selectedMatch={selectedMatch}
+                      onChange={(id, match) => {
                         setAwardMatchId(id);
+                        setSelectedMatch(match);
                         setAwardTeamId("");
                       }}
-                      options={matchOptions}
                       required
-                      placeholder={matchesLoading ? "Loading matches…" : "Search matches…"}
-                      emptyMessage={
-                        matchesLoading ? "Loading matches…" : "No matches match."
-                      }
+                      placeholder="Search by club name…"
                     />
                   </Label>
                   <Label>

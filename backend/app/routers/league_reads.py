@@ -330,6 +330,7 @@ def match_log(
     member_id: UUID | None = None,
     mine: bool = False,
     sort: str = Query(default="kickoff", pattern="^(kickoff|points)$"),
+    q: str | None = Query(default=None, max_length=80),
 ) -> MatchLogPage:
     league, current_member = membership
     pools = scoring_pools_for_league(db, league)
@@ -359,6 +360,23 @@ def match_log(
         club = team_in_league(db, league.id, team_id)
         filters.append(or_(Match.home_team_id == club.id, Match.away_team_id == club.id))
 
+    needle = (q or "").strip()
+    if needle:
+        like = f"%{needle}%"
+        matching_team_ids = select(Team.id).where(
+            or_(
+                Team.name.ilike(like),
+                Team.short_name.ilike(like),
+                Team.tla.ilike(like),
+            )
+        )
+        filters.append(
+            or_(
+                Match.home_team_id.in_(matching_team_ids),
+                Match.away_team_id.in_(matching_team_ids),
+            )
+        )
+
     owner_member: LeagueMember | None = None
     if mine:
         owner_member = current_member
@@ -385,6 +403,8 @@ def match_log(
         )
 
     use_points_sort = sort == "points" and section == "results"
+    # Load the full filtered set before paging. Rows may be dropped after the
+    # SQL query (missing pool / teams), so offset/limit must apply to final rows.
     if use_points_sort:
         matches = list(db.scalars(select(Match).where(*filters)).all())
     else:
@@ -394,22 +414,8 @@ def match_log(
             else (Match.kickoff_at.desc(), Match.id.desc())
         )
         matches = list(
-            db.scalars(
-                select(Match)
-                .where(*filters)
-                .order_by(*order)
-                .offset(offset)
-                .limit(limit + 1)
-            ).all()
+            db.scalars(select(Match).where(*filters).order_by(*order)).all()
         )
-
-    has_more = False
-    if use_points_sort:
-        # Points sort needs scores before paging; kickoff path pages in SQL.
-        pass
-    else:
-        has_more = len(matches) > limit
-        matches = matches[:limit]
 
     team_ids = {m.home_team_id for m in matches} | {m.away_team_id for m in matches}
     teams = {
@@ -471,8 +477,9 @@ def match_log(
             return max(row.home_points or 0.0, row.away_points or 0.0)
 
         rows.sort(key=lambda r: (_max_pts(r), r.kickoff_at), reverse=True)
-        has_more = len(rows) > offset + limit
-        rows = rows[offset : offset + limit]
+
+    has_more = len(rows) > offset + limit
+    rows = rows[offset : offset + limit]
 
     return MatchLogPage(items=rows, has_more=has_more)
 
