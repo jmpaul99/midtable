@@ -16,8 +16,10 @@ import { TeamCrest } from "./TeamCrest";
 import { TeamLink } from "./TeamLink";
 import { ManagerLink } from "./ManagerLink";
 import { DraftAdminPanel } from "./DraftAdminPanel";
+import { DraftSettingsSummary } from "./DraftSettingsSummary";
 
 type DraftableTeam = PoolTeam & { pool_id: string; pool_label: string };
+type DraftPhase = "pre" | "live" | "done";
 
 function formatCountdown(ms: number): string {
   if (ms <= 0) return "0:00";
@@ -25,6 +27,15 @@ function formatCountdown(ms: number): string {
   const m = Math.floor(totalSec / 60);
   const s = totalSec % 60;
   return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+function draftPhase(status: string | undefined, leagueStatus: string): DraftPhase {
+  if (status === "complete" || status === "completed") return "done";
+  if (status && ["running", "open"].includes(status)) return "live";
+  if (status && ["pending", "paused", "cancelled"].includes(status)) return "pre";
+  if (leagueStatus === "pre_draft") return "pre";
+  if (leagueStatus === "drafting") return "live";
+  return "done";
 }
 
 function PickClock({ deadlineAt }: { deadlineAt: string }) {
@@ -160,6 +171,8 @@ export function DraftBoard({
     (typeof league.settings?.draft_scheduled_at === "string"
       ? league.settings.draft_scheduled_at
       : null);
+  const pickTimerSeconds =
+    state?.pick_timer_seconds ?? league.pick_timer_seconds ?? null;
   const scheduleOverdue =
     Boolean(scheduledAt) &&
     state?.status === "pending" &&
@@ -182,7 +195,8 @@ export function DraftBoard({
   }, [draftStatus, scheduledAt, load]);
 
   const onClock = state?.current_member_id || state?.on_clock_member_id || null;
-  const running = state && ["running", "open"].includes(state.status);
+  const phase = draftPhase(state?.status, league.status);
+  const running = phase === "live";
   const myTurn = Boolean(running && onClock === league.current_member_id);
   const selected =
     availableTeams.find((t) => t.id === team && t.pool_id === teamPoolId) ||
@@ -275,10 +289,90 @@ export function DraftBoard({
     }
   }
 
-  return (
-    <Stack gap="md" className="animate-in">
+  function renderPickHistory(opts?: { emptyTitle?: string; showOnClock?: boolean }) {
+    if (!state) return null;
+    const emptyTitle = opts?.emptyTitle ?? "No picks made";
+    const showOnClock = opts?.showOnClock ?? false;
+    return (
+      <Card>
+        <Stack>
+          <Row between>
+            <div>
+              {phase === "done" ? (
+                <>
+                  <Eyebrow>Finished</Eyebrow>
+                  <h2>Pick history</h2>
+                </>
+              ) : phase === "pre" ? (
+                <>
+                  <Eyebrow>Not started</Eyebrow>
+                  <h2>Picks</h2>
+                </>
+              ) : (
+                <>
+                  <Eyebrow>Round {state.current_round}</Eyebrow>
+                  <h2>Pick {state.current_pick_number}</h2>
+                </>
+              )}
+            </div>
+            <Status value={state.status} />
+          </Row>
+          {showOnClock && (
+            <StatusBanner>
+              <strong>On the clock: </strong>
+              {onClock ? renderManagerName(onClock) : "Not started"}
+            </StatusBanner>
+          )}
+          {!state.picks.length ? (
+            <Empty title={emptyTitle} />
+          ) : (
+            <ul className="flex flex-col gap-2">
+              {state.picks.map((p, i) => {
+                const crest =
+                  p.crest_url ??
+                  (p.team_id ? crestByTeamId.get(p.team_id) : null) ??
+                  null;
+                return (
+                  <li
+                    className="flex items-center gap-3 rounded-xl border border-line bg-surface-2/50 p-3"
+                    key={String(p.id || i)}
+                  >
+                    <RankBadge value={String(p.pick_number || i + 1)} />
+                    <TeamCrest name={p.team_name} crestUrl={crest} size="md" />
+                    <div className="min-w-0 flex-1">
+                      <strong className="block truncate">
+                        {p.team_id ? (
+                          <TeamLink leagueId={league.id} teamId={p.team_id}>
+                            {String(p.team_name || p.team_id || "Team")}
+                          </TeamLink>
+                        ) : (
+                          String(p.team_name || "Team")
+                        )}
+                      </strong>
+                      <Muted className="truncate">
+                        {p.member_id
+                          ? renderManagerName(String(p.member_id))
+                          : "Unknown manager"}
+                      </Muted>
+                    </div>
+                    <span className="rounded-full border border-line bg-surface px-2.5 py-1 text-xs font-bold">
+                      R{String(p.round_number || "—")}
+                    </span>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </Stack>
+      </Card>
+    );
+  }
+
+  function renderToolbar() {
+    if (phase === "pre") return null;
+    return (
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-        {multiPool ? (
+        {multiPool && phase === "live" ? (
           <Label className="min-w-0 w-full sm:max-w-xs sm:flex-1">
             Competition
             <Select value={poolFilter} onChange={(e) => setPoolFilter(e.target.value)}>
@@ -306,6 +400,195 @@ export function DraftBoard({
           )}
         </div>
       </div>
+    );
+  }
+
+  function renderPreControls() {
+    if (!showOpenControls && !scheduledAt && !pickTimerSeconds) return null;
+    return (
+      <Card>
+        <Stack>
+          <h2>Draft controls</h2>
+          {scheduledAt && (
+            <StatusBanner tone={scheduleOverdue ? "error" : undefined}>
+              {scheduleOverdue ? (
+                <>
+                  <strong>Scheduled start has passed</strong>
+                  <div className="mt-1">
+                    Auto-open is waiting until all pre-draft checks pass (
+                    {formatDate(scheduledAt)}).
+                  </div>
+                </>
+              ) : (
+                <>
+                  <strong>Scheduled start</strong>
+                  <div className="mt-1">{formatDate(scheduledAt)}</div>
+                </>
+              )}
+            </StatusBanner>
+          )}
+          {pickTimerSeconds ? (
+            <Muted className="text-xs">
+              Pick timer: {pickTimerSeconds}s per pick (auto-picks a random available club
+              when time runs out).
+            </Muted>
+          ) : null}
+          {showOpenControls && (
+            <>
+              <Muted>
+                Opens one league draft ({league.draft_style}
+                {league.pools.length > 1
+                  ? ") covering all competitions — managers pick clubs from any of them."
+                  : ")."}
+                {scheduledAt ? " You can still open manually once checks pass." : ""}
+              </Muted>
+              <ReadinessChecklist
+                readiness={readiness}
+                readyLabel={
+                  scheduleOverdue
+                    ? "Ready — will auto-open on the next check"
+                    : "Ready to open"
+                }
+                readyWithWarningsDetail="warning(s) below — draft can open, but fix before relying on live scores."
+                notReadyDetail={
+                  scheduleOverdue
+                    ? "issue(s) blocking auto-open — fix these and the draft will open automatically."
+                    : "issue(s) to fix before opening the draft."
+                }
+                checksSummaryLabel="Pre-draft checks"
+              />
+              <div className="flex justify-start">
+                <IconButton
+                  type="button"
+                  label="Open draft"
+                  variant="primary"
+                  busy={busy}
+                  disabled={!canOpenDraft}
+                  onClick={openDraft}
+                >
+                  <PlayIcon />
+                </IconButton>
+              </div>
+            </>
+          )}
+        </Stack>
+      </Card>
+    );
+  }
+
+  function renderLiveControls() {
+    if (!state) return null;
+    return (
+      <aside className="order-1 lg:order-2">
+        <Card
+          className={cn(
+            myTurn && "ring-2 ring-brand/30",
+            "lg:sticky lg:top-[calc(5rem+env(safe-area-inset-top))]",
+          )}
+        >
+          <Stack>
+            <h2>Draft controls</h2>
+            {state.pick_deadline_at && <PickClock deadlineAt={state.pick_deadline_at} />}
+            {!state.pick_deadline_at && pickTimerSeconds ? (
+              <Muted className="text-xs">Pick timer is set; waiting for clock…</Muted>
+            ) : null}
+            {myTurn ? (
+              <form className="flex flex-col gap-3" onSubmit={pick}>
+                <Label>
+                  Search teams
+                  <input
+                    value={filter}
+                    onChange={(e) => setFilter(e.target.value)}
+                    placeholder="Filter by name…"
+                    className="w-full min-h-11 rounded-xl border border-line bg-surface px-3.5 py-2.5 text-base text-ink"
+                  />
+                </Label>
+                {selected && (
+                  <div className="flex items-center gap-3 rounded-xl border border-brand/40 bg-brand/5 p-3">
+                    <TeamCrest
+                      name={selected.name}
+                      crestUrl={selected.crest_url}
+                      size="lg"
+                    />
+                    <div className="min-w-0">
+                      <Muted className="text-xs">Selected</Muted>
+                      <strong className="block truncate">{selected.name}</strong>
+                      {multiPool && (
+                        <Muted className="truncate text-xs">{selected.pool_label}</Muted>
+                      )}
+                    </div>
+                  </div>
+                )}
+                <div
+                  className="max-h-72 overflow-y-auto rounded-xl border border-line"
+                  role="listbox"
+                  aria-label="Available teams"
+                >
+                  {!availableTeams.length ? (
+                    <Muted className="p-3 text-sm">No available teams match.</Muted>
+                  ) : (
+                    <ul className="divide-y divide-line">
+                      {availableTeams.map((t) => (
+                        <li key={`${t.pool_id}:${t.id}`}>
+                          <button
+                            type="button"
+                            role="option"
+                            aria-selected={team === t.id && teamPoolId === t.pool_id}
+                            onClick={() => {
+                              setTeam(t.id);
+                              setTeamPoolId(t.pool_id);
+                            }}
+                            className={cn(
+                              "flex w-full items-center gap-3 px-3 py-2.5 text-left transition",
+                              team === t.id && teamPoolId === t.pool_id
+                                ? "bg-brand/10"
+                                : "bg-surface hover:bg-surface-2",
+                            )}
+                          >
+                            <TeamCrest name={t.name} crestUrl={t.crest_url} size="md" />
+                            <span className="min-w-0 flex-1">
+                              <span className="block truncate text-sm font-bold">
+                                {t.name}
+                              </span>
+                              {multiPool && (
+                                <Muted className="block truncate text-xs">
+                                  {t.pool_label}
+                                </Muted>
+                              )}
+                            </span>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+                <div className="flex justify-start">
+                  <IconButton
+                    type="submit"
+                    label="Make pick"
+                    variant="primary"
+                    busy={busy}
+                    disabled={!team}
+                  >
+                    <CheckIcon />
+                  </IconButton>
+                </div>
+              </form>
+            ) : (
+              <StatusBanner>
+                Waiting for {onClock ? renderManagerName(onClock) : "the next manager"} to
+                pick.
+              </StatusBanner>
+            )}
+          </Stack>
+        </Card>
+      </aside>
+    );
+  }
+
+  return (
+    <Stack gap="md" className="animate-in">
+      {renderToolbar()}
 
       {error && <ErrorState error={error} retry={load} />}
 
@@ -313,243 +596,50 @@ export function DraftBoard({
         <Loading label="Loading draft" />
       ) : (
         state && (
-          <div className="grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
-            <aside className="order-1 lg:order-2">
-              <Card
-                className={cn(
-                  myTurn && "ring-2 ring-brand/30",
-                  "lg:sticky lg:top-[calc(5rem+env(safe-area-inset-top))]",
-                )}
-              >
-                <Stack>
-                  <h2>Draft controls</h2>
-                  {state.status === "pending" && scheduledAt && (
-                    <StatusBanner tone={scheduleOverdue ? "error" : undefined}>
-                      {scheduleOverdue ? (
-                        <>
-                          <strong>Scheduled start has passed</strong>
-                          <div className="mt-1">
-                            Auto-open is waiting until all pre-draft checks pass (
-                            {formatDate(scheduledAt)}).
-                          </div>
-                        </>
-                      ) : (
-                        <>
-                          <strong>Scheduled start</strong>
-                          <div className="mt-1">{formatDate(scheduledAt)}</div>
-                        </>
-                      )}
-                    </StatusBanner>
-                  )}
-                  {state.status === "pending" &&
-                    (state.pick_timer_seconds || league.pick_timer_seconds) && (
-                      <Muted className="text-xs">
-                        Pick timer: {state.pick_timer_seconds || league.pick_timer_seconds}s per
-                        pick (auto-picks a random available club when time runs out).
-                      </Muted>
-                    )}
-                  {showOpenControls && (
-                    <>
-                      <Muted>
-                        Opens one league draft ({league.draft_style}
-                        {league.pools.length > 1
-                          ? ") covering all competitions — managers pick clubs from any of them."
-                          : ")."}
-                        {scheduledAt
-                          ? " You can still open manually once checks pass."
-                          : ""}
-                      </Muted>
-                      <ReadinessChecklist
-                        readiness={readiness}
-                        readyLabel={
-                          scheduleOverdue
-                            ? "Ready — will auto-open on the next check"
-                            : "Ready to open"
-                        }
-                        readyWithWarningsDetail="warning(s) below — draft can open, but fix before relying on live scores."
-                        notReadyDetail={
-                          scheduleOverdue
-                            ? "issue(s) blocking auto-open — fix these and the draft will open automatically."
-                            : "issue(s) to fix before opening the draft."
-                        }
-                        checksSummaryLabel="Pre-draft checks"
-                      />
-                      <div className="flex justify-start">
-                        <IconButton
-                          type="button"
-                          label="Open draft"
-                          variant="primary"
-                          busy={busy}
-                          disabled={!canOpenDraft}
-                          onClick={openDraft}
-                        >
-                          <PlayIcon />
-                        </IconButton>
-                      </div>
-                    </>
-                  )}
-                  {running && state.pick_deadline_at && (
-                    <PickClock deadlineAt={state.pick_deadline_at} />
-                  )}
-                  {running &&
-                    !state.pick_deadline_at &&
-                    (state.pick_timer_seconds || league.pick_timer_seconds) && (
-                      <Muted className="text-xs">Pick timer is set; waiting for clock…</Muted>
-                    )}
-                  {running &&
-                    (myTurn ? (
-                      <form className="flex flex-col gap-3" onSubmit={pick}>
-                        <Label>
-                          Search teams
-                          <input
-                            value={filter}
-                            onChange={(e) => setFilter(e.target.value)}
-                            placeholder="Filter by name…"
-                            className="w-full min-h-11 rounded-xl border border-line bg-surface px-3.5 py-2.5 text-base text-ink"
-                          />
-                        </Label>
-                        {selected && (
-                          <div className="flex items-center gap-3 rounded-xl border border-brand/40 bg-brand/5 p-3">
-                            <TeamCrest
-                              name={selected.name}
-                              crestUrl={selected.crest_url}
-                              size="lg"
-                            />
-                            <div className="min-w-0">
-                              <Muted className="text-xs">Selected</Muted>
-                              <strong className="block truncate">{selected.name}</strong>
-                              {multiPool && (
-                                <Muted className="truncate text-xs">{selected.pool_label}</Muted>
-                              )}
-                            </div>
-                          </div>
-                        )}
-                        <div
-                          className="max-h-72 overflow-y-auto rounded-xl border border-line"
-                          role="listbox"
-                          aria-label="Available teams"
-                        >
-                          {!availableTeams.length ? (
-                            <Muted className="p-3 text-sm">No available teams match.</Muted>
-                          ) : (
-                            <ul className="divide-y divide-line">
-                              {availableTeams.map((t) => (
-                                <li key={`${t.pool_id}:${t.id}`}>
-                                  <button
-                                    type="button"
-                                    role="option"
-                                    aria-selected={team === t.id && teamPoolId === t.pool_id}
-                                    onClick={() => {
-                                      setTeam(t.id);
-                                      setTeamPoolId(t.pool_id);
-                                    }}
-                                    className={cn(
-                                      "flex w-full items-center gap-3 px-3 py-2.5 text-left transition",
-                                      team === t.id && teamPoolId === t.pool_id
-                                        ? "bg-brand/10"
-                                        : "bg-surface hover:bg-surface-2",
-                                    )}
-                                  >
-                                    <TeamCrest name={t.name} crestUrl={t.crest_url} size="md" />
-                                    <span className="min-w-0 flex-1">
-                                      <span className="block truncate text-sm font-bold">
-                                        {t.name}
-                                      </span>
-                                      {multiPool && (
-                                        <Muted className="block truncate text-xs">
-                                          {t.pool_label}
-                                        </Muted>
-                                      )}
-                                    </span>
-                                  </button>
-                                </li>
-                              ))}
-                            </ul>
-                          )}
-                        </div>
-                        <div className="flex justify-start">
-                          <IconButton
-                            type="submit"
-                            label="Make pick"
-                            variant="primary"
-                            busy={busy}
-                            disabled={!team}
-                          >
-                            <CheckIcon />
-                          </IconButton>
-                        </div>
-                      </form>
-                    ) : (
-                      <StatusBanner>
-                        Waiting for {onClock ? renderManagerName(onClock) : "the next manager"} to pick.
-                      </StatusBanner>
-                    ))}
-                </Stack>
-              </Card>
-            </aside>
-
-            <Card className="order-2 lg:order-1">
-              <Stack>
-                <Row between>
-                  <div>
-                    <Eyebrow>Round {state.current_round}</Eyebrow>
-                    <h2>Pick {state.current_pick_number}</h2>
-                  </div>
-                  <Status value={state.status} />
-                </Row>
-                {state.status !== "complete" && state.status !== "completed" && (
-                  <StatusBanner>
-                    <strong>On the clock: </strong>
-                    {onClock ? renderManagerName(onClock) : "Not started"}
-                  </StatusBanner>
-                )}
-                {!state.picks.length ? (
-                  <Empty title="No picks made" />
-                ) : (
-                  <ul className="flex flex-col gap-2">
-                    {state.picks.map((p, i) => {
-                      const crest =
-                        p.crest_url ??
-                        (p.team_id ? crestByTeamId.get(p.team_id) : null) ??
-                        null;
-                      return (
-                        <li
-                          className="flex items-center gap-3 rounded-xl border border-line bg-surface-2/50 p-3"
-                          key={String(p.id || i)}
-                        >
-                          <RankBadge value={String(p.pick_number || i + 1)} />
-                          <TeamCrest
-                            name={p.team_name}
-                            crestUrl={crest}
-                            size="md"
-                          />
-                          <div className="min-w-0 flex-1">
-                            <strong className="block truncate">
-                              {p.team_id ? (
-                                <TeamLink leagueId={league.id} teamId={p.team_id}>
-                                  {String(p.team_name || p.team_id || "Team")}
-                                </TeamLink>
-                              ) : (
-                                String(p.team_name || "Team")
-                              )}
-                            </strong>
-                            <Muted className="truncate">
-                              {p.member_id
-                                ? renderManagerName(String(p.member_id))
-                                : "Unknown manager"}
-                            </Muted>
-                          </div>
-                          <span className="rounded-full border border-line bg-surface px-2.5 py-1 text-xs font-bold">
-                            R{String(p.round_number || "—")}
-                          </span>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                )}
+          <>
+            {phase === "pre" && (
+              <Stack gap="md">
+                <DraftSettingsSummary
+                  league={league}
+                  scheduledAt={scheduledAt}
+                  pickTimerSeconds={pickTimerSeconds}
+                />
+                {renderPreControls()}
+                {renderPickHistory({ emptyTitle: "Draft hasn’t started" })}
               </Stack>
-            </Card>
-          </div>
+            )}
+
+            {phase === "live" && (
+              <div className="grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
+                {renderLiveControls()}
+                <Stack gap="md" className="order-2 lg:order-1 min-w-0">
+                  {renderPickHistory({ showOnClock: true })}
+                  <DraftSettingsSummary
+                    league={league}
+                    scheduledAt={scheduledAt}
+                    pickTimerSeconds={pickTimerSeconds}
+                    onClockMemberId={onClock}
+                    compact
+                  />
+                </Stack>
+              </div>
+            )}
+
+            {phase === "done" && (
+              <Stack gap="md">
+                <StatusBanner tone="success">
+                  <strong>Draft complete</strong>
+                  <div className="mt-1">All picks are in. Rosters are locked in.</div>
+                </StatusBanner>
+                {renderPickHistory()}
+                <DraftSettingsSummary
+                  league={league}
+                  scheduledAt={scheduledAt}
+                  pickTimerSeconds={pickTimerSeconds}
+                />
+              </Stack>
+            )}
+          </>
         )
       )}
 

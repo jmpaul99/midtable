@@ -389,6 +389,12 @@ export interface TeamFixture extends MatchLogRow {
   opponent_name: string;
   opponent_id: UUID;
   opponent_table_position?: number | null;
+  opponent_owner?: {
+    member_id: UUID | null;
+    display_name: string | null;
+    team_name?: string | null;
+    acquired_via?: string;
+  } | null;
 }
 
 export interface VenueSplit {

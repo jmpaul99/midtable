@@ -1,11 +1,17 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { api, errorMessage } from "@/lib/api";
 import { formatDate, formatNumber } from "@/lib/format";
-import type { TeamDetail, TeamFixture, UUID } from "@/lib/types";
-import { Empty, ErrorState, Loading, Status } from "@/components/ui/State";
+import type {
+  BonusAward,
+  ScoringEventMatch,
+  TeamDetail,
+  TeamFixture,
+  UUID,
+} from "@/lib/types";
+import { Empty, ErrorState, Loading } from "@/components/ui/State";
 import {
   Card,
   Eyebrow,
@@ -19,6 +25,23 @@ import { TeamCrest } from "./TeamCrest";
 import { TeamLink } from "./TeamLink";
 import { TeamScoringBreakdown } from "./TeamScoringBreakdown";
 import { StagePointsBreakdown } from "./StagePointsBreakdown";
+
+const EVENT_LABELS: Record<string, string> = {
+  win: "Win",
+  win_et: "Win (ET)",
+  win_pk: "Win (PK)",
+  draw: "Draw",
+  loss: "Loss",
+  loss_et: "Loss (ET)",
+  loss_pk: "Loss (PK)",
+  minor_upset: "Minor upset",
+  major_upset: "Major upset",
+  major_upset_draw: "Major upset draw",
+};
+
+function eventLabel(key: string, labels?: Record<string, string>) {
+  return labels?.[key] || EVENT_LABELS[key] || key.replaceAll("_", " ");
+}
 
 function FormDots({ form }: { form?: string[] }) {
   if (!form?.length) return null;
@@ -43,77 +66,131 @@ function FormDots({ form }: { form?: string[] }) {
   );
 }
 
+function scoreline(m: TeamFixture) {
+  return m.is_home
+    ? `${m.home_goals ?? "—"}–${m.away_goals ?? "—"}`
+    : `${m.away_goals ?? "—"}–${m.home_goals ?? "—"}`;
+}
+
 function FixtureList({
   leagueId,
   fixtures,
   empty,
   showPoints,
-  showOpponentRank,
+  eventsByMatchId,
+  bonusesByMatchId,
+  eventTypeLabels,
 }: {
   leagueId: UUID;
   fixtures: TeamFixture[];
   empty: string;
   showPoints?: boolean;
-  showOpponentRank?: boolean;
+  eventsByMatchId?: Map<string, ScoringEventMatch[]>;
+  bonusesByMatchId?: Map<string, BonusAward[]>;
+  eventTypeLabels?: Record<string, string>;
 }) {
   if (!fixtures.length) return <Empty title={empty} />;
   return (
     <ul className="flex flex-col gap-2">
-      {fixtures.map((m) => (
-        <li key={m.id}>
-          <Link
-            href={`/leagues/${leagueId}/matches/${m.id}`}
-            className="block min-w-0 rounded-xl border border-line bg-surface-2/50 p-3 transition hover:border-brand/40 hover:bg-surface active:scale-[0.99] sm:p-3.5"
-          >
-            <div className="flex items-start justify-between gap-2 sm:gap-3">
-              <div className="min-w-0 flex-1">
-                <Muted className="text-[11px] leading-snug sm:text-xs">
-                  <span className="block sm:inline">{formatDate(m.kickoff_at)}</span>
-                  <span className="hidden sm:inline">
-                    {m.scheduled_matchweek != null ? ` · MW${m.scheduled_matchweek}` : ""}
-                    {m.is_home ? " · Home" : " · Away"}
-                    {showOpponentRank && m.opponent_table_position != null
-                      ? ` · Opp #${m.opponent_table_position}`
-                      : ""}
-                  </span>
-                  <span className="mt-0.5 block sm:hidden">
-                    {[
-                      m.scheduled_matchweek != null ? `MW${m.scheduled_matchweek}` : null,
-                      m.is_home ? "Home" : "Away",
-                      showOpponentRank && m.opponent_table_position != null
-                        ? `Opp #${m.opponent_table_position}`
-                        : null,
-                    ]
-                      .filter(Boolean)
-                      .join(" · ")}
-                  </span>
-                </Muted>
-                <strong className="mt-1 block truncate text-sm leading-snug sm:text-base">
-                  vs{" "}
-                  <TeamLink leagueId={leagueId} teamId={m.opponent_id}>
-                    {m.opponent_name}
-                  </TeamLink>
-                </strong>
-              </div>
-              <div className="shrink-0 text-right">
-                <div className="font-display text-base font-extrabold tabular-nums sm:text-lg">
-                  {m.is_home
-                    ? `${m.home_goals ?? "—"}–${m.away_goals ?? "—"}`
-                    : `${m.away_goals ?? "—"}–${m.home_goals ?? "—"}`}
-                </div>
-                <div className="mt-1 flex flex-col items-end gap-1">
-                  <Status value={m.status} />
-                  {showPoints && m.points != null && (
-                    <Muted className="text-[11px] tabular-nums sm:text-xs">
-                      {formatNumber(m.points)} pts
+      {fixtures.map((m) => {
+        const matchEvents = eventsByMatchId?.get(m.id) || [];
+        const matchBonuses = bonusesByMatchId?.get(m.id) || [];
+        const parts: { label: string; points: number }[] = [];
+        for (const e of matchEvents) {
+          parts.push({
+            label: eventLabel(e.event_type, eventTypeLabels),
+            points: e.points,
+          });
+        }
+        for (const b of matchBonuses) {
+          parts.push({
+            label: b.bonus_type_label || b.bonus_type,
+            points: b.points,
+          });
+        }
+        const bonusPts = matchBonuses.reduce((sum, b) => sum + b.points, 0);
+        const displayPoints =
+          m.points != null || matchBonuses.length
+            ? (m.points ?? 0) + bonusPts
+            : null;
+        const showBreakdown = showPoints && parts.length > 1;
+        const ownerName =
+          m.opponent_owner?.team_name?.trim() ||
+          m.opponent_owner?.display_name?.trim() ||
+          null;
+
+        return (
+          <li key={m.id}>
+            <Link
+              href={`/leagues/${leagueId}/matches/${m.id}`}
+              className="block min-w-0 rounded-xl border border-line bg-surface-2/50 p-3 transition hover:border-brand/40 hover:bg-surface active:scale-[0.99] sm:p-3.5"
+            >
+              <div className="flex items-start justify-between gap-2 sm:gap-3">
+                <div className="min-w-0 flex-1">
+                  <Muted className="text-[11px] leading-snug sm:text-xs">
+                    <span className="block sm:inline">{formatDate(m.kickoff_at)}</span>
+                    <span className="hidden sm:inline">
+                      {m.scheduled_matchweek != null ? ` · MW${m.scheduled_matchweek}` : ""}
+                      {m.is_home ? " · Home" : " · Away"}
+                    </span>
+                    <span className="mt-0.5 block sm:hidden">
+                      {[
+                        m.scheduled_matchweek != null ? `MW${m.scheduled_matchweek}` : null,
+                        m.is_home ? "Home" : "Away",
+                      ]
+                        .filter(Boolean)
+                        .join(" · ")}
+                    </span>
+                  </Muted>
+                  <strong className="mt-1 block truncate text-sm leading-snug sm:text-base">
+                    {m.is_home ? "vs" : "@"}{" "}
+                    <TeamLink leagueId={leagueId} teamId={m.opponent_id}>
+                      {m.opponent_name}
+                    </TeamLink>
+                  </strong>
+                  {ownerName && (
+                    <Muted className="mt-0.5 block truncate text-[11px] sm:text-xs">
+                      {m.opponent_owner?.member_id ? (
+                        <Link
+                          href={`/leagues/${leagueId}/managers/${m.opponent_owner.member_id}`}
+                          className="font-semibold text-ink hover:text-brand"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          {ownerName}
+                        </Link>
+                      ) : (
+                        ownerName
+                      )}
+                    </Muted>
+                  )}
+                  {showBreakdown && (
+                    <Muted className="mt-1 block text-[11px] tabular-nums sm:text-xs">
+                      {parts
+                        .map((p) => `${p.label} ${formatNumber(p.points)}`)
+                        .join(" · ")}
                     </Muted>
                   )}
                 </div>
+                <div className="shrink-0 text-right">
+                  {showPoints ? (
+                    <>
+                      <div className="font-display text-base font-extrabold tabular-nums sm:text-lg">
+                        {displayPoints != null ? formatNumber(displayPoints) : "—"}
+                        <span className="ml-0.5 text-xs font-bold text-muted sm:text-sm">
+                          pts
+                        </span>
+                      </div>
+                      <Muted className="mt-1 text-[11px] tabular-nums sm:text-xs">
+                        {scoreline(m)}
+                      </Muted>
+                    </>
+                  ) : null}
+                </div>
               </div>
-            </div>
-          </Link>
-        </li>
-      ))}
+            </Link>
+          </li>
+        );
+      })}
     </ul>
   );
 }
@@ -139,6 +216,27 @@ export function TeamPage({
       .then(setTeam)
       .catch((e) => setError(errorMessage(e)));
   }, [leagueId, teamId]);
+
+  const eventsByMatchId = useMemo(() => {
+    const map = new Map<string, ScoringEventMatch[]>();
+    for (const e of team?.scoring_events || []) {
+      const list = map.get(e.match_id) || [];
+      list.push(e);
+      map.set(e.match_id, list);
+    }
+    return map;
+  }, [team?.scoring_events]);
+
+  const bonusesByMatchId = useMemo(() => {
+    const map = new Map<string, BonusAward[]>();
+    for (const b of team?.bonuses || []) {
+      if (!b.match_id) continue;
+      const list = map.get(b.match_id) || [];
+      list.push(b);
+      map.set(b.match_id, list);
+    }
+    return map;
+  }, [team?.bonuses]);
 
   if (error) return <ErrorState error={error} />;
   if (!team) return <Loading label="Loading team" />;
@@ -242,9 +340,6 @@ export function TeamPage({
         leagueId={leagueId}
         events={scoringEvents}
         bonuses={bonuses}
-        bonusPoints={s.bonus_points}
-        eventPointsByType={s.event_points_by_type}
-        eventCountsByType={s.event_counts_by_type}
         eventTypeLabels={eventTypeLabels}
       />
 
@@ -288,50 +383,18 @@ export function TeamPage({
         </Card>
       )}
 
-      {s.upcoming_difficulty && s.upcoming_difficulty.next_three.length > 0 && (
-        <Card className="min-w-0 overflow-hidden">
-          <Stack>
-            <div className="flex flex-col gap-1 sm:flex-row sm:items-baseline sm:justify-between sm:gap-2">
-              <h2>Upcoming difficulty</h2>
-              {s.upcoming_difficulty.avg_opponent_rank != null && (
-                <Muted className="tabular-nums text-xs sm:text-sm">
-                  Avg opp rank {formatNumber(s.upcoming_difficulty.avg_opponent_rank)}
-                </Muted>
-              )}
-            </div>
-            <ul className="flex flex-col gap-2">
-              {s.upcoming_difficulty.next_three.map((f) => (
-                <li
-                  key={f.match_id}
-                  className="flex min-w-0 items-center justify-between gap-2 rounded-xl border border-line bg-surface-2/40 px-3 py-2.5 text-sm"
-                >
-                  <span className="min-w-0 truncate">
-                    {f.is_home ? "vs" : "@"}{" "}
-                    <TeamLink leagueId={leagueId} teamId={f.opponent_id}>
-                      {f.opponent_name}
-                    </TeamLink>
-                  </span>
-                  <Muted className="shrink-0 tabular-nums">
-                    {f.opponent_table_position != null
-                      ? `#${f.opponent_table_position}`
-                      : "—"}
-                  </Muted>
-                </li>
-              ))}
-            </ul>
-          </Stack>
-        </Card>
-      )}
-
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
         <Card className="min-w-0 overflow-hidden">
           <Stack>
             <h2>Recent results</h2>
             <FixtureList
               leagueId={leagueId}
-              fixtures={team.recent_matches}
+              fixtures={team.recent_matches.slice(0, 5)}
               empty="No finished matches yet"
               showPoints
+              eventsByMatchId={eventsByMatchId}
+              bonusesByMatchId={bonusesByMatchId}
+              eventTypeLabels={eventTypeLabels}
             />
           </Stack>
         </Card>
@@ -340,9 +403,8 @@ export function TeamPage({
             <h2>Upcoming fixtures</h2>
             <FixtureList
               leagueId={leagueId}
-              fixtures={team.upcoming_matches}
+              fixtures={team.upcoming_matches.slice(0, 5)}
               empty="No upcoming fixtures"
-              showOpponentRank
             />
           </Stack>
         </Card>

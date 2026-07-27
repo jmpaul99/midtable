@@ -35,14 +35,8 @@ import {
   type LeaguePoolEdit,
   type PayoutRow,
 } from "@/components/settings";
-import {
-  DraftTimingFields,
-  fromDatetimeLocalValue,
-  parsePickTimerSeconds,
-  toDatetimeLocalValue,
-} from "@/components/settings/DraftTimingFields";
 
-type Tab = "basics" | "managers" | "pools" | "phases" | "payouts" | "draft";
+type Tab = "basics" | "managers" | "pools" | "phases" | "payouts";
 
 const ROTATE_JOIN_LINK_WARNING =
   "Rotate the join link? The current link will stop working.";
@@ -53,7 +47,6 @@ const TABS: Array<{ id: Tab; label: string }> = [
   { id: "pools", label: "Competitions" },
   { id: "phases", label: "Phases" },
   { id: "payouts", label: "Payouts" },
-  { id: "draft", label: "Draft" },
 ];
 
 function poolsFromLeague(
@@ -159,22 +152,6 @@ export function LeagueMetaSettingsSection({
   const [rosterClubOrder, setRosterClubOrder] = useState<RosterClubOrder>(() =>
     normalizeRosterClubOrder(league.roster_club_order),
   );
-  const [draftScheduledLocal, setDraftScheduledLocal] = useState(() =>
-    toDatetimeLocalValue(
-      league.draft_scheduled_at ??
-        (typeof league.settings?.draft_scheduled_at === "string"
-          ? league.settings.draft_scheduled_at
-          : null),
-    ),
-  );
-  const [pickTimerSeconds, setPickTimerSeconds] = useState(() => {
-    const existing =
-      league.pick_timer_seconds ??
-      (typeof league.settings?.pick_timer_seconds === "number"
-        ? league.settings.pick_timer_seconds
-        : null);
-    return existing != null && existing > 0 ? String(existing) : "";
-  });
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const { toast } = useToast();
@@ -190,31 +167,8 @@ export function LeagueMetaSettingsSection({
     setRosterClubOrder(normalizeRosterClubOrder(league.roster_club_order));
   }, [league.roster_club_order]);
 
-  useEffect(() => {
-    setDraftScheduledLocal(
-      toDatetimeLocalValue(
-        league.draft_scheduled_at ??
-          (typeof league.settings?.draft_scheduled_at === "string"
-            ? league.settings.draft_scheduled_at
-            : null),
-      ),
-    );
-  }, [league.draft_scheduled_at, league.settings?.draft_scheduled_at]);
-
-  useEffect(() => {
-    const existing =
-      league.pick_timer_seconds ??
-      (typeof league.settings?.pick_timer_seconds === "number"
-        ? league.settings.pick_timer_seconds
-        : null);
-    setPickTimerSeconds(existing != null && existing > 0 ? String(existing) : "");
-  }, [league.pick_timer_seconds, league.settings?.pick_timer_seconds]);
-
   const memberCount = league.members?.length || 0;
   const preDraft = league.status === "pre_draft";
-  const draftComplete = league.status === "complete";
-  const scheduleEditable = preDraft;
-  const timerEditable = !draftComplete;
 
   const managerCapacity = useMemo(() => {
     const parsed = Number(maxMembersValue);
@@ -247,14 +201,6 @@ export function LeagueMetaSettingsSection({
     const trimmedName = name.trim();
     const trimmedSeason = seasonLabel.trim();
     const parsedMax = Number(maxMembersValue);
-    if (timerEditable && pickTimerSeconds.trim()) {
-      const parsedTimer = Number(pickTimerSeconds);
-      if (!Number.isInteger(parsedTimer) || parsedTimer < 1) {
-        setError("Seconds per pick must be a whole number of at least 1, or left blank.");
-        setTab("draft");
-        return;
-      }
-    }
     if (!trimmedName || !trimmedSeason) {
       setError("League name and season label are required.");
       setTab("basics");
@@ -300,12 +246,6 @@ export function LeagueMetaSettingsSection({
           roster_club_order: rosterClubOrder,
           leaderboard_phases: phases,
           payouts,
-          ...(scheduleEditable
-            ? { draft_scheduled_at: fromDatetimeLocalValue(draftScheduledLocal) }
-            : {}),
-          ...(timerEditable
-            ? { pick_timer_seconds: parsePickTimerSeconds(pickTimerSeconds) }
-            : {}),
           remove_pool_ids: remove_pool_ids.length ? remove_pool_ids : undefined,
           pools: pools.map((p) =>
             p.isNew
@@ -370,7 +310,7 @@ export function LeagueMetaSettingsSection({
   return (
     <Card>
       <Stack>
-        <Muted>Season identity, managers, competitions, draft timing, phases, and payout structure.</Muted>
+        <Muted>Season identity, managers, competitions, phases, and payout structure. Draft timing is on the Draft page.</Muted>
         {error && <StatusBanner tone="error">{error}</StatusBanner>}
 
         <div
@@ -510,16 +450,6 @@ export function LeagueMetaSettingsSection({
                     }))}
                   />
                 </div>
-              )}
-              {tab === "draft" && (
-                <DraftTimingFields
-                  scheduledLocal={draftScheduledLocal}
-                  onScheduledLocalChange={setDraftScheduledLocal}
-                  pickTimerSeconds={pickTimerSeconds}
-                  onPickTimerSecondsChange={setPickTimerSeconds}
-                  scheduleDisabled={!scheduleEditable}
-                  timerDisabled={!timerEditable}
-                />
               )}
             </div>
 
