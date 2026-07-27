@@ -63,8 +63,13 @@ export function MatchAutocomplete({
 
   const loadPage = useCallback(
     async (nextOffset: number, append: boolean, search: string, generation: number) => {
-      if (append) setLoadingMore(true);
-      else setLoading(true);
+      if (append) {
+        setLoadingMore(true);
+      } else {
+        setLoading(true);
+        // Clear any stuck append spinner from a request invalidated mid-flight.
+        setLoadingMore(false);
+      }
       const qs = new URLSearchParams({
         section: "results",
         limit: String(PAGE_SIZE),
@@ -74,7 +79,11 @@ export function MatchAutocomplete({
       try {
         const page = await api<MatchLogPage>(`/leagues/${leagueId}/match-log?${qs}`);
         if (generation !== fetchGeneration.current) return;
-        setOptions((prev) => (append ? [...prev, ...page.items] : page.items));
+        setOptions((prev) => {
+          if (!append) return page.items;
+          const seen = new Set(prev.map((m) => m.id));
+          return [...prev, ...page.items.filter((m) => !seen.has(m.id))];
+        });
         setHasMore(page.has_more);
         setOffset(nextOffset + page.items.length);
       } catch {
@@ -97,6 +106,7 @@ export function MatchAutocomplete({
   useEffect(() => {
     if (!open || disabled) return;
     const generation = ++fetchGeneration.current;
+    setLoadingMore(false);
     const handle = window.setTimeout(() => {
       setOptions([]);
       setHasMore(false);
@@ -226,10 +236,13 @@ export function MatchAutocomplete({
                   <button
                     type="button"
                     className="w-full rounded-lg px-2 py-1.5 text-left text-sm font-semibold text-brand hover:bg-surface-2 disabled:opacity-60"
-                    disabled={loadingMore}
+                    disabled={loadingMore || loading}
                     onMouseDown={(e) => {
                       e.preventDefault();
-                      void loadPage(offset, true, searchTerm, fetchGeneration.current);
+                      if (loadingMore || loading) return;
+                      const pageOffset = offset;
+                      const generation = ++fetchGeneration.current;
+                      void loadPage(pageOffset, true, searchTerm, generation);
                     }}
                   >
                     {loadingMore ? "Loading…" : "Show more matches"}
