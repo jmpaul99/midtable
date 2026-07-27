@@ -60,6 +60,33 @@ function currentPickTimerSeconds(league: League): number | null {
   return existing != null && existing > 0 ? existing : null;
 }
 
+function initialScheduledLocal(league: League): string {
+  return toDatetimeLocalValue(
+    league.draft_scheduled_at ??
+      (typeof league.settings?.draft_scheduled_at === "string"
+        ? league.settings.draft_scheduled_at
+        : null),
+  );
+}
+
+function initialPickTimerSeconds(league: League): string {
+  const existing =
+    league.pick_timer_seconds ??
+    (typeof league.settings?.pick_timer_seconds === "number"
+      ? league.settings.pick_timer_seconds
+      : null);
+  return existing != null && existing > 0 ? String(existing) : "";
+}
+
+function currentPickTimerSeconds(league: League): number | null {
+  const existing =
+    league.pick_timer_seconds ??
+    (typeof league.settings?.pick_timer_seconds === "number"
+      ? league.settings.pick_timer_seconds
+      : null);
+  return existing != null && existing > 0 ? existing : null;
+}
+
 export function DraftAdminPanel({
   league,
   onLeagueChange,
