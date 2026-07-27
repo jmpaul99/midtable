@@ -137,7 +137,7 @@ export default async function Image() {
               letterSpacing: "-0.01em",
             }}
           >
-            Claim a manager seat and start drafting.
+            Claim a place in the dugout and start drafting.
           </div>
         </div>
       </div>

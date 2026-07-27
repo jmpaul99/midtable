@@ -211,7 +211,7 @@ export function BonusTypesListEditor({
             ) : (
               <li
                 key={id}
-                className="flex flex-col gap-2 bg-surface-2/30 px-3 py-2.5 sm:flex-row sm:items-center"
+                className="flex items-center gap-2 bg-surface-2/30 px-3 py-2.5"
               >
                 <div className="min-w-0 flex-1">
                   <strong className="block truncate text-sm">{t.label}</strong>
@@ -220,7 +220,7 @@ export function BonusTypesListEditor({
                   </Muted>
                 </div>
                 {!readOnly && (
-                  <div className="flex gap-1">
+                  <div className="flex shrink-0 gap-1">
                     <IconButton
                       type="button"
                       variant="ghost"

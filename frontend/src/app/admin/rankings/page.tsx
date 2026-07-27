@@ -118,7 +118,7 @@ function AdminRankingsContent() {
           />
         }
         title="Ranking rematch"
-        description="Review and correct men’s and women’s FIFA world ranking mappings without needing a league commissioner seat."
+        description="Review and correct men’s and women’s FIFA world ranking mappings without needing commissioner access."
       />
 
       <Card>

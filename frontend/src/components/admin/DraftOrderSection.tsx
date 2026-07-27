@@ -83,8 +83,8 @@ export function DraftOrderSection({
   const timingEditable = scheduleEditable || timerEditable;
 
   return (
-    <Card>
-      <Stack>
+    <Card className="min-w-0 max-w-full overflow-hidden">
+      <Stack className="min-w-0">
         <h2>Draft settings</h2>
         <div className="flex flex-col gap-1.5 text-sm font-semibold text-muted sm:items-start">
           <LabelRow>

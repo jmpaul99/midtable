@@ -27,7 +27,7 @@ const SECTIONS = [
   { id: "settings", label: "Scoring" },
   { id: "sync", label: "Sync" },
   { id: "rankings", label: "Rankings" },
-  { id: "season", label: "Season" },
+  { id: "season", label: "Actions" },
 ] as const;
 
 function usesFixedRankingList(league: League): boolean {
@@ -222,7 +222,7 @@ export function AdminPanel({
 
       <details id="admin-season" open className="group">
         <summary className="mb-2 cursor-pointer list-none font-display text-lg font-extrabold [&::-webkit-details-marker]:hidden">
-          Season actions
+          League actions
         </summary>
         <SeasonActionsSection league={league} onSaved={onLeagueChange} />
       </details>

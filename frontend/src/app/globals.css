@@ -107,6 +107,14 @@
     font: inherit;
   }
 
+  /* Native datetime controls have a large intrinsic min-width; keep them in-bounds. */
+  input[type="datetime-local"],
+  input[type="date"],
+  input[type="time"] {
+    max-width: 100%;
+    min-width: 0;
+  }
+
   :focus-visible {
     @apply outline-3 outline-offset-2 outline-brand/40;
   }

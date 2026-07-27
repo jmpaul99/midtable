@@ -898,7 +898,7 @@ export function TemplateEditor({
                 <LabelRow>
                   Managers
                   <FieldHelp label="Managers">
-                    Default number of manager seats for leagues created from this template
+                    Default number of managers for leagues created from this template
                     (including the commissioner).
                   </FieldHelp>
                 </LabelRow>

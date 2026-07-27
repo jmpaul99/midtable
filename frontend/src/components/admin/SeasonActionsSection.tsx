@@ -66,7 +66,7 @@ export function SeasonActionsSection({
   return (
     <Card>
       <Stack>
-        <Muted>Finish the season or permanently remove this league.</Muted>
+        <Muted>Mark the league complete or permanently remove it.</Muted>
         <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
           <Button
             type="button"
