@@ -148,11 +148,16 @@ export function MatchLog({
         });
         const page = await api<MatchLogPage>(`/leagues/${leagueId}/match-log${qs}`);
         if (generation !== fetchGeneration.current) return;
+        // Only auto-switch Recent → Upcoming on the unfiltered first load so
+        // legitimate empty filter results still show "No scored matches yet".
         if (
           !compact &&
           !append &&
           viewMode === "recent" &&
           page.items.length === 0 &&
+          !poolId &&
+          !teamId &&
+          !memberId &&
           !fellBackToUpcoming.current
         ) {
           fellBackToUpcoming.current = true;

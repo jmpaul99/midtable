@@ -71,7 +71,6 @@ export function MatchAutocomplete({
         setLoadingMore(false);
       }
       const qs = new URLSearchParams({
-        section: "results",
         limit: String(PAGE_SIZE),
         offset: String(nextOffset),
       });
@@ -164,7 +163,7 @@ export function MatchAutocomplete({
     ? "Searching…"
     : searchTerm
       ? "No matches found."
-      : "No finished matches yet.";
+      : "No matches synced yet.";
 
   return (
     <div ref={rootRef} className="relative">
