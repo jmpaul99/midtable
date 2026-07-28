@@ -17,6 +17,8 @@ export default function LeagueTeamPage({
       leagueId={league.id}
       leagueName={league.name}
       teamId={teamId}
+      members={league.members}
+      currentManagerId={league.current_member_id}
       eventTypeLabels={upsetNameByKey(league.upset_rules)}
     />
   );

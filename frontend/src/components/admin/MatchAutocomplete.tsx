@@ -51,6 +51,7 @@ export function MatchAutocomplete({
           label: formatMatchOptionLabel(row),
         })),
         hasMore: page.has_more,
+        nextOffset: page.next_offset,
       };
     },
     [leagueId],

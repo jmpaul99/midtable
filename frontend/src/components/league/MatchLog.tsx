@@ -152,7 +152,8 @@ export function MatchLog({
           loading: false,
           loadingMore: false,
           error: "",
-          offset: offset + page.items.length,
+          // Prefer SQL cursor; falling back to item count only for older payloads.
+          offset: page.next_offset ?? offset + page.items.length,
         }));
       } catch (e) {
         if (generation !== fetchGeneration.current) return;

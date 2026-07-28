@@ -390,6 +390,8 @@ class MatchLogRow(BaseModel):
 class MatchLogPage(BaseModel):
     items: list[MatchLogRow]
     has_more: bool
+    # SQL match cursor for the next page (not len(items); mapping may drop rows).
+    next_offset: int = 0
 
 
 class TeamFixtureRow(MatchLogRow):
@@ -399,6 +401,13 @@ class TeamFixtureRow(MatchLogRow):
     opponent_id: UUID
     opponent_table_position: int | None = None
     opponent_owner: MatchOwnerInfo | None = None
+
+
+class TeamFixturePage(BaseModel):
+    items: list[TeamFixtureRow]
+    has_more: bool
+    # SQL match cursor for the next page (not len(items); mapping may drop rows).
+    next_offset: int = 0
 
 
 class MemberClubRow(BaseModel):

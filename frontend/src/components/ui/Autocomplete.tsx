@@ -15,6 +15,8 @@ export type AutocompleteOption = {
 export type AutocompleteLoadResult = {
   items: AutocompleteOption[];
   hasMore: boolean;
+  /** Cursor for the next page when it differs from `offset + items.length`. */
+  nextOffset?: number;
 };
 
 function filterOptions(query: string, options: AutocompleteOption[]): AutocompleteOption[] {
@@ -121,7 +123,7 @@ export function Autocomplete({
           return [...prev, ...page.items.filter((o) => !seen.has(o.value))];
         });
         setHasMore(page.hasMore);
-        setOffset(nextOffset + page.items.length);
+        setOffset(page.nextOffset ?? nextOffset + page.items.length);
       } catch {
         if (generation !== fetchGeneration.current) return;
         if (!append) {

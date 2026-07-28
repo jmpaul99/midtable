@@ -62,6 +62,18 @@ export function managerOptionLabel(
   return person && person !== team ? `${team} (${person})` : team;
 }
 
+/** Opponent filter option: `Team (You)` for the current manager. */
+export function opponentOptionLabel(
+  m: Pick<Manager, "id" | "team_name" | "display_name" | "email">,
+  currentManagerId?: UUID | null,
+): string {
+  if (currentManagerId && m.id === currentManagerId) {
+    const team = m.team_name?.trim() || managerLabel(m);
+    return `${team} (You)`;
+  }
+  return managerOptionLabel(m);
+}
+
 /** Owner line under a club name on match cards. */
 export function matchOwnerLabel(
   owner: MatchOwnerInfo | null | undefined,
@@ -415,6 +427,8 @@ export interface MatchLogRow {
 export interface MatchLogPage {
   items: MatchLogRow[];
   has_more: boolean;
+  /** SQL match cursor for the next page (not `items.length`). */
+  next_offset: number;
 }
 
 export interface TeamFixture extends MatchLogRow {
@@ -424,6 +438,13 @@ export interface TeamFixture extends MatchLogRow {
   opponent_id: UUID;
   opponent_table_position?: number | null;
   opponent_owner?: MatchOwnerInfo | null;
+}
+
+export interface TeamFixturePage {
+  items: TeamFixture[];
+  has_more: boolean;
+  /** SQL match cursor for the next page (not `items.length`). */
+  next_offset: number;
 }
 
 export interface VenueSplit {
