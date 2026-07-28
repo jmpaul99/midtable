@@ -427,6 +427,8 @@ export interface MatchLogRow {
 export interface MatchLogPage {
   items: MatchLogRow[];
   has_more: boolean;
+  /** SQL match cursor for the next page (not `items.length`). */
+  next_offset: number;
 }
 
 export interface TeamFixture extends MatchLogRow {
@@ -441,6 +443,8 @@ export interface TeamFixture extends MatchLogRow {
 export interface TeamFixturePage {
   items: TeamFixture[];
   has_more: boolean;
+  /** SQL match cursor for the next page (not `items.length`). */
+  next_offset: number;
 }
 
 export interface VenueSplit {

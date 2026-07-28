@@ -15,6 +15,7 @@ from app.services.match_constants import FINISHED_STATUSES
 from app.services.match_queries import (
     competition_key_predicate,
     competition_keys_from_pools,
+    fill_mapped_match_page,
     paginate_matches,
     pool_lookup_for_league,
 )
@@ -247,6 +248,7 @@ def test_match_log_results_pagination_and_owners(
     )
     assert page.has_more is True
     assert len(page.items) == 2
+    assert page.next_offset == 2
     assert page.items[0].home_owner.team_name == "Gunners"
     assert page.items[0].away_owner.display_name == "Sam"
     assert page.items[0].pool_label == "Premier League"
@@ -512,3 +514,89 @@ def test_paginate_matches_limit_plus_one():
     assert has_more is True
     assert page == rows[:2]
     assert FINISHED_STATUSES  # imported for domain coupling sanity
+
+
+def test_fill_mapped_match_page_refills_after_drops():
+    """Dropped mapped rows must not shrink the page or stall the SQL cursor."""
+    all_matches = [SimpleNamespace(id=i) for i in range(6)]
+
+    def fetch(limit: int, offset: int):
+        page = all_matches[offset : offset + limit]
+        has_more = len(all_matches) > offset + limit
+        return page, has_more
+
+    def map_matches(matches):
+        # Drop even ids (orphans / unmapped rows).
+        return [m for m in matches if m.id % 2 == 1]
+
+    page0, has_more0, next0 = fill_mapped_match_page(
+        limit=2,
+        offset=0,
+        fetch_matches=fetch,
+        map_matches=map_matches,
+    )
+    assert [m.id for m in page0] == [1, 3]
+    assert has_more0 is True
+    assert next0 == 4
+
+    page1, has_more1, next1 = fill_mapped_match_page(
+        limit=2,
+        offset=next0,
+        fetch_matches=fetch,
+        map_matches=map_matches,
+    )
+    assert [m.id for m in page1] == [5]
+    assert has_more1 is False
+    assert next1 == 6
+
+
+@_patch_match_log
+def test_match_log_fills_page_when_pool_missing(
+    paginate_mock, keys_mock, pools_mock, lookup_mock, owners_mock
+):
+    """Matches without a pool are dropped; page still fills and next_offset advances."""
+    pool = _pool()
+    pools_mock.return_value = [pool]
+    keys_mock.return_value = [(pool.provider, pool.competition_code, pool.season_year)]
+    lookup_mock.return_value = {
+        (pool.provider, pool.competition_code, pool.season_year): pool
+    }
+    owners_mock.return_value = {}
+    home = _team(tid=10, name="Arsenal")
+    away = _team(tid=20, name="Chelsea")
+    t0 = datetime(2026, 8, 1, 12, tzinfo=UTC)
+    t1 = datetime(2026, 8, 8, 12, tzinfo=UTC)
+    t2 = datetime(2026, 8, 15, 12, tzinfo=UTC)
+    orphan = _match(
+        mid=1, home=10, away=20, status="FINISHED", kickoff=t2, home_goals=1, away_goals=0
+    )
+    orphan.competition_code = "CL"
+    kept_a = _match(
+        mid=2, home=10, away=20, status="FINISHED", kickoff=t1, home_goals=2, away_goals=0
+    )
+    kept_b = _match(
+        mid=3, home=10, away=20, status="FINISHED", kickoff=t0, home_goals=0, away_goals=0
+    )
+    # Newest-first: orphan, kept_a, kept_b
+    paginate_mock.side_effect = _paginate_from([orphan, kept_a, kept_b])
+    league = SimpleNamespace(id=1)
+    member = SimpleNamespace(id=99, public_id=uuid4())
+    db = _db_for_page([home, away])
+
+    page = match_log(
+        membership=(league, member),
+        db=db,
+        section="results",
+        limit=2,
+        offset=0,
+        pool_id=None,
+        team_id=None,
+        member_id=None,
+        mine=False,
+        sort="kickoff",
+        q=None,
+    )
+    assert [row.id for row in page.items] == [kept_a.public_id, kept_b.public_id]
+    assert page.has_more is False
+    assert page.next_offset == 3
+    assert paginate_mock.call_count >= 2

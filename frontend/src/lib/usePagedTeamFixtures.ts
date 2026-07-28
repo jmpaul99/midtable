@@ -30,7 +30,7 @@ type FetchPage = (args: {
   section: TeamFixtureSection;
   limit: number;
   offset: number;
-}) => Promise<{ items: TeamFixture[]; has_more: boolean }>;
+}) => Promise<{ items: TeamFixture[]; has_more: boolean; next_offset: number }>;
 
 export function usePagedTeamFixtures({
   section,
@@ -65,7 +65,8 @@ export function usePagedTeamFixtures({
           loading: false,
           loadingMore: false,
           error: "",
-          offset: offset + page.items.length,
+          // Prefer SQL cursor; falling back to item count only for older payloads.
+          offset: page.next_offset ?? offset + page.items.length,
         }));
       } catch (e) {
         if (generation !== fetchGeneration.current) return;

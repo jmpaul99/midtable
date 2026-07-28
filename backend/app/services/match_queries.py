@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from typing import Any, Literal
+from collections.abc import Callable, Sequence
+from typing import Any, Literal, TypeVar
 
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session, aliased
@@ -14,6 +14,7 @@ from app.services.match_constants import FINISHED_STATUSES
 
 CompetitionKey = tuple[str, str, int]
 MatchSort = Literal["kickoff_asc", "kickoff_desc", "points_desc"]
+TMapped = TypeVar("TMapped")
 
 __all__ = [
     "CompetitionKey",
@@ -22,6 +23,7 @@ __all__ = [
     "competition_key_predicate",
     "competition_key_predicate_for",
     "competition_keys_from_pools",
+    "fill_mapped_match_page",
     "matches_for_competition",
     "matches_for_league",
     "matches_for_pool",
@@ -211,6 +213,33 @@ def paginate_matches(
     rows = list(db.scalars(stmt.offset(offset).limit(limit + 1)).unique().all())
     has_more = len(rows) > limit
     return rows[:limit], has_more
+
+
+def fill_mapped_match_page(
+    *,
+    limit: int,
+    offset: int,
+    fetch_matches: Callable[[int, int], tuple[list[Match], bool]],
+    map_matches: Callable[[list[Match]], list[TMapped]],
+) -> tuple[list[TMapped], bool, int]:
+    """Fill a response page when mapping may drop SQL match rows.
+
+    ``offset`` / returned ``next_offset`` are SQL match cursors. Callers that map
+    matches to API rows (and skip orphans) must page with ``next_offset``, not the
+    returned item count, so clients neither skip nor stall on dropped rows.
+    """
+    items: list[TMapped] = []
+    sql_offset = offset
+    sql_has_more = True
+    while len(items) < limit and sql_has_more:
+        batch_limit = limit - len(items)
+        matches, sql_has_more = fetch_matches(batch_limit, sql_offset)
+        sql_offset += len(matches)
+        if not matches:
+            break
+        items.extend(map_matches(matches))
+    has_more = len(items) >= limit and sql_has_more
+    return items, has_more, sql_offset
 
 
 def pool_lookup_for_league(

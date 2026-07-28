@@ -483,6 +483,7 @@ def test_member_fixtures_filters_and_paginates(
     )
     assert len(page1.items) == 5
     assert page1.has_more is True
+    assert page1.next_offset == 5
 
     page2 = member_fixtures(
         member_id=member_public_id,
@@ -490,12 +491,13 @@ def test_member_fixtures_filters_and_paginates(
         db=db,
         section="recent",
         limit=5,
-        offset=5,
+        offset=page1.next_offset,
         club_id=arsenal.public_id,
         opponent_member_id=opponent_public_id,
     )
     assert len(page2.items) == 2
     assert page2.has_more is False
+    assert page2.next_offset == 7
 
 
 @patch("app.routers.league_reads.team_ids_for_member")
@@ -704,6 +706,7 @@ def test_team_fixtures_paginates(
     )
     assert len(page1.items) == 5
     assert page1.has_more is True
+    assert page1.next_offset == 5
     assert page1.items[0].opponent_name == "Spurs"
     assert page1.items[0].points == 3.0
 
@@ -713,10 +716,11 @@ def test_team_fixtures_paginates(
         db=db,
         section="recent",
         limit=5,
-        offset=5,
+        offset=page1.next_offset,
     )
     assert len(page2.items) == 2
     assert page2.has_more is False
+    assert page2.next_offset == 7
 
 
 @patch("app.routers.league_reads.owner_by_team_id_for_league")

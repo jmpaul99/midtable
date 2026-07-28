@@ -36,6 +36,7 @@ from app.services.match_queries import (
     MatchSort,
     competition_key_predicate_for,
     competition_keys_from_pools,
+    fill_mapped_match_page,
     matches_for_league,
     paginate_matches,
     pool_for_match,
@@ -281,13 +282,13 @@ def match_log(
         if pool is None:
             raise HTTPException(status_code=404, detail="Competition not found")
         if pool.competition_code is None or pool.season_year is None:
-            return MatchLogPage(items=[], has_more=False)
+            return MatchLogPage(items=[], has_more=False, next_offset=offset)
         keys = [(pool.provider, pool.competition_code, pool.season_year)]
     else:
         keys = competition_keys_from_pools(pools)
 
     if not keys:
-        return MatchLogPage(items=[], has_more=False)
+        return MatchLogPage(items=[], has_more=False, next_offset=offset)
 
     filters: list[Any] = []
     if section == "results":
@@ -333,7 +334,7 @@ def match_log(
             db, league_id=league.id, member_id=owner_member.id
         )
         if not owned_team_ids:
-            return MatchLogPage(items=[], has_more=False)
+            return MatchLogPage(items=[], has_more=False, next_offset=offset)
         filters.append(
             or_(
                 Match.home_team_id.in_(owned_team_ids),
@@ -350,68 +351,79 @@ def match_log(
     else:
         order = "kickoff_desc"
 
-    matches, has_more = paginate_matches(
-        db,
-        keys=keys,
-        limit=limit,
-        offset=offset,
-        filters=filters,
-        order=order,
-        league_id=league.id if use_points_sort else None,
-    )
-
-    team_ids = {m.home_team_id for m in matches} | {m.away_team_id for m in matches}
-    teams = {
-        t.id: t
-        for t in (
-            db.scalars(select(Team).where(Team.id.in_(team_ids))).all() if team_ids else []
-        )
-    }
-    match_ids = [m.id for m in matches]
-    events = (
-        list(
-            db.scalars(
-                select(ScoringEvent).where(
-                    ScoringEvent.league_id == league.id,
-                    ScoringEvent.match_id.in_(match_ids),
-                )
-            ).all()
-        )
-        if match_ids
-        else []
-    )
-    points_by_match_team = match_stats_service.points_by_match_team(events)
     owner_by_team_id = owner_by_team_id_for_league(db, league)
 
-    rows: list[MatchLogRow] = []
-    for m in matches:
-        pool = pool_by_key.get((m.provider, m.competition_code, m.season_year))
-        if pool is None or m.home_team_id not in teams or m.away_team_id not in teams:
-            continue
-        home_pts = points_by_match_team.get((m.id, m.home_team_id))
-        away_pts = points_by_match_team.get((m.id, m.away_team_id))
-        rows.append(
-            MatchLogRow(
-                id=m.public_id,
-                kickoff_at=m.kickoff_at,
-                status=m.status,
-                scheduled_matchweek=m.scheduled_matchweek,
-                home_team_id=teams[m.home_team_id].public_id,
-                away_team_id=teams[m.away_team_id].public_id,
-                home_team_name=teams[m.home_team_id].name,
-                away_team_name=teams[m.away_team_id].name,
-                home_goals=m.home_goals,
-                away_goals=m.away_goals,
-                pool_id=pool.public_id,
-                pool_label=pool.label,
-                home_points=home_pts,
-                away_points=away_pts,
-                home_owner=owner_by_team_id.get(m.home_team_id),
-                away_owner=owner_by_team_id.get(m.away_team_id),
-            )
+    def _fetch(batch_limit: int, batch_offset: int) -> tuple[list[Match], bool]:
+        return paginate_matches(
+            db,
+            keys=keys,
+            limit=batch_limit,
+            offset=batch_offset,
+            filters=filters,
+            order=order,
+            league_id=league.id if use_points_sort else None,
         )
 
-    return MatchLogPage(items=rows, has_more=has_more)
+    def _map_matches(matches: list[Match]) -> list[MatchLogRow]:
+        team_ids = {m.home_team_id for m in matches} | {m.away_team_id for m in matches}
+        teams = {
+            t.id: t
+            for t in (
+                db.scalars(select(Team).where(Team.id.in_(team_ids))).all()
+                if team_ids
+                else []
+            )
+        }
+        match_ids = [m.id for m in matches]
+        events = (
+            list(
+                db.scalars(
+                    select(ScoringEvent).where(
+                        ScoringEvent.league_id == league.id,
+                        ScoringEvent.match_id.in_(match_ids),
+                    )
+                ).all()
+            )
+            if match_ids
+            else []
+        )
+        points_by_match_team = match_stats_service.points_by_match_team(events)
+        rows: list[MatchLogRow] = []
+        for m in matches:
+            pool = pool_by_key.get((m.provider, m.competition_code, m.season_year))
+            if pool is None or m.home_team_id not in teams or m.away_team_id not in teams:
+                continue
+            home_pts = points_by_match_team.get((m.id, m.home_team_id))
+            away_pts = points_by_match_team.get((m.id, m.away_team_id))
+            rows.append(
+                MatchLogRow(
+                    id=m.public_id,
+                    kickoff_at=m.kickoff_at,
+                    status=m.status,
+                    scheduled_matchweek=m.scheduled_matchweek,
+                    home_team_id=teams[m.home_team_id].public_id,
+                    away_team_id=teams[m.away_team_id].public_id,
+                    home_team_name=teams[m.home_team_id].name,
+                    away_team_name=teams[m.away_team_id].name,
+                    home_goals=m.home_goals,
+                    away_goals=m.away_goals,
+                    pool_id=pool.public_id,
+                    pool_label=pool.label,
+                    home_points=home_pts,
+                    away_points=away_pts,
+                    home_owner=owner_by_team_id.get(m.home_team_id),
+                    away_owner=owner_by_team_id.get(m.away_team_id),
+                )
+            )
+        return rows
+
+    rows, has_more, next_offset = fill_mapped_match_page(
+        limit=limit,
+        offset=offset,
+        fetch_matches=_fetch,
+        map_matches=_map_matches,
+    )
+    return MatchLogPage(items=rows, has_more=has_more, next_offset=next_offset)
 
 
 def _fixture_row(
@@ -482,7 +494,7 @@ def _member_fixture_page(
         db, league_id=league.id, member_id=member.id
     )
     if not owned_team_ids:
-        return TeamFixturePage(items=[], has_more=False)
+        return TeamFixturePage(items=[], has_more=False, next_offset=offset)
 
     focus_club_id: int | None = None
     if club_id is not None:
@@ -498,11 +510,11 @@ def _member_fixture_page(
             db, league_id=league.id, member_id=opponent_member.id
         )
         if not opponent_team_ids:
-            return TeamFixturePage(items=[], has_more=False)
+            return TeamFixturePage(items=[], has_more=False, next_offset=offset)
 
     keys = _league_competition_keys(db, league)
     if not keys:
-        return TeamFixturePage(items=[], has_more=False)
+        return TeamFixturePage(items=[], has_more=False, next_offset=offset)
 
     filters: list[Any] = []
     if section == "recent":
@@ -536,96 +548,108 @@ def _member_fixture_page(
             )
         )
 
-    matches, has_more = paginate_matches(
-        db,
-        keys=keys,
-        limit=limit,
-        offset=offset,
-        filters=filters,
-        order="kickoff_asc" if section == "upcoming" else "kickoff_desc",
-    )
-
-    involved_team_ids = (
-        {m.home_team_id for m in matches}
-        | {m.away_team_id for m in matches}
-        | owned_team_ids
-    )
-    teams = {
-        t.id: t
-        for t in (
-            db.scalars(select(Team).where(Team.id.in_(involved_team_ids))).all()
-            if involved_team_ids
-            else []
-        )
-    }
     pool_lookup = pool_lookup_for_league(db, league)
     owner_by_team_id = owner_by_team_id_for_league(db, league)
-    match_ids = [m.id for m in matches]
-    events = (
-        list(
-            db.scalars(
-                select(ScoringEvent).where(
-                    ScoringEvent.league_id == league.id,
-                    ScoringEvent.team_id.in_(owned_team_ids),
-                    ScoringEvent.match_id.in_(match_ids),
-                )
-            ).all()
-        )
-        if match_ids
-        else []
-    )
-    points_by_match_team = match_stats_service.points_by_match_team(events)
+    order: MatchSort = "kickoff_asc" if section == "upcoming" else "kickoff_desc"
 
-    rows: list[TeamFixtureRow] = []
-    for match in matches:
-        # Club filter: focus that club when it plays (including as away in a derby).
-        # Otherwise one row per fixture, preferring the home owned club.
-        if focus_club_id is not None:
-            if match.home_team_id == focus_club_id:
+    def _fetch(batch_limit: int, batch_offset: int) -> tuple[list[Match], bool]:
+        return paginate_matches(
+            db,
+            keys=keys,
+            limit=batch_limit,
+            offset=batch_offset,
+            filters=filters,
+            order=order,
+        )
+
+    def _map_matches(matches: list[Match]) -> list[TeamFixtureRow]:
+        involved_team_ids = (
+            {m.home_team_id for m in matches}
+            | {m.away_team_id for m in matches}
+            | owned_team_ids
+        )
+        teams = {
+            t.id: t
+            for t in (
+                db.scalars(select(Team).where(Team.id.in_(involved_team_ids))).all()
+                if involved_team_ids
+                else []
+            )
+        }
+        match_ids = [m.id for m in matches]
+        events = (
+            list(
+                db.scalars(
+                    select(ScoringEvent).where(
+                        ScoringEvent.league_id == league.id,
+                        ScoringEvent.team_id.in_(owned_team_ids),
+                        ScoringEvent.match_id.in_(match_ids),
+                    )
+                ).all()
+            )
+            if match_ids
+            else []
+        )
+        points_by_match_team = match_stats_service.points_by_match_team(events)
+        rows: list[TeamFixtureRow] = []
+        for match in matches:
+            # Club filter: focus that club when it plays (including as away in a derby).
+            # Otherwise one row per fixture, preferring the home owned club.
+            if focus_club_id is not None:
+                if match.home_team_id == focus_club_id:
+                    focus_id = match.home_team_id
+                elif match.away_team_id == focus_club_id:
+                    focus_id = match.away_team_id
+                else:
+                    continue
+            elif match.home_team_id in owned_team_ids:
                 focus_id = match.home_team_id
-            elif match.away_team_id == focus_club_id:
+            elif match.away_team_id in owned_team_ids:
                 focus_id = match.away_team_id
             else:
                 continue
-        elif match.home_team_id in owned_team_ids:
-            focus_id = match.home_team_id
-        elif match.away_team_id in owned_team_ids:
-            focus_id = match.away_team_id
-        else:
-            continue
-        opponent_id = (
-            match.away_team_id if match.home_team_id == focus_id else match.home_team_id
-        )
-        if opponent_team_ids is not None and opponent_id not in opponent_team_ids:
-            continue
-        is_finished = match.status in _FINISHED
-        intra_roster = opponent_id in owned_team_ids
-        if is_finished:
-            if intra_roster:
-                points = (
-                    points_by_match_team.get((match.id, match.home_team_id), 0.0)
-                    + points_by_match_team.get((match.id, match.away_team_id), 0.0)
-                )
+            opponent_id = (
+                match.away_team_id
+                if match.home_team_id == focus_id
+                else match.home_team_id
+            )
+            if opponent_team_ids is not None and opponent_id not in opponent_team_ids:
+                continue
+            is_finished = match.status in _FINISHED
+            intra_roster = opponent_id in owned_team_ids
+            if is_finished:
+                if intra_roster:
+                    points = (
+                        points_by_match_team.get((match.id, match.home_team_id), 0.0)
+                        + points_by_match_team.get((match.id, match.away_team_id), 0.0)
+                    )
+                else:
+                    points = points_by_match_team.get((match.id, focus_id))
             else:
-                points = points_by_match_team.get((match.id, focus_id))
-        else:
-            points = None
-        row = _fixture_row(
-            match=match,
-            team_id=focus_id,
-            teams=teams,
-            pool=pool_for_match(db, league, match, lookup=pool_lookup),
-            points=points,
-            # Same-owner derbies still expose opponent_owner when filtering by that
-            # manager so the Opponent filter stays consistent with the row payload.
-            opponent_owner=owner_by_team_id.get(opponent_id)
-            if (intra_roster and opponent_member_id is not None)
-            else (None if intra_roster else owner_by_team_id.get(opponent_id)),
-        )
-        if row is not None:
-            rows.append(row)
+                points = None
+            row = _fixture_row(
+                match=match,
+                team_id=focus_id,
+                teams=teams,
+                pool=pool_for_match(db, league, match, lookup=pool_lookup),
+                points=points,
+                # Same-owner derbies still expose opponent_owner when filtering by that
+                # manager so the Opponent filter stays consistent with the row payload.
+                opponent_owner=owner_by_team_id.get(opponent_id)
+                if (intra_roster and opponent_member_id is not None)
+                else (None if intra_roster else owner_by_team_id.get(opponent_id)),
+            )
+            if row is not None:
+                rows.append(row)
+        return rows
 
-    return TeamFixturePage(items=rows, has_more=has_more)
+    rows, has_more, next_offset = fill_mapped_match_page(
+        limit=limit,
+        offset=offset,
+        fetch_matches=_fetch,
+        map_matches=_map_matches,
+    )
+    return TeamFixturePage(items=rows, has_more=has_more, next_offset=next_offset)
 
 
 def _team_fixture_page(
@@ -645,11 +669,11 @@ def _team_fixture_page(
             db, league_id=league.id, member_id=opponent_member.id
         )
         if not opponent_team_ids:
-            return TeamFixturePage(items=[], has_more=False)
+            return TeamFixturePage(items=[], has_more=False, next_offset=offset)
 
     keys = _league_competition_keys(db, league)
     if not keys:
-        return TeamFixturePage(items=[], has_more=False)
+        return TeamFixturePage(items=[], has_more=False, next_offset=offset)
 
     filters: list[Any] = [
         or_(Match.home_team_id == team.id, Match.away_team_id == team.id),
@@ -672,46 +696,8 @@ def _team_fixture_page(
             )
         )
 
-    matches, has_more = paginate_matches(
-        db,
-        keys=keys,
-        limit=limit,
-        offset=offset,
-        filters=filters,
-        order="kickoff_asc" if section == "upcoming" else "kickoff_desc",
-    )
-
-    team_ids = {m.home_team_id for m in matches} | {m.away_team_id for m in matches} | {
-        team.id
-    }
-    teams = {
-        t.id: t
-        for t in (
-            db.scalars(select(Team).where(Team.id.in_(team_ids))).all() if team_ids else []
-        )
-    }
     pool_lookup = pool_lookup_for_league(db, league)
     owner_by_team_id = owner_by_team_id_for_league(db, league)
-    match_ids = [m.id for m in matches]
-    events = (
-        list(
-            db.scalars(
-                select(ScoringEvent).where(
-                    ScoringEvent.league_id == league.id,
-                    ScoringEvent.team_id == team.id,
-                    ScoringEvent.match_id.in_(match_ids),
-                )
-            ).all()
-        )
-        if match_ids
-        else []
-    )
-    points_by_match: dict[int, float] = {}
-    for event in events:
-        points_by_match[event.match_id] = points_by_match.get(event.match_id, 0.0) + float(
-            event.points
-        )
-
     pool_link = db.scalars(
         select(PoolTeam)
         .join(TeamPool, TeamPool.id == PoolTeam.pool_id)
@@ -720,30 +706,83 @@ def _team_fixture_page(
     pool = db.get(TeamPool, pool_link.pool_id) if pool_link else None
     table_by_team: dict[int, Any] = {}
     if pool is not None:
-        table_by_team = match_stats_service.current_table_for_pool(db, pool=pool, league=league)
-
-    rows: list[TeamFixtureRow] = []
-    for match in matches:
-        finished = match.status in _FINISHED
-        opponent_id = (
-            match.away_team_id if match.home_team_id == team.id else match.home_team_id
+        table_by_team = match_stats_service.current_table_for_pool(
+            db, pool=pool, league=league
         )
-        if opponent_team_ids is not None and opponent_id not in opponent_team_ids:
-            continue
-        opp_pos = (table_by_team.get(opponent_id) or {}).get("table_position")
-        row = _fixture_row(
-            match=match,
-            team_id=team.id,
-            teams=teams,
-            pool=pool_for_match(db, league, match, lookup=pool_lookup),
-            points=points_by_match.get(match.id) if finished else None,
-            opponent_table_position=opp_pos,
-            opponent_owner=owner_by_team_id.get(opponent_id),
-        )
-        if row is not None:
-            rows.append(row)
+    order: MatchSort = "kickoff_asc" if section == "upcoming" else "kickoff_desc"
 
-    return TeamFixturePage(items=rows, has_more=has_more)
+    def _fetch(batch_limit: int, batch_offset: int) -> tuple[list[Match], bool]:
+        return paginate_matches(
+            db,
+            keys=keys,
+            limit=batch_limit,
+            offset=batch_offset,
+            filters=filters,
+            order=order,
+        )
+
+    def _map_matches(matches: list[Match]) -> list[TeamFixtureRow]:
+        team_ids = {m.home_team_id for m in matches} | {
+            m.away_team_id for m in matches
+        } | {team.id}
+        teams = {
+            t.id: t
+            for t in (
+                db.scalars(select(Team).where(Team.id.in_(team_ids))).all()
+                if team_ids
+                else []
+            )
+        }
+        match_ids = [m.id for m in matches]
+        events = (
+            list(
+                db.scalars(
+                    select(ScoringEvent).where(
+                        ScoringEvent.league_id == league.id,
+                        ScoringEvent.team_id == team.id,
+                        ScoringEvent.match_id.in_(match_ids),
+                    )
+                ).all()
+            )
+            if match_ids
+            else []
+        )
+        points_by_match: dict[int, float] = {}
+        for event in events:
+            points_by_match[event.match_id] = points_by_match.get(
+                event.match_id, 0.0
+            ) + float(event.points)
+        rows: list[TeamFixtureRow] = []
+        for match in matches:
+            finished = match.status in _FINISHED
+            opponent_id = (
+                match.away_team_id
+                if match.home_team_id == team.id
+                else match.home_team_id
+            )
+            if opponent_team_ids is not None and opponent_id not in opponent_team_ids:
+                continue
+            opp_pos = (table_by_team.get(opponent_id) or {}).get("table_position")
+            row = _fixture_row(
+                match=match,
+                team_id=team.id,
+                teams=teams,
+                pool=pool_for_match(db, league, match, lookup=pool_lookup),
+                points=points_by_match.get(match.id) if finished else None,
+                opponent_table_position=opp_pos,
+                opponent_owner=owner_by_team_id.get(opponent_id),
+            )
+            if row is not None:
+                rows.append(row)
+        return rows
+
+    rows, has_more, next_offset = fill_mapped_match_page(
+        limit=limit,
+        offset=offset,
+        fetch_matches=_fetch,
+        map_matches=_map_matches,
+    )
+    return TeamFixturePage(items=rows, has_more=has_more, next_offset=next_offset)
 
 
 @router.get(
