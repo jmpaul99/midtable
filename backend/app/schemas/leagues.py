@@ -412,6 +412,7 @@ class MemberClubRow(BaseModel):
     draft_pick_number: int | None = None
     points: float = 0
     games_played: int = 0
+    games_total: int = 0
     points_per_game: float = 0
 
 
@@ -472,6 +473,9 @@ class MemberDetailResponse(BaseModel):
     stats: dict[str, Any] = Field(default_factory=dict)
     clubs: list[MemberClubRow] = Field(default_factory=list)
     bonuses: list[BonusAwardRow] = Field(default_factory=list)
+    scoring_events: list[ScoringEventMatchRow] = Field(default_factory=list)
+    recent_matches: list[TeamFixtureRow] = Field(default_factory=list)
+    upcoming_matches: list[TeamFixtureRow] = Field(default_factory=list)
 
 
 class SyncStatusResponse(BaseModel):

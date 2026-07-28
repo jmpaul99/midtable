@@ -11,6 +11,7 @@ from app.services.match_stats import (
     goals_from_results,
     points_by_stage_by_team,
     points_by_stage_from_events,
+    scheduled_games_for_team,
     team_results_from_matches,
     venue_split,
     wdl_from_results,
@@ -56,6 +57,22 @@ def test_wdl_includes_losses_from_finished_matches():
     assert [r.letter for r in results] == ["W", "D", "L"]
     assert results[0].result is Result.WIN
     assert results[2].result is Result.LOSS
+
+
+def test_scheduled_games_counts_finished_and_upcoming():
+    t0 = datetime(2026, 8, 1, 12, tzinfo=UTC)
+    t1 = datetime(2026, 8, 8, 12, tzinfo=UTC)
+    t2 = datetime(2026, 8, 15, 12, tzinfo=UTC)
+    matches = [
+        _match(mid=1, home=10, away=20, hg=2, ag=0, kickoff=t0),
+        _match(mid=2, home=20, away=10, hg=0, ag=0, kickoff=t1, status="TIMED"),
+        _match(mid=3, home=30, away=40, hg=1, ag=0, kickoff=t2),
+    ]
+    matches[1].home_goals = None
+    matches[1].away_goals = None
+    assert scheduled_games_for_team(matches, 10) == 2
+    assert scheduled_games_for_team(matches, 30) == 1
+    assert scheduled_games_for_team(matches, 99) == 0
 
 
 def test_form_and_streak():

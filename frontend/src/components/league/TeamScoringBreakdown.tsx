@@ -241,9 +241,11 @@ export function TeamScoringBreakdown({
                               </strong>
                             </div>
                             <div className="shrink-0 text-right">
-                              <div className="font-display text-sm font-extrabold tabular-nums">
-                                {score}
-                              </div>
+                              {score && (
+                                <div className="font-display text-sm font-extrabold tabular-nums">
+                                  {score}
+                                </div>
+                              )}
                               <Muted className="text-[11px] tabular-nums">
                                 +{formatNumber(e.points)} pts
                               </Muted>

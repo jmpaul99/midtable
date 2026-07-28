@@ -1,8 +1,16 @@
 "use client";
 
+import { useMemo } from "react";
 import { useApiQuery } from "@/lib/useApiQuery";
 import { formatNumber } from "@/lib/format";
-import type { ManagerDetail, ManagerHighlights, UUID, VenueSplitRow } from "@/lib/types";
+import type {
+  BonusAward,
+  ManagerDetail,
+  ManagerHighlights,
+  ScoringEventMatch,
+  UUID,
+  VenueSplitRow,
+} from "@/lib/types";
 import { managerLabel } from "@/lib/types";
 import { Empty, ErrorState, Loading } from "@/components/ui/State";
 import {
@@ -21,6 +29,7 @@ import {
   type RosterClubOrder,
 } from "@/lib/rosterClubOrder";
 import { TeamCrest } from "./TeamCrest";
+import { TeamFixtureList } from "./TeamFixtureList";
 import { TeamLink } from "./TeamLink";
 import { TeamNameEditor } from "./TeamNameEditor";
 import { BonusAwardsPanel } from "./BonusAwardsPanel";
@@ -61,6 +70,27 @@ export function ManagerPage({
   const error = detailQ.error || highlightsQ.error || splitsQ.error || "";
   const reloadDetail = detailQ.reload;
 
+  const eventsByMatchId = useMemo(() => {
+    const map = new Map<string, ScoringEventMatch[]>();
+    for (const e of detail?.scoring_events || []) {
+      const list = map.get(e.match_id) || [];
+      list.push(e);
+      map.set(e.match_id, list);
+    }
+    return map;
+  }, [detail?.scoring_events]);
+
+  const bonusesByMatchId = useMemo(() => {
+    const map = new Map<string, BonusAward[]>();
+    for (const b of detail?.bonuses || []) {
+      if (!b.match_id) continue;
+      const list = map.get(b.match_id) || [];
+      list.push(b);
+      map.set(b.match_id, list);
+    }
+    return map;
+  }, [detail?.bonuses]);
+
   if (error) return <ErrorState error={error} />;
   if (!detail) return <Loading label="Loading roster" />;
 
@@ -78,6 +108,8 @@ export function ManagerPage({
   const isMine = Boolean(currentManagerId && currentManagerId === managerId);
   const bonuses = detail.bonuses || [];
   const clubs = [...detail.clubs].sort((a, b) => compareRosterClubs(a, b, clubOrder));
+  const recentMatches = detail.recent_matches || [];
+  const upcomingMatches = detail.upcoming_matches || [];
 
   return (
     <Stack gap="md" className="animate-in">
@@ -118,7 +150,10 @@ export function ManagerPage({
       <StatGrid>
         <StatTile label="Points" value={formatNumber(s.total_points)} />
         <StatTile label="PPG" value={formatNumber(s.points_per_game)} />
-        <StatTile label="Games" value={s.games_played} />
+        <StatTile
+          label="Games"
+          value={`${s.games_played}/${s.games_total ?? 0}`}
+        />
         <StatTile label="Record" value={`${s.wins}-${s.draws}-${s.losses}`} />
         <StatTile label="Upset pts" value={formatNumber(s.upset_points)} />
         <StatTile
@@ -298,8 +333,9 @@ export function ManagerPage({
                           </span>
                           <span className="mt-0.5 block tabular-nums sm:mt-0 sm:inline">
                             <span className="hidden sm:inline"> · </span>
-                            {club.games_played} GP · {formatNumber(club.points_per_game)} PPG ·{" "}
-                            {share}%
+                            {club.games_played}/{club.games_total ?? 0} GP ·{" "}
+                            {formatNumber(club.points_per_game)} PPG · {share}% of
+                            total points
                           </span>
                         </Muted>
                       </div>
@@ -317,6 +353,35 @@ export function ManagerPage({
           )}
         </Stack>
       </Card>
+
+      <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+        <Card className="min-w-0 overflow-hidden">
+          <Stack>
+            <h2>Recent results</h2>
+            <TeamFixtureList
+              leagueId={leagueId}
+              fixtures={recentMatches.slice(0, 5)}
+              empty="No finished matches yet"
+              showPoints
+              showFocusClub
+              eventsByMatchId={eventsByMatchId}
+              bonusesByMatchId={bonusesByMatchId}
+              eventTypeLabels={eventTypeLabels}
+            />
+          </Stack>
+        </Card>
+        <Card className="min-w-0 overflow-hidden">
+          <Stack>
+            <h2>Upcoming fixtures</h2>
+            <TeamFixtureList
+              leagueId={leagueId}
+              fixtures={upcomingMatches.slice(0, 5)}
+              empty="No upcoming fixtures"
+              showFocusClub
+            />
+          </Stack>
+        </Card>
+      </div>
     </Stack>
   );
 }

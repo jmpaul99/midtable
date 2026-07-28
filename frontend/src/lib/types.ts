@@ -530,6 +530,7 @@ export interface ManagerClub {
   draft_pick_number?: number | null;
   points: number;
   games_played: number;
+  games_total: number;
   points_per_game: number;
 }
 
@@ -542,6 +543,7 @@ export interface ManagerDetail {
   stats: {
     total_points: number;
     games_played: number;
+    games_total: number;
     wins: number;
     draws: number;
     losses: number;
@@ -554,6 +556,9 @@ export interface ManagerDetail {
   };
   clubs: ManagerClub[];
   bonuses?: BonusAward[];
+  scoring_events?: ScoringEventMatch[];
+  recent_matches: TeamFixture[];
+  upcoming_matches: TeamFixture[];
 }
 
 export interface ManagerHighlights {

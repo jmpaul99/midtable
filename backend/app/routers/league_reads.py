@@ -541,18 +541,24 @@ def member_detail(
     awarded_bonuses = acc.awarded
     total_points += bonus_points
 
-    finished = (
+    owned_team_ids = set(team_ids)
+    member_matches = (
         [
             m
             for m in matches_for_league(db, league)
-            if m.status in _FINISHED
-            and (m.home_team_id in team_ids or m.away_team_id in team_ids)
+            if m.home_team_id in owned_team_ids or m.away_team_id in owned_team_ids
         ]
         if team_ids
         else []
     )
+    member_matches.sort(key=lambda m: m.kickoff_at, reverse=True)
+    finished = [m for m in member_matches if m.status in _FINISHED]
     games_by_team: dict[int, int] = {
         tid: match_stats_service.finished_games_for_team(finished, tid) for tid in team_ids
+    }
+    games_total_by_team: dict[int, int] = {
+        tid: match_stats_service.scheduled_games_for_team(member_matches, tid)
+        for tid in team_ids
     }
 
     clubs: list[MemberClubRow] = []
@@ -564,6 +570,7 @@ def member_detail(
         pool = pools.get(entry.pool_id)
         pts = points_by_team.get(team.id, 0.0)
         gp = games_by_team.get(team.id, 0)
+        gt = games_total_by_team.get(team.id, 0)
         clubs.append(
             MemberClubRow(
                 team_id=team.public_id,
@@ -576,6 +583,7 @@ def member_detail(
                 draft_pick_number=pick_by_team.get(team.id),
                 points=pts,
                 games_played=gp,
+                games_total=gt,
                 points_per_game=(pts / gp) if gp else 0.0,
             )
         )
@@ -602,6 +610,109 @@ def member_detail(
     losses = int(wdl["losses"])
     upset_points = match_stats_service.sum_upset_points(event_points)
     games_played = int(wdl["games_played"])
+    games_total = sum(games_total_by_team.values())
+
+    matches_by_id = {m.id: m for m in member_matches}
+    involved_team_ids = (
+        {m.home_team_id for m in member_matches}
+        | {m.away_team_id for m in member_matches}
+        | owned_team_ids
+    )
+    for event in events:
+        match = matches_by_id.get(event.match_id)
+        if match:
+            involved_team_ids.add(match.home_team_id)
+            involved_team_ids.add(match.away_team_id)
+    if involved_team_ids - set(teams):
+        for t in db.scalars(select(Team).where(Team.id.in_(involved_team_ids))).all():
+            teams[t.id] = t
+
+    pool_lookup = pool_lookup_for_league(db, league)
+    pool_by_match_id: dict[int, TeamPool] = {}
+    for m in member_matches:
+        match_pool = pool_for_match(db, league, m, lookup=pool_lookup)
+        if match_pool:
+            pool_by_match_id[m.id] = match_pool
+
+    owner_by_team_id = owner_by_team_id_for_league(db, league)
+    points_by_match_team = match_stats_service.points_by_match_team(events)
+
+    recent_candidates: list[TeamFixtureRow] = []
+    upcoming_candidates: list[TeamFixtureRow] = []
+    for match in member_matches:
+        focus_ids = [
+            tid
+            for tid in (match.home_team_id, match.away_team_id)
+            if tid in owned_team_ids
+        ]
+        is_finished = match.status in _FINISHED
+        for focus_id in focus_ids:
+            opponent_id = (
+                match.away_team_id if match.home_team_id == focus_id else match.home_team_id
+            )
+            row = _fixture_row(
+                match=match,
+                team_id=focus_id,
+                teams=teams,
+                pool=pool_by_match_id.get(match.id),
+                points=points_by_match_team.get((match.id, focus_id))
+                if is_finished
+                else None,
+                opponent_owner=owner_by_team_id.get(opponent_id),
+            )
+            if row is None:
+                continue
+            if is_finished:
+                recent_candidates.append(row)
+            else:
+                upcoming_candidates.append(row)
+
+    recent_matches = recent_candidates[:8]
+    upcoming_matches = sorted(upcoming_candidates, key=lambda r: r.kickoff_at)[:8]
+
+    scoring_event_rows: list[ScoringEventMatchRow] = []
+    for event in sorted(
+        events,
+        key=lambda e: (
+            -(
+                matches_by_id[e.match_id].kickoff_at.timestamp()
+                if e.match_id in matches_by_id
+                else 0
+            ),
+            e.event_type,
+        ),
+    ):
+        match = matches_by_id.get(event.match_id)
+        if match is None:
+            match = db.get(Match, event.match_id)
+            if match is None:
+                continue
+            matches_by_id[match.id] = match
+        is_home = match.home_team_id == event.team_id
+        opponent = teams.get(match.away_team_id if is_home else match.home_team_id)
+        if opponent is None:
+            opponent = db.get(Team, match.away_team_id if is_home else match.home_team_id)
+            if opponent:
+                teams[opponent.id] = opponent
+        if opponent is None:
+            continue
+        scoring_event_rows.append(
+            ScoringEventMatchRow(
+                id=event.public_id,
+                event_type=event.event_type,
+                points=float(event.points),
+                match_id=match.public_id,
+                kickoff_at=match.kickoff_at,
+                scheduled_matchweek=match.scheduled_matchweek,
+                status=match.status,
+                is_home=is_home,
+                home_goals=match.home_goals,
+                away_goals=match.away_goals,
+                opponent_id=opponent.public_id,
+                opponent_name=opponent.name,
+                metadata=event.metadata_ or {},
+            )
+        )
 
     return MemberDetailResponse(
         id=member.public_id,
@@ -612,6 +723,7 @@ def member_detail(
         stats={
             "total_points": float(standing["total_points"]) if standing else total_points,
             "games_played": games_played,
+            "games_total": games_total,
             "wins": wins,
             "draws": draws,
             "losses": losses,
@@ -624,6 +736,9 @@ def member_detail(
         },
         clubs=clubs,
         bonuses=awarded_bonuses,
+        scoring_events=scoring_event_rows,
+        recent_matches=recent_matches,
+        upcoming_matches=upcoming_matches,
     )
 
 

@@ -135,6 +135,13 @@ def finished_games_for_team(matches: Sequence[Match], team_id: int) -> int:
     return len(team_results_from_matches(matches, team_id))
 
 
+def scheduled_games_for_team(matches: Sequence[Match], team_id: int) -> int:
+    """All fixtures involving the team (finished + remaining)."""
+    return sum(
+        1 for m in matches if m.home_team_id == team_id or m.away_team_id == team_id
+    )
+
+
 def wdl_from_results(results: Sequence[TeamMatchResult]) -> dict[str, int]:
     wins = draws = losses = 0
     for row in results:

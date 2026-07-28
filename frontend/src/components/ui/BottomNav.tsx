@@ -12,6 +12,8 @@ export type NavItem = {
   exact?: boolean;
   /** Stronger visual weight — used while the draft is live. */
   emphasized?: boolean;
+  /** Extra path prefixes that should mark this item active. */
+  alsoActiveFor?: string[];
 };
 
 export function leagueNavItems(
@@ -35,7 +37,14 @@ export function leagueNavItems(
   };
   const core: NavItem[] = [
     { href: `/leagues/${leagueId}`, label: "Standings", exact: true },
-    { href: `/leagues/${leagueId}/roster`, label: "Rosters" },
+    {
+      href: `/leagues/${leagueId}/roster`,
+      label: "Rosters",
+      alsoActiveFor: [
+        `/leagues/${leagueId}/managers`,
+        `/leagues/${leagueId}/teams`,
+      ],
+    },
     { href: `/leagues/${leagueId}/matches`, label: "Matches" },
     { href: `/leagues/${leagueId}/stats`, label: "Stats" },
   ];
@@ -49,9 +58,11 @@ export function leagueNavItems(
 }
 
 function isActive(pathname: string, item: NavItem) {
-  return item.exact
-    ? pathname === item.href
-    : pathname === item.href || pathname.startsWith(`${item.href}/`);
+  if (item.exact) return pathname === item.href;
+  if (pathname === item.href || pathname.startsWith(`${item.href}/`)) return true;
+  return (item.alsoActiveFor ?? []).some(
+    (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
+  );
 }
 
 export function LeagueDesktopTabs({ items }: { items: NavItem[] }) {
