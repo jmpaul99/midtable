@@ -12,20 +12,29 @@ export function formatDateTimeWithZone(value: string | null | undefined) {
   return new Date(value).toLocaleString(undefined, { timeZoneName: "short" });
 }
 
-/** H2H scoreline, e.g. `2–1` or `—–—`. */
+/** True when both sides have a recorded goal count. */
+export function hasScoreline(
+  homeGoals: number | null | undefined,
+  awayGoals: number | null | undefined,
+): boolean {
+  return homeGoals != null && awayGoals != null;
+}
+
+/** H2H scoreline, e.g. `2–1`. Null when either side is unplayed / missing. */
 export function formatScoreline(
   homeGoals: number | null | undefined,
   awayGoals: number | null | undefined,
-): string {
-  return `${homeGoals ?? "—"}–${awayGoals ?? "—"}`;
+): string | null {
+  if (!hasScoreline(homeGoals, awayGoals)) return null;
+  return `${homeGoals}–${awayGoals}`;
 }
 
-/** Team-oriented scoreline (own goals first when away). */
+/** Team-oriented scoreline (own goals first when away). Null when unplayed. */
 export function formatTeamOrientedScoreline(m: {
   is_home: boolean;
   home_goals: number | null | undefined;
   away_goals: number | null | undefined;
-}): string {
+}): string | null {
   return m.is_home
     ? formatScoreline(m.home_goals, m.away_goals)
     : formatScoreline(m.away_goals, m.home_goals);

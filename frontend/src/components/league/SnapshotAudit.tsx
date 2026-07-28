@@ -47,6 +47,10 @@ export function SnapshotAudit({
   const upsetRows = (matchEvents?.events || []).filter((e) =>
     String(e.event_type).includes("upset"),
   );
+  const matchScore =
+    matchEvents != null
+      ? formatScoreline(matchEvents.home_goals, matchEvents.away_goals)
+      : null;
 
   if (error) return <ErrorState error={error} />;
   if (loading || !snapshots) return <Loading label="Loading snapshots" />;
@@ -60,10 +64,11 @@ export function SnapshotAudit({
           <h2>Table snapshots</h2>
           {matchId && (
             <Muted className="mt-1">
-              Context match <code className="break-all rounded bg-surface-2 px-1.5 py-0.5 text-xs">{matchId}</code>
-              {matchEvents
-                ? ` · ${formatScoreline(matchEvents.home_goals, matchEvents.away_goals)}`
-                : null}
+              Context match{" "}
+              <code className="break-all rounded bg-surface-2 px-1.5 py-0.5 text-xs">
+                {matchId}
+              </code>
+              {matchScore ? ` · ${matchScore}` : ""}
               .
             </Muted>
           )}

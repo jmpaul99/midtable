@@ -83,39 +83,54 @@ export function RosterGrid({
       if (existing) existing.push(row);
       else byMember.set(row.member_id, [row]);
     }
-    return [...byMember.entries()]
-      .map(([memberId, slots]) => {
-        const member = membersById.get(memberId);
-        const teamName = managerLabel(member, slots[0]?.display_name || "Manager");
-        const displayName = member?.display_name?.trim() || null;
-        const sample = slots[0];
-        const clubPoints = slots
-          .filter((s) => s.team_id)
-          .map((s) => Number(s.points || 0));
-        const maxClub = Math.max(0, ...clubPoints);
-        return {
-          memberId,
-          member,
-          teamName,
-          displayName,
-          draftSlot: draftOrder.get(memberId) ?? 999,
-          rank: sample?.rank ?? null,
-          totalPoints: sample?.member_total_points ?? 0,
-          ppg: sample?.member_points_per_game ?? 0,
-          wins: sample?.member_wins ?? 0,
-          draws: sample?.member_draws ?? 0,
-          losses: sample?.member_losses ?? 0,
-          maxClub,
-          slots: [...slots].sort((a, b) => compareRosterClubs(a, b, clubOrder)),
-        };
-      })
-      .sort(
-        (a, b) =>
+    const groups = [...byMember.entries()].map(([memberId, slots]) => {
+      const member = membersById.get(memberId);
+      const teamName = managerLabel(member, slots[0]?.display_name || "Manager");
+      const displayName = member?.display_name?.trim() || null;
+      const sample = slots[0];
+      const clubPoints = slots
+        .filter((s) => s.team_id)
+        .map((s) => Number(s.points || 0));
+      const maxClub = Math.max(0, ...clubPoints);
+      return {
+        memberId,
+        member,
+        teamName,
+        displayName,
+        draftSlot: draftOrder.get(memberId) ?? 999,
+        rank: sample?.rank ?? null,
+        totalPoints: sample?.member_total_points ?? 0,
+        ppg: sample?.member_points_per_game ?? 0,
+        wins: sample?.member_wins ?? 0,
+        draws: sample?.member_draws ?? 0,
+        losses: sample?.member_losses ?? 0,
+        maxClub,
+        slots: [...slots].sort((a, b) => compareRosterClubs(a, b, clubOrder)),
+      };
+    });
+
+    const rankCounts = new Map<number, number>();
+    for (const group of groups) {
+      if (group.rank == null) continue;
+      rankCounts.set(group.rank, (rankCounts.get(group.rank) ?? 0) + 1);
+    }
+
+    return groups
+      .map((group) => ({
+        ...group,
+        rankTied: group.rank != null && (rankCounts.get(group.rank) ?? 0) > 1,
+      }))
+      .sort((a, b) => {
+        const aMine = currentMemberId && a.memberId === currentMemberId ? 0 : 1;
+        const bMine = currentMemberId && b.memberId === currentMemberId ? 0 : 1;
+        return (
+          aMine - bMine ||
           (a.rank ?? 999) - (b.rank ?? 999) ||
           a.draftSlot - b.draftSlot ||
-          a.teamName.localeCompare(b.teamName),
-      );
-  }, [rows, draftOrder, membersById, clubOrder]);
+          a.teamName.localeCompare(b.teamName)
+        );
+      });
+  }, [rows, draftOrder, membersById, clubOrder, currentMemberId]);
 
   if (error) return <ErrorState error={error} />;
   if (loading || !rows) return <Loading label="Loading rosters" />;
@@ -129,7 +144,10 @@ export function RosterGrid({
           <Card key={group.memberId} className="min-w-0 overflow-hidden">
             <div className="mb-3 flex items-start gap-2.5 sm:gap-3">
               {group.rank != null && (
-                <RankBadge value={group.rank} first={group.rank === 1} />
+                <RankBadge
+                  value={group.rankTied ? `T-${group.rank}` : group.rank}
+                  first={group.rank === 1}
+                />
               )}
               <div className="min-w-0 flex-1">
                 <TeamNameEditor
@@ -138,7 +156,7 @@ export function RosterGrid({
                   teamName={group.member?.team_name?.trim() || group.teamName}
                   displayName={group.displayName}
                   canEdit={isMine}
-                  titleClassName="text-base"
+                  titleClassName="text-base leading-9"
                   titleContent={
                     <ManagerLink leagueId={leagueId} managerId={group.memberId}>
                       {group.teamName}

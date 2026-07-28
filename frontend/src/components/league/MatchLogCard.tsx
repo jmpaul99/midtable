@@ -9,37 +9,23 @@ import { TeamLink } from "./TeamLink";
 import { ManagerLink } from "./ManagerLink";
 import { MatchRowShell } from "./MatchRowShell";
 
-function ClubRow({
+function OwnerLink({
   leagueId,
-  teamId,
-  teamName,
   owner,
 }: {
   leagueId: UUID;
-  teamId: UUID;
-  teamName: string;
   owner?: MatchOwnerInfo | null;
 }) {
   const name = matchOwnerLabel(owner);
+  if (!name) return null;
   return (
-    <div className="min-w-0">
-      <strong className="block truncate text-sm leading-snug sm:text-base">
-        <TeamLink leagueId={leagueId} teamId={teamId}>
-          {teamName}
-        </TeamLink>
-      </strong>
-      {name && (
-        <Muted className="mt-0.5 block truncate text-[11px] sm:text-xs">
-          <ManagerLink
-            leagueId={leagueId}
-            managerId={owner?.member_id}
-            className="font-semibold text-ink hover:text-brand"
-          >
-            {name}
-          </ManagerLink>
-        </Muted>
-      )}
-    </div>
+    <ManagerLink
+      leagueId={leagueId}
+      managerId={owner?.member_id}
+      className="font-semibold text-ink hover:text-brand"
+    >
+      {name}
+    </ManagerLink>
   );
 }
 
@@ -53,6 +39,9 @@ export function MatchLogCard({
   showPoolLabel?: boolean;
 }) {
   const hasPoints = m.home_points != null || m.away_points != null;
+  const scoreline = formatScoreline(m.home_goals, m.away_goals);
+  const homeOwner = matchOwnerLabel(m.home_owner);
+  const awayOwner = matchOwnerLabel(m.away_owner);
   const meta = [
     m.scheduled_matchweek != null ? `MW${m.scheduled_matchweek}` : null,
     showPoolLabel && m.pool_label ? m.pool_label : null,
@@ -71,27 +60,31 @@ export function MatchLogCard({
               </>
             )}
           </Muted>
-          <div className="mt-1 flex flex-col gap-1.5">
-            <ClubRow
-              leagueId={leagueId}
-              teamId={m.home_team_id}
-              teamName={m.home_team_name}
-              owner={m.home_owner}
-            />
-            <ClubRow
-              leagueId={leagueId}
-              teamId={m.away_team_id}
-              teamName={m.away_team_name}
-              owner={m.away_owner}
-            />
-          </div>
+          <strong className="mt-1 block truncate text-sm leading-snug sm:text-base">
+            <TeamLink leagueId={leagueId} teamId={m.home_team_id}>
+              {m.home_team_name}
+            </TeamLink>{" "}
+            vs{" "}
+            <TeamLink leagueId={leagueId} teamId={m.away_team_id}>
+              {m.away_team_name}
+            </TeamLink>
+          </strong>
+          {(homeOwner || awayOwner) && (
+            <Muted className="mt-0.5 block truncate text-[11px] sm:text-xs">
+              {homeOwner ? <OwnerLink leagueId={leagueId} owner={m.home_owner} /> : "—"}
+              {" vs "}
+              {awayOwner ? <OwnerLink leagueId={leagueId} owner={m.away_owner} /> : "—"}
+            </Muted>
+          )}
         </div>
         <div className="shrink-0 text-right">
           <div className="flex flex-col items-end gap-1">
             <Status value={m.status} />
-            <div className="font-display text-base font-extrabold tabular-nums sm:text-lg">
-              {formatScoreline(m.home_goals, m.away_goals)}
-            </div>
+            {scoreline && (
+              <div className="font-display text-base font-extrabold tabular-nums sm:text-lg">
+                {scoreline}
+              </div>
+            )}
             {hasPoints && (
               <Muted className="text-[11px] tabular-nums sm:text-xs">
                 {formatNumber(m.home_points ?? 0)}/{formatNumber(m.away_points ?? 0)} pts
