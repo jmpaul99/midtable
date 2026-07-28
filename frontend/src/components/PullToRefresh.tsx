@@ -8,6 +8,9 @@ const PULL_THRESHOLD = 72;
 const MAX_PULL = 112;
 const PULL_RESISTANCE = 0.45;
 
+/** Matches the app `md` breakpoint — bottom nav / mobile chrome. */
+const MOBILE_QUERY = "(max-width: 767px)";
+
 function scrollTop(): number {
   return window.scrollY || document.documentElement.scrollTop || 0;
 }
@@ -34,6 +37,7 @@ function nestedScrollerBlocksPull(target: EventTarget | null): boolean {
 export function PullToRefresh({ children }: { children: ReactNode }) {
   const [pull, setPull] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
+  const [mobile, setMobile] = useState(false);
   const startY = useRef<number | null>(null);
   const startX = useRef<number | null>(null);
   const pullRef = useRef(0);
@@ -42,6 +46,20 @@ export function PullToRefresh({ children }: { children: ReactNode }) {
   const horizontal = useRef(false);
 
   useEffect(() => {
+    const media = window.matchMedia(MOBILE_QUERY);
+    const syncMobile = () => setMobile(media.matches);
+    syncMobile();
+    media.addEventListener("change", syncMobile);
+    return () => media.removeEventListener("change", syncMobile);
+  }, []);
+
+  useEffect(() => {
+    if (!mobile) {
+      pullRef.current = 0;
+      setPull(0);
+      return;
+    }
+
     const setPullDistance = (value: number) => {
       pullRef.current = value;
       setPull(value);
@@ -121,6 +139,7 @@ export function PullToRefresh({ children }: { children: ReactNode }) {
       reset();
     };
 
+    // Document-level listeners so every route gets pull-to-refresh on mobile.
     document.addEventListener("touchstart", onTouchStart, { passive: true });
     document.addEventListener("touchmove", onTouchMove, { passive: false });
     document.addEventListener("touchend", onTouchEnd);
@@ -132,17 +151,17 @@ export function PullToRefresh({ children }: { children: ReactNode }) {
       document.removeEventListener("touchend", onTouchEnd);
       document.removeEventListener("touchcancel", onTouchEnd);
     };
-  }, []);
+  }, [mobile]);
 
   const progress = Math.min(1, pull / PULL_THRESHOLD);
   const ready = pull >= PULL_THRESHOLD || refreshing;
-  const visible = pull > 4 || refreshing;
+  const visible = mobile && (pull > 4 || refreshing);
 
   return (
     <>
       <div
         className={cn(
-          "pointer-events-none fixed inset-x-0 z-[60] flex justify-center",
+          "pointer-events-none fixed inset-x-0 z-[60] flex justify-center md:hidden",
           "top-[max(0.75rem,env(safe-area-inset-top))]",
           "transition-[opacity,transform] duration-150 ease-out",
           visible ? "opacity-100" : "opacity-0",
