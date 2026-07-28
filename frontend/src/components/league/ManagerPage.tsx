@@ -454,9 +454,10 @@ export function ManagerPage({
         <Card className="min-w-0 overflow-hidden">
           <Stack>
             <h2>Recent results</h2>
-            {recentFixtures.error ? (
+            {recentFixtures.error && (
               <ErrorState error={recentFixtures.error} />
-            ) : (
+            )}
+            {(!recentFixtures.error || recentFixtures.items.length > 0) && (
               <TeamFixtureList
                 leagueId={leagueId}
                 fixtures={recentFixtures.items}
@@ -478,9 +479,10 @@ export function ManagerPage({
         <Card className="min-w-0 overflow-hidden">
           <Stack>
             <h2>Upcoming fixtures</h2>
-            {upcomingFixtures.error ? (
+            {upcomingFixtures.error && (
               <ErrorState error={upcomingFixtures.error} />
-            ) : (
+            )}
+            {(!upcomingFixtures.error || upcomingFixtures.items.length > 0) && (
               <TeamFixtureList
                 leagueId={leagueId}
                 fixtures={upcomingFixtures.items}

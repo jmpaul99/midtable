@@ -5,7 +5,7 @@ from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import or_, select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session
 
 from app.db import get_db
@@ -33,10 +33,11 @@ from app.services.bonuses import (
 )
 from app.services.match_queries import (
     FINISHED_STATUSES,
-    competition_key_predicate,
+    MatchSort,
     competition_key_predicate_for,
     competition_keys_from_pools,
     matches_for_league,
+    paginate_matches,
     pool_for_match,
     pool_lookup_for_league,
     scoring_pools_for_league,
@@ -285,11 +286,10 @@ def match_log(
     else:
         keys = competition_keys_from_pools(pools)
 
-    key_pred = competition_key_predicate(keys)
-    if key_pred is None:
+    if not keys:
         return MatchLogPage(items=[], has_more=False)
 
-    filters: list[Any] = [key_pred]
+    filters: list[Any] = []
     if section == "results":
         filters.append(Match.status.in_(list(_FINISHED)))
     elif section == "upcoming":
@@ -342,21 +342,23 @@ def match_log(
         )
 
     use_points_sort = sort == "points" and section == "results"
-    # Load the full filtered set before paging. Rows may be dropped after the
-    # SQL query (missing pool / teams), so offset/limit must apply to final rows.
+    order: MatchSort
     if use_points_sort:
-        matches = list(
-            db.scalars(select(Match).where(*filters).order_by(Match.id.asc())).all()
-        )
+        order = "points_desc"
+    elif section == "upcoming":
+        order = "kickoff_asc"
     else:
-        order = (
-            (Match.kickoff_at.asc(), Match.id.asc())
-            if section == "upcoming"
-            else (Match.kickoff_at.desc(), Match.id.desc())
-        )
-        matches = list(
-            db.scalars(select(Match).where(*filters).order_by(*order)).all()
-        )
+        order = "kickoff_desc"
+
+    matches, has_more = paginate_matches(
+        db,
+        keys=keys,
+        limit=limit,
+        offset=offset,
+        filters=filters,
+        order=order,
+        league_id=league.id if use_points_sort else None,
+    )
 
     team_ids = {m.home_team_id for m in matches} | {m.away_team_id for m in matches}
     teams = {
@@ -379,7 +381,6 @@ def match_log(
         else []
     )
     points_by_match_team = match_stats_service.points_by_match_team(events)
-
     owner_by_team_id = owner_by_team_id_for_league(db, league)
 
     rows: list[MatchLogRow] = []
@@ -409,16 +410,6 @@ def match_log(
                 away_owner=owner_by_team_id.get(m.away_team_id),
             )
         )
-
-    if use_points_sort:
-        def _max_pts(row: MatchLogRow) -> float:
-            return max(row.home_points or 0.0, row.away_points or 0.0)
-
-        # Include match id so equal points/kickoff ties stay stable across pages.
-        rows.sort(key=lambda r: (_max_pts(r), r.kickoff_at, str(r.id)), reverse=True)
-
-    has_more = len(rows) > offset + limit
-    rows = rows[offset : offset + limit]
 
     return MatchLogPage(items=rows, has_more=has_more)
 
@@ -460,13 +451,6 @@ def _fixture_row(
     )
 
 
-def _fixture_page(
-    rows: list[TeamFixtureRow], *, limit: int, offset: int
-) -> TeamFixturePage:
-    has_more = len(rows) > offset + limit
-    return TeamFixturePage(items=rows[offset : offset + limit], has_more=has_more)
-
-
 def _resolve_member(db: Session, league: League, member_id: UUID) -> LeagueMember:
     member = db.scalars(
         select(LeagueMember).where(
@@ -479,19 +463,26 @@ def _resolve_member(db: Session, league: League, member_id: UUID) -> LeagueMembe
     return member
 
 
-def _member_fixture_lists(
+def _league_competition_keys(db: Session, league: League) -> list[tuple[str, str, int]]:
+    return competition_keys_from_pools(scoring_pools_for_league(db, league))
+
+
+def _member_fixture_page(
     db: Session,
     league: League,
     member: LeagueMember,
     *,
+    section: str,
+    limit: int,
+    offset: int,
     club_id: UUID | None = None,
     opponent_member_id: UUID | None = None,
-) -> tuple[list[TeamFixtureRow], list[TeamFixtureRow]]:
+) -> TeamFixturePage:
     owned_team_ids = team_ids_for_member(
         db, league_id=league.id, member_id=member.id
     )
     if not owned_team_ids:
-        return [], []
+        return TeamFixturePage(items=[], has_more=False)
 
     focus_club_id: int | None = None
     if club_id is not None:
@@ -507,18 +498,56 @@ def _member_fixture_lists(
             db, league_id=league.id, member_id=opponent_member.id
         )
         if not opponent_team_ids:
-            return [], []
+            return TeamFixturePage(items=[], has_more=False)
 
-    member_matches = [
-        m
-        for m in matches_for_league(db, league)
-        if m.home_team_id in owned_team_ids or m.away_team_id in owned_team_ids
-    ]
-    member_matches.sort(key=lambda m: m.kickoff_at, reverse=True)
+    keys = _league_competition_keys(db, league)
+    if not keys:
+        return TeamFixturePage(items=[], has_more=False)
+
+    filters: list[Any] = []
+    if section == "recent":
+        filters.append(Match.status.in_(list(_FINISHED)))
+    else:
+        filters.append(Match.status.notin_(list(_FINISHED)))
+
+    focus_set = {focus_club_id} if focus_club_id is not None else owned_team_ids
+    if opponent_team_ids is not None:
+        filters.append(
+            or_(
+                and_(
+                    Match.home_team_id.in_(focus_set),
+                    Match.away_team_id.in_(opponent_team_ids),
+                ),
+                and_(
+                    Match.away_team_id.in_(focus_set),
+                    Match.home_team_id.in_(opponent_team_ids),
+                ),
+            )
+        )
+    elif focus_club_id is not None:
+        filters.append(
+            or_(Match.home_team_id == focus_club_id, Match.away_team_id == focus_club_id)
+        )
+    else:
+        filters.append(
+            or_(
+                Match.home_team_id.in_(owned_team_ids),
+                Match.away_team_id.in_(owned_team_ids),
+            )
+        )
+
+    matches, has_more = paginate_matches(
+        db,
+        keys=keys,
+        limit=limit,
+        offset=offset,
+        filters=filters,
+        order="kickoff_asc" if section == "upcoming" else "kickoff_desc",
+    )
 
     involved_team_ids = (
-        {m.home_team_id for m in member_matches}
-        | {m.away_team_id for m in member_matches}
+        {m.home_team_id for m in matches}
+        | {m.away_team_id for m in matches}
         | owned_team_ids
     )
     teams = {
@@ -529,28 +558,26 @@ def _member_fixture_lists(
             else []
         )
     }
-
     pool_lookup = pool_lookup_for_league(db, league)
-    pool_by_match_id: dict[int, TeamPool] = {}
-    for m in member_matches:
-        match_pool = pool_for_match(db, league, m, lookup=pool_lookup)
-        if match_pool:
-            pool_by_match_id[m.id] = match_pool
-
     owner_by_team_id = owner_by_team_id_for_league(db, league)
-    events = list(
-        db.scalars(
-            select(ScoringEvent).where(
-                ScoringEvent.league_id == league.id,
-                ScoringEvent.team_id.in_(owned_team_ids),
-            )
-        ).all()
+    match_ids = [m.id for m in matches]
+    events = (
+        list(
+            db.scalars(
+                select(ScoringEvent).where(
+                    ScoringEvent.league_id == league.id,
+                    ScoringEvent.team_id.in_(owned_team_ids),
+                    ScoringEvent.match_id.in_(match_ids),
+                )
+            ).all()
+        )
+        if match_ids
+        else []
     )
     points_by_match_team = match_stats_service.points_by_match_team(events)
 
-    recent_candidates: list[TeamFixtureRow] = []
-    upcoming_candidates: list[TeamFixtureRow] = []
-    for match in member_matches:
+    rows: list[TeamFixtureRow] = []
+    for match in matches:
         # Club filter: focus that club when it plays (including as away in a derby).
         # Otherwise one row per fixture, preferring the home owned club.
         if focus_club_id is not None:
@@ -587,7 +614,7 @@ def _member_fixture_lists(
             match=match,
             team_id=focus_id,
             teams=teams,
-            pool=pool_by_match_id.get(match.id),
+            pool=pool_for_match(db, league, match, lookup=pool_lookup),
             points=points,
             # Same-owner derbies still expose opponent_owner when filtering by that
             # manager so the Opponent filter stays consistent with the row payload.
@@ -595,24 +622,22 @@ def _member_fixture_lists(
             if (intra_roster and opponent_member_id is not None)
             else (None if intra_roster else owner_by_team_id.get(opponent_id)),
         )
-        if row is None:
-            continue
-        if is_finished:
-            recent_candidates.append(row)
-        else:
-            upcoming_candidates.append(row)
+        if row is not None:
+            rows.append(row)
 
-    upcoming = sorted(upcoming_candidates, key=lambda r: r.kickoff_at)
-    return recent_candidates, upcoming
+    return TeamFixturePage(items=rows, has_more=has_more)
 
 
-def _team_fixture_lists(
+def _team_fixture_page(
     db: Session,
     league: League,
     team: Team,
     *,
+    section: str,
+    limit: int,
+    offset: int,
     opponent_member_id: UUID | None = None,
-) -> tuple[list[TeamFixtureRow], list[TeamFixtureRow]]:
+) -> TeamFixturePage:
     opponent_team_ids: set[int] | None = None
     if opponent_member_id is not None:
         opponent_member = _resolve_member(db, league, opponent_member_id)
@@ -620,14 +645,41 @@ def _team_fixture_lists(
             db, league_id=league.id, member_id=opponent_member.id
         )
         if not opponent_team_ids:
-            return [], []
+            return TeamFixturePage(items=[], has_more=False)
 
-    matches = [
-        m
-        for m in matches_for_league(db, league)
-        if m.home_team_id == team.id or m.away_team_id == team.id
+    keys = _league_competition_keys(db, league)
+    if not keys:
+        return TeamFixturePage(items=[], has_more=False)
+
+    filters: list[Any] = [
+        or_(Match.home_team_id == team.id, Match.away_team_id == team.id),
     ]
-    matches.sort(key=lambda m: m.kickoff_at, reverse=True)
+    if section == "recent":
+        filters.append(Match.status.in_(list(_FINISHED)))
+    else:
+        filters.append(Match.status.notin_(list(_FINISHED)))
+    if opponent_team_ids is not None:
+        filters.append(
+            or_(
+                and_(
+                    Match.home_team_id == team.id,
+                    Match.away_team_id.in_(opponent_team_ids),
+                ),
+                and_(
+                    Match.away_team_id == team.id,
+                    Match.home_team_id.in_(opponent_team_ids),
+                ),
+            )
+        )
+
+    matches, has_more = paginate_matches(
+        db,
+        keys=keys,
+        limit=limit,
+        offset=offset,
+        filters=filters,
+        order="kickoff_asc" if section == "upcoming" else "kickoff_desc",
+    )
 
     team_ids = {m.home_team_id for m in matches} | {m.away_team_id for m in matches} | {
         team.id
@@ -639,20 +691,20 @@ def _team_fixture_lists(
         )
     }
     pool_lookup = pool_lookup_for_league(db, league)
-    pool_by_match_id: dict[int, TeamPool] = {}
-    for m in matches:
-        match_pool = pool_for_match(db, league, m, lookup=pool_lookup)
-        if match_pool:
-            pool_by_match_id[m.id] = match_pool
-
     owner_by_team_id = owner_by_team_id_for_league(db, league)
-    events = list(
-        db.scalars(
-            select(ScoringEvent).where(
-                ScoringEvent.league_id == league.id,
-                ScoringEvent.team_id == team.id,
-            )
-        ).all()
+    match_ids = [m.id for m in matches]
+    events = (
+        list(
+            db.scalars(
+                select(ScoringEvent).where(
+                    ScoringEvent.league_id == league.id,
+                    ScoringEvent.team_id == team.id,
+                    ScoringEvent.match_id.in_(match_ids),
+                )
+            ).all()
+        )
+        if match_ids
+        else []
     )
     points_by_match: dict[int, float] = {}
     for event in events:
@@ -670,8 +722,7 @@ def _team_fixture_lists(
     if pool is not None:
         table_by_team = match_stats_service.current_table_for_pool(db, pool=pool, league=league)
 
-    recent_candidates: list[TeamFixtureRow] = []
-    upcoming_candidates: list[TeamFixtureRow] = []
+    rows: list[TeamFixtureRow] = []
     for match in matches:
         finished = match.status in _FINISHED
         opponent_id = (
@@ -684,20 +735,15 @@ def _team_fixture_lists(
             match=match,
             team_id=team.id,
             teams=teams,
-            pool=pool_by_match_id.get(match.id),
+            pool=pool_for_match(db, league, match, lookup=pool_lookup),
             points=points_by_match.get(match.id) if finished else None,
             opponent_table_position=opp_pos,
             opponent_owner=owner_by_team_id.get(opponent_id),
         )
-        if row is None:
-            continue
-        if finished:
-            recent_candidates.append(row)
-        else:
-            upcoming_candidates.append(row)
+        if row is not None:
+            rows.append(row)
 
-    upcoming = sorted(upcoming_candidates, key=lambda r: r.kickoff_at)
-    return recent_candidates, upcoming
+    return TeamFixturePage(items=rows, has_more=has_more)
 
 
 @router.get(
@@ -716,15 +762,16 @@ def member_fixtures(
 ) -> TeamFixturePage:
     league, _ = membership
     member = _resolve_member(db, league, member_id)
-    recent, upcoming = _member_fixture_lists(
+    return _member_fixture_page(
         db,
         league,
         member,
+        section=section,
+        limit=limit,
+        offset=offset,
         club_id=club_id,
         opponent_member_id=opponent_member_id,
     )
-    rows = upcoming if section == "upcoming" else recent
-    return _fixture_page(rows, limit=limit, offset=offset)
 
 
 @router.get(
@@ -742,14 +789,15 @@ def team_fixtures(
 ) -> TeamFixturePage:
     league, _ = membership
     team = team_in_league(db, league.id, team_id)
-    recent, upcoming = _team_fixture_lists(
+    return _team_fixture_page(
         db,
         league,
         team,
+        section=section,
+        limit=limit,
+        offset=offset,
         opponent_member_id=opponent_member_id,
     )
-    rows = upcoming if section == "upcoming" else recent
-    return _fixture_page(rows, limit=limit, offset=offset)
 
 
 @router.get("/leagues/{league_id}/members/{member_id}", response_model=MemberDetailResponse)
@@ -1114,8 +1162,9 @@ def team_detail(
     splits = match_stats_service.venue_split(team_results, points_by_match)
     table_row = table_by_team.get(team.id)
 
-    _, upcoming_all = _team_fixture_lists(db, league, team)
-    next_three = upcoming_all[:3]
+    next_three = _team_fixture_page(
+        db, league, team, section="upcoming", limit=3, offset=0
+    ).items
     opp_ranks = [r.opponent_table_position for r in next_three if r.opponent_table_position]
     upcoming_difficulty = {
         "next_three": [

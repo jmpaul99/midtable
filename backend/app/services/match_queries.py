@@ -2,26 +2,30 @@
 
 from __future__ import annotations
 
-from typing import Any
+from collections.abc import Sequence
+from typing import Any, Literal
 
-from sqlalchemy import and_, or_, select
-from sqlalchemy.orm import Session
+from sqlalchemy import and_, func, or_, select
+from sqlalchemy.orm import Session, aliased
 from sqlalchemy.sql import ColumnElement
 
-from app.models import League, Match, TeamPool
+from app.models import League, Match, ScoringEvent, Team, TeamPool
 from app.services.match_constants import FINISHED_STATUSES
 
 CompetitionKey = tuple[str, str, int]
+MatchSort = Literal["kickoff_asc", "kickoff_desc", "points_desc"]
 
 __all__ = [
     "CompetitionKey",
     "FINISHED_STATUSES",
+    "MatchSort",
     "competition_key_predicate",
     "competition_key_predicate_for",
     "competition_keys_from_pools",
     "matches_for_competition",
     "matches_for_league",
     "matches_for_pool",
+    "paginate_matches",
     "pool_for_match",
     "pool_lookup_for_league",
     "scoring_pools_for_league",
@@ -126,6 +130,87 @@ def matches_for_league(db: Session, league: League) -> list[Match]:
             matches.append(match)
     matches.sort(key=lambda m: (m.kickoff_at, m.id))
     return matches
+
+
+def paginate_matches(
+    db: Session,
+    *,
+    keys: list[CompetitionKey],
+    limit: int,
+    offset: int,
+    filters: Sequence[ColumnElement[bool]] | None = None,
+    order: MatchSort = "kickoff_desc",
+    league_id: int | None = None,
+) -> tuple[list[Match], bool]:
+    """Page matches whose competition keys and both teams exist.
+
+    Fetches ``limit + 1`` rows so callers can set ``has_more`` without a count query.
+    ``order="points_desc"`` requires ``league_id`` (league-scoped scoring totals).
+    """
+    key_pred = competition_key_predicate(keys)
+    if key_pred is None:
+        return [], False
+    if order == "points_desc" and league_id is None:
+        raise ValueError("league_id is required for points_desc order")
+
+    home_team = aliased(Team)
+    away_team = aliased(Team)
+    where_clauses: list[ColumnElement[bool]] = [key_pred]
+    if filters:
+        where_clauses.extend(filters)
+
+    stmt = (
+        select(Match)
+        .join(home_team, home_team.id == Match.home_team_id)
+        .join(away_team, away_team.id == Match.away_team_id)
+        .where(*where_clauses)
+    )
+
+    if order == "points_desc":
+        pts_subq = (
+            select(
+                ScoringEvent.match_id.label("match_id"),
+                ScoringEvent.team_id.label("team_id"),
+                func.coalesce(func.sum(ScoringEvent.points), 0).label("pts"),
+            )
+            .where(ScoringEvent.league_id == league_id)
+            .group_by(ScoringEvent.match_id, ScoringEvent.team_id)
+            .subquery()
+        )
+        home_pts = pts_subq.alias("home_pts")
+        away_pts = pts_subq.alias("away_pts")
+        stmt = (
+            stmt.outerjoin(
+                home_pts,
+                and_(
+                    home_pts.c.match_id == Match.id,
+                    home_pts.c.team_id == Match.home_team_id,
+                ),
+            )
+            .outerjoin(
+                away_pts,
+                and_(
+                    away_pts.c.match_id == Match.id,
+                    away_pts.c.team_id == Match.away_team_id,
+                ),
+            )
+            .order_by(
+                func.greatest(
+                    func.coalesce(home_pts.c.pts, 0),
+                    func.coalesce(away_pts.c.pts, 0),
+                ).desc(),
+                Match.kickoff_at.desc(),
+                Match.id.desc(),
+            )
+        )
+    elif order == "kickoff_asc":
+        stmt = stmt.order_by(Match.kickoff_at.asc(), Match.id.asc())
+    else:
+        stmt = stmt.order_by(Match.kickoff_at.desc(), Match.id.desc())
+
+    rows = list(db.scalars(stmt.offset(offset).limit(limit + 1)).unique().all())
+    has_more = len(rows) > limit
+    return rows[:limit], has_more
 
 
 def pool_lookup_for_league(
