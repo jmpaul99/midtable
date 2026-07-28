@@ -37,11 +37,24 @@ def is_sole_commissioner(member: LeagueMember, members: list[LeagueMember]) -> b
     return bool(member.is_commissioner and count_commissioners(members) == 1)
 
 
-def renumber_draft_slots(members: list[LeagueMember]) -> None:
+def assign_draft_slots(db: Session, members_in_order: list[LeagueMember]) -> None:
+    """Assign contiguous draft slots 1..N in the given order.
+
+    Clears existing slots and flushes before reassignment so the unique
+    (league_id, draft_slot) partial index does not conflict when swapping
+    or shifting slots.
+    """
+    for member in members_in_order:
+        member.draft_slot = None
+    db.flush()
+    for index, member in enumerate(members_in_order, start=1):
+        member.draft_slot = index
+
+
+def renumber_draft_slots(db: Session, members: list[LeagueMember]) -> None:
     """Assign contiguous draft slots 1..N, preserving relative order.
 
-    Members without a slot are sorted after those with slots. Clears slots
-    first so unique (league_id, draft_slot) indexes do not conflict mid-update.
+    Members without a slot are sorted after those with slots.
     """
     ordered = sorted(
         members,
@@ -51,10 +64,7 @@ def renumber_draft_slots(members: list[LeagueMember]) -> None:
             m.id,
         ),
     )
-    for member in ordered:
-        member.draft_slot = None
-    for index, member in enumerate(ordered, start=1):
-        member.draft_slot = index
+    assign_draft_slots(db, ordered)
 
 
 def required_manager_count(league) -> int | None:

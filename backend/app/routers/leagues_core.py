@@ -304,7 +304,7 @@ def remove_member(
     )
     db.delete(target)
     db.flush()
-    renumber_draft_slots(remaining)
+    renumber_draft_slots(db, remaining)
     db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 

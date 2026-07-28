@@ -10,9 +10,11 @@ import pytest
 from fastapi import HTTPException
 
 from app.routers.leagues_core import remove_member, update_member
-from app.schemas.leagues import MemberAdminUpdate
+from app.routers.draft import set_draft_order
+from app.schemas.leagues import DraftOrderUpdate, MemberAdminUpdate
 from app.models import League
 from app.services.members import (
+    assign_draft_slots,
     count_commissioners,
     is_sole_commissioner,
     join_or_return_member,
@@ -43,10 +45,30 @@ def test_renumber_draft_slots_contiguous_preserving_order():
     a = _member(mid=1, draft_slot=2)
     b = _member(mid=2, draft_slot=5)
     c = _member(mid=3, draft_slot=None)
-    renumber_draft_slots([b, c, a])
+    db = MagicMock()
+    renumber_draft_slots(db, [b, c, a])
     assert a.draft_slot == 1
     assert b.draft_slot == 2
     assert c.draft_slot == 3
+    db.flush.assert_called_once()
+
+
+def test_assign_draft_slots_clears_before_reassigning():
+    """Swapping slots must flush NULLs first or the unique index conflicts."""
+    a = _member(mid=1, draft_slot=1)
+    b = _member(mid=2, draft_slot=2)
+    db = MagicMock()
+    seen: list[tuple[int | None, int | None]] = []
+
+    def capture_flush():
+        seen.append((a.draft_slot, b.draft_slot))
+
+    db.flush.side_effect = capture_flush
+    assign_draft_slots(db, [b, a])
+    assert seen == [(None, None)]
+    assert b.draft_slot == 1
+    assert a.draft_slot == 2
+    db.flush.assert_called_once()
 
 
 def test_next_draft_slot_starts_at_one():
@@ -157,7 +179,8 @@ def test_remove_member_success_renumbers_slots():
     )
     assert result.status_code == 204
     db.delete.assert_called_once_with(target)
-    db.flush.assert_called_once()
+    # flush after delete (free slot) + flush after clearing slots for renumber
+    assert db.flush.call_count == 2
     db.commit.assert_called_once()
     assert actor.draft_slot == 1
     assert keep.draft_slot == 2
@@ -302,3 +325,70 @@ def test_update_member_rejects_demote_sole_commissioner():
         )
     assert exc.value.status_code == 409
     assert "last commissioner" in exc.value.detail
+
+
+def test_set_draft_order_swaps_without_unique_conflict():
+    """Reordering must clear+flush slots before assign (unique draft_slot index)."""
+    a = _member(mid=1, is_commissioner=True, draft_slot=1, profile_id=10)
+    b = _member(mid=2, is_commissioner=False, draft_slot=2, profile_id=20)
+    league = SimpleNamespace(id=1, status="pre_draft", public_id=uuid4())
+    db = MagicMock()
+    scalars_out = MagicMock()
+    scalars_out.all.return_value = [a, b]
+    db.scalars.return_value = scalars_out
+    db.get.return_value = SimpleNamespace(
+        public_id=uuid4(), email="x@y.z", display_name="X"
+    )
+
+    seen_at_flush: list[tuple[int | None, int | None]] = []
+
+    def capture_flush():
+        seen_at_flush.append((a.draft_slot, b.draft_slot))
+
+    db.flush.side_effect = capture_flush
+
+    out = set_draft_order(
+        payload=DraftOrderUpdate(member_ids=[b.public_id, a.public_id]),
+        membership=(league, a),
+        db=db,
+    )
+
+    assert seen_at_flush == [(None, None)]
+    assert b.draft_slot == 1
+    assert a.draft_slot == 2
+    assert [m.draft_slot for m in out] == [1, 2]
+    assert [m.id for m in out] == [b.public_id, a.public_id]
+    db.commit.assert_called_once()
+
+
+def test_set_draft_order_rejects_when_not_pre_draft():
+    a = _member(mid=1, is_commissioner=True, draft_slot=1)
+    league = SimpleNamespace(id=1, status="drafting", public_id=uuid4())
+    with pytest.raises(HTTPException) as exc:
+        set_draft_order(
+            payload=DraftOrderUpdate(member_ids=[a.public_id]),
+            membership=(league, a),
+            db=MagicMock(),
+        )
+    assert exc.value.status_code == 409
+    assert "before the draft" in exc.value.detail
+
+
+def test_set_draft_order_rejects_incomplete_member_list():
+    a = _member(mid=1, is_commissioner=True, draft_slot=1)
+    b = _member(mid=2, draft_slot=2)
+    league = SimpleNamespace(id=1, status="pre_draft", public_id=uuid4())
+    db = MagicMock()
+    scalars_out = MagicMock()
+    scalars_out.all.return_value = [a, b]
+    db.scalars.return_value = scalars_out
+
+    with pytest.raises(HTTPException) as exc:
+        set_draft_order(
+            payload=DraftOrderUpdate(member_ids=[a.public_id]),
+            membership=(league, a),
+            db=db,
+        )
+    assert exc.value.status_code == 400
+    assert "every manager" in exc.value.detail
+    db.commit.assert_not_called()
