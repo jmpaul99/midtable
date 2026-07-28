@@ -401,6 +401,11 @@ class TeamFixtureRow(MatchLogRow):
     opponent_owner: MatchOwnerInfo | None = None
 
 
+class TeamFixturePage(BaseModel):
+    items: list[TeamFixtureRow]
+    has_more: bool
+
+
 class MemberClubRow(BaseModel):
     team_id: UUID
     team_name: str

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { formatNumber } from "@/lib/format";
 import type {
   BonusAward,
@@ -10,8 +10,9 @@ import type {
   TeamDetail,
   UUID,
 } from "@/lib/types";
-import { managerOptionLabel, matchOwnerLabel } from "@/lib/types";
-import { filterTeamFixtures } from "@/lib/teamFixtureFilters";
+import { matchOwnerLabel, opponentOptionLabel } from "@/lib/types";
+import { fetchTeamFixturesPage } from "@/lib/teamFixtures";
+import { usePagedTeamFixtures } from "@/lib/usePagedTeamFixtures";
 import { ErrorState, Loading } from "@/components/ui/State";
 import {
   Card,
@@ -61,12 +62,14 @@ export function TeamPage({
   leagueName,
   teamId,
   members = [],
+  currentManagerId,
   eventTypeLabels,
 }: {
   leagueId: UUID;
   leagueName: string;
   teamId: UUID;
   members?: Manager[];
+  currentManagerId?: UUID | null;
   eventTypeLabels?: Record<string, string>;
 }) {
   const {
@@ -75,6 +78,37 @@ export function TeamPage({
     loading,
   } = useApiQuery<TeamDetail>(`/leagues/${leagueId}/teams/${teamId}`, [leagueId, teamId]);
   const [opponentMemberId, setOpponentMemberId] = useState("");
+  const fixtureFilterKey = opponentMemberId;
+
+  const fetchFixturePage = useCallback(
+    ({
+      section,
+      limit,
+      offset,
+    }: {
+      section: "recent" | "upcoming";
+      limit: number;
+      offset: number;
+    }) =>
+      fetchTeamFixturesPage(leagueId, teamId, {
+        section,
+        limit,
+        offset,
+        opponent_member_id: opponentMemberId || undefined,
+      }),
+    [leagueId, teamId, opponentMemberId],
+  );
+
+  const recentFixtures = usePagedTeamFixtures({
+    section: "recent",
+    filterKey: fixtureFilterKey,
+    fetchPage: fetchFixturePage,
+  });
+  const upcomingFixtures = usePagedTeamFixtures({
+    section: "upcoming",
+    filterKey: fixtureFilterKey,
+    fetchPage: fetchFixturePage,
+  });
 
   const eventsByMatchId = useMemo(() => {
     const map = new Map<string, ScoringEventMatch[]>();
@@ -105,20 +139,17 @@ export function TeamPage({
   const scoringEvents = team.scoring_events || [];
   const ownerTeamName = matchOwnerLabel(team.owner);
   const ownerPersonName = team.owner?.display_name?.trim() || "Unknown";
-  const ownerMemberId = team.owner?.member_id ?? null;
-  const opponentOptions = members
-    .filter((m) => m.id !== ownerMemberId)
-    .sort((a, b) =>
-      managerOptionLabel(a).localeCompare(managerOptionLabel(b), undefined, {
-        sensitivity: "base",
-      }),
+  // Include this club's owner so matches vs their other clubs can be filtered.
+  // Current manager "(You)" sorts first.
+  const opponentOptions = [...members].sort((a, b) => {
+    const aYou = Boolean(currentManagerId && a.id === currentManagerId);
+    const bYou = Boolean(currentManagerId && b.id === currentManagerId);
+    if (aYou !== bYou) return aYou ? -1 : 1;
+    return opponentOptionLabel(a, currentManagerId).localeCompare(
+      opponentOptionLabel(b, currentManagerId),
+      undefined,
+      { sensitivity: "base" },
     );
-  const fixtureResetKey = opponentMemberId;
-  const recentMatches = filterTeamFixtures(team.recent_matches || [], {
-    opponentMemberId,
-  });
-  const upcomingMatches = filterTeamFixtures(team.upcoming_matches || [], {
-    opponentMemberId,
   });
 
   return (
@@ -268,7 +299,7 @@ export function TeamPage({
           <option value="">All opponents</option>
           {opponentOptions.map((m) => (
             <option key={m.id} value={m.id}>
-              {managerOptionLabel(m)}
+              {opponentOptionLabel(m, currentManagerId)}
             </option>
           ))}
         </Select>
@@ -287,27 +318,41 @@ export function TeamPage({
         <Card className="min-w-0 overflow-hidden">
           <Stack>
             <h2>Recent results</h2>
-            <TeamFixtureList
-              leagueId={leagueId}
-              fixtures={recentMatches}
-              empty="No finished matches yet"
-              showPoints
-              eventsByMatchId={eventsByMatchId}
-              bonusesByMatchId={bonusesByMatchId}
-              eventTypeLabels={eventTypeLabels}
-              resetKey={fixtureResetKey}
-            />
+            {recentFixtures.error ? (
+              <ErrorState error={recentFixtures.error} />
+            ) : (
+              <TeamFixtureList
+                leagueId={leagueId}
+                fixtures={recentFixtures.items}
+                empty="No finished matches yet"
+                showPoints
+                eventsByMatchId={eventsByMatchId}
+                bonusesByMatchId={bonusesByMatchId}
+                eventTypeLabels={eventTypeLabels}
+                loading={recentFixtures.loading}
+                hasMore={recentFixtures.hasMore}
+                loadingMore={recentFixtures.loadingMore}
+                onShowMore={recentFixtures.showMore}
+              />
+            )}
           </Stack>
         </Card>
         <Card className="min-w-0 overflow-hidden">
           <Stack>
             <h2>Upcoming fixtures</h2>
-            <TeamFixtureList
-              leagueId={leagueId}
-              fixtures={upcomingMatches}
-              empty="No upcoming fixtures"
-              resetKey={fixtureResetKey}
-            />
+            {upcomingFixtures.error ? (
+              <ErrorState error={upcomingFixtures.error} />
+            ) : (
+              <TeamFixtureList
+                leagueId={leagueId}
+                fixtures={upcomingFixtures.items}
+                empty="No upcoming fixtures"
+                loading={upcomingFixtures.loading}
+                hasMore={upcomingFixtures.hasMore}
+                loadingMore={upcomingFixtures.loadingMore}
+                onShowMore={upcomingFixtures.showMore}
+              />
+            )}
           </Stack>
         </Card>
       </div>

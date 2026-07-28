@@ -1,11 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import { formatDate, formatNumber, formatTeamOrientedScoreline } from "@/lib/format";
 import type { BonusAward, ScoringEventMatch, TeamFixture, UUID } from "@/lib/types";
 import { matchOwnerLabel } from "@/lib/types";
-import { TEAM_FIXTURE_PAGE_SIZE } from "@/lib/teamFixtureFilters";
-import { Empty, Status } from "@/components/ui/State";
+import { Empty, Loading, Status } from "@/components/ui/State";
 import { Muted } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { TeamLink } from "./TeamLink";
@@ -47,8 +45,10 @@ export function TeamFixtureList({
   eventsByMatchId,
   bonusesByMatchId,
   eventTypeLabels,
-  pageSize = TEAM_FIXTURE_PAGE_SIZE,
-  resetKey = "",
+  loading,
+  hasMore,
+  loadingMore,
+  onShowMore,
 }: {
   leagueId: UUID;
   fixtures: TeamFixture[];
@@ -60,26 +60,18 @@ export function TeamFixtureList({
   eventsByMatchId?: Map<string, ScoringEventMatch[]>;
   bonusesByMatchId?: Map<string, BonusAward[]>;
   eventTypeLabels?: Record<string, string>;
-  /** Matches shown initially and added per "Show more" click. */
-  pageSize?: number;
-  /** Change when filters change so the list resets to the first page. */
-  resetKey?: string;
+  loading?: boolean;
+  hasMore?: boolean;
+  loadingMore?: boolean;
+  onShowMore?: () => void;
 }) {
-  const [limit, setLimit] = useState(pageSize);
-
-  useEffect(() => {
-    setLimit(pageSize);
-  }, [resetKey, pageSize]);
-
+  if (loading) return <Loading label="Loading matches" />;
   if (!fixtures.length) return <Empty title={empty} />;
-
-  const visible = fixtures.slice(0, limit);
-  const hasMore = fixtures.length > limit;
 
   return (
     <>
       <ul className="flex flex-col gap-2">
-        {visible.map((m) => {
+        {fixtures.map((m) => {
           const focusId = focusTeamId(m);
           const intraRoster =
             Boolean(ownedTeamIds?.has(focusId) && ownedTeamIds.has(m.opponent_id));
@@ -201,15 +193,16 @@ export function TeamFixtureList({
           );
         })}
       </ul>
-      {hasMore && (
+      {hasMore && onShowMore && (
         <div className="flex justify-start">
           <Button
             type="button"
             variant="secondary"
             size="sm"
-            onClick={() => setLimit((n) => n + pageSize)}
+            disabled={loadingMore}
+            onClick={onShowMore}
           >
-            Show more
+            {loadingMore ? "Loading…" : "Show more"}
           </Button>
         </div>
       )}
