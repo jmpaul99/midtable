@@ -34,6 +34,26 @@ function nestedScrollerBlocksPull(target: EventTarget | null): boolean {
   return false;
 }
 
+/** Open dialogs (incl. backdrops) should not trigger a full page reload. */
+function modalBlocksPull(target: EventTarget | null): boolean {
+  if (document.querySelector('[aria-modal="true"], [role="dialog"], [role="alertdialog"]')) {
+    return true;
+  }
+  let el = target instanceof Element ? target : null;
+  while (el && el !== document.body && el !== document.documentElement) {
+    const role = el.getAttribute("role");
+    if (el.getAttribute("aria-modal") === "true" || role === "dialog" || role === "alertdialog") {
+      return true;
+    }
+    el = el.parentElement;
+  }
+  return false;
+}
+
+function shouldIgnorePull(target: EventTarget | null): boolean {
+  return nestedScrollerBlocksPull(target) || modalBlocksPull(target);
+}
+
 export function PullToRefresh({ children }: { children: ReactNode }) {
   const [pull, setPull] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
@@ -77,7 +97,7 @@ export function PullToRefresh({ children }: { children: ReactNode }) {
       if (refreshingRef.current) return;
       if (event.touches.length !== 1) return;
       if (scrollTop() > 1) return;
-      if (nestedScrollerBlocksPull(event.target)) return;
+      if (shouldIgnorePull(event.target)) return;
 
       const touch = event.touches[0];
       startY.current = touch.clientY;
@@ -104,7 +124,7 @@ export function PullToRefresh({ children }: { children: ReactNode }) {
           setPullDistance(0);
           return;
         }
-        if (dy > 8 && scrollTop() <= 1 && !nestedScrollerBlocksPull(event.target)) {
+        if (dy > 8 && scrollTop() <= 1 && !shouldIgnorePull(event.target)) {
           armed.current = true;
         }
       }
