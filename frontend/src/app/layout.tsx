@@ -4,6 +4,7 @@ import { Outfit } from "next/font/google";
 import { AuthProvider } from "@/lib/auth";
 import { ThemeProvider, themeInitScript } from "@/lib/theme";
 import { Nav } from "@/components/Nav";
+import { PullToRefresh } from "@/components/PullToRefresh";
 import { ToastProvider } from "@/components/ui/ToastProvider";
 import "./globals.css";
 
@@ -61,10 +62,12 @@ export default function RootLayout({ children }: Readonly<{ children: ReactNode 
         <ThemeProvider>
           <AuthProvider>
             <ToastProvider>
-              <Nav />
-              <main className="mx-auto w-full max-w-[1180px] px-4 pb-[max(2.5rem,env(safe-area-inset-bottom))] pt-6 sm:px-5 sm:pt-8 [padding-left:max(1rem,env(safe-area-inset-left))] [padding-right:max(1rem,env(safe-area-inset-right))]">
-                {children}
-              </main>
+              <PullToRefresh>
+                <Nav />
+                <main className="mx-auto w-full max-w-[1180px] px-4 pb-[max(2.5rem,env(safe-area-inset-bottom))] pt-6 sm:px-5 sm:pt-8 [padding-left:max(1rem,env(safe-area-inset-left))] [padding-right:max(1rem,env(safe-area-inset-right))]">
+                  {children}
+                </main>
+              </PullToRefresh>
             </ToastProvider>
           </AuthProvider>
         </ThemeProvider>
