@@ -35,6 +35,7 @@ from app.services.draft import (
     undo_last_pick,
 )
 from app.services.errors import DomainError
+from app.services.members import assign_draft_slots
 from app.services.preassign import effective_preassign_count, normalize_preassign_mode
 
 logger = logging.getLogger(__name__)
@@ -214,8 +215,9 @@ def set_draft_order(
     }
     if set(payload.member_ids) != set(members):
         raise HTTPException(status_code=400, detail="Draft order must include every manager exactly once")
-    for index, mid in enumerate(payload.member_ids, start=1):
-        members[mid].draft_slot = index
+    # Clear+flush before reassignment so unique (league_id, draft_slot) does not
+    # conflict when swapping or shifting existing slots.
+    assign_draft_slots(db, [members[mid] for mid in payload.member_ids])
     db.commit()
     logger.info(
         "draft order set league_id=%s managers=%s",
