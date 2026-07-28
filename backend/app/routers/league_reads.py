@@ -640,32 +640,45 @@ def member_detail(
     recent_candidates: list[TeamFixtureRow] = []
     upcoming_candidates: list[TeamFixtureRow] = []
     for match in member_matches:
-        focus_ids = [
-            tid
-            for tid in (match.home_team_id, match.away_team_id)
-            if tid in owned_team_ids
-        ]
+        # One row per fixture. Prefer the home club when both sides are owned so
+        # intra-roster derbies are not listed twice.
+        if match.home_team_id in owned_team_ids:
+            focus_id = match.home_team_id
+        elif match.away_team_id in owned_team_ids:
+            focus_id = match.away_team_id
+        else:
+            continue
+        opponent_id = (
+            match.away_team_id if match.home_team_id == focus_id else match.home_team_id
+        )
         is_finished = match.status in _FINISHED
-        for focus_id in focus_ids:
-            opponent_id = (
-                match.away_team_id if match.home_team_id == focus_id else match.home_team_id
-            )
-            row = _fixture_row(
-                match=match,
-                team_id=focus_id,
-                teams=teams,
-                pool=pool_by_match_id.get(match.id),
-                points=points_by_match_team.get((match.id, focus_id))
-                if is_finished
-                else None,
-                opponent_owner=owner_by_team_id.get(opponent_id),
-            )
-            if row is None:
-                continue
-            if is_finished:
-                recent_candidates.append(row)
+        intra_roster = opponent_id in owned_team_ids
+        if is_finished:
+            if intra_roster:
+                points = (
+                    points_by_match_team.get((match.id, match.home_team_id), 0.0)
+                    + points_by_match_team.get((match.id, match.away_team_id), 0.0)
+                )
             else:
-                upcoming_candidates.append(row)
+                points = points_by_match_team.get((match.id, focus_id))
+        else:
+            points = None
+        row = _fixture_row(
+            match=match,
+            team_id=focus_id,
+            teams=teams,
+            pool=pool_by_match_id.get(match.id),
+            points=points,
+            opponent_owner=None
+            if intra_roster
+            else owner_by_team_id.get(opponent_id),
+        )
+        if row is None:
+            continue
+        if is_finished:
+            recent_candidates.append(row)
+        else:
+            upcoming_candidates.append(row)
 
     recent_matches = recent_candidates[:8]
     upcoming_matches = sorted(upcoming_candidates, key=lambda r: r.kickoff_at)[:8]

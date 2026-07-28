@@ -108,6 +108,7 @@ export function ManagerPage({
   const isMine = Boolean(currentManagerId && currentManagerId === managerId);
   const bonuses = detail.bonuses || [];
   const clubs = [...detail.clubs].sort((a, b) => compareRosterClubs(a, b, clubOrder));
+  const ownedTeamIds = new Set(clubs.map((c) => c.team_id));
   const recentMatches = detail.recent_matches || [];
   const upcomingMatches = detail.upcoming_matches || [];
 
@@ -364,6 +365,7 @@ export function ManagerPage({
               empty="No finished matches yet"
               showPoints
               showFocusClub
+              ownedTeamIds={ownedTeamIds}
               eventsByMatchId={eventsByMatchId}
               bonusesByMatchId={bonusesByMatchId}
               eventTypeLabels={eventTypeLabels}
@@ -378,6 +380,7 @@ export function ManagerPage({
               fixtures={upcomingMatches.slice(0, 5)}
               empty="No upcoming fixtures"
               showFocusClub
+              ownedTeamIds={ownedTeamIds}
             />
           </Stack>
         </Card>

@@ -40,6 +40,7 @@ export function TeamFixtureList({
   empty,
   showPoints,
   showFocusClub,
+  ownedTeamIds,
   eventsByMatchId,
   bonusesByMatchId,
   eventTypeLabels,
@@ -49,6 +50,8 @@ export function TeamFixtureList({
   empty: string;
   showPoints?: boolean;
   showFocusClub?: boolean;
+  /** When set with showFocusClub, intra-roster derbies keep both clubs' events. */
+  ownedTeamIds?: ReadonlySet<UUID>;
   eventsByMatchId?: Map<string, ScoringEventMatch[]>;
   bonusesByMatchId?: Map<string, BonusAward[]>;
   eventTypeLabels?: Record<string, string>;
@@ -58,9 +61,11 @@ export function TeamFixtureList({
     <ul className="flex flex-col gap-2">
       {fixtures.map((m) => {
         const focusId = focusTeamId(m);
+        const intraRoster =
+          Boolean(ownedTeamIds?.has(focusId) && ownedTeamIds.has(m.opponent_id));
         let matchEvents = eventsByMatchId?.get(m.id) || [];
         let matchBonuses = bonusesByMatchId?.get(m.id) || [];
-        if (showFocusClub) {
+        if (showFocusClub && !intraRoster) {
           matchEvents = matchEvents.filter(
             (e) => e.is_home === m.is_home && e.opponent_id === m.opponent_id,
           );
