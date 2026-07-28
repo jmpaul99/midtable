@@ -17,6 +17,7 @@ export default function LeagueManagerPage({
       leagueId={league.id}
       managerId={managerId}
       currentManagerId={league.current_member_id}
+      members={league.members}
       onTeamNameSaved={reload}
       leagueStatus={league.status}
       rosterClubOrder={league.roster_club_order}

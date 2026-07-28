@@ -680,8 +680,8 @@ def member_detail(
         else:
             upcoming_candidates.append(row)
 
-    recent_matches = recent_candidates[:8]
-    upcoming_matches = sorted(upcoming_candidates, key=lambda r: r.kickoff_at)[:8]
+    recent_matches = recent_candidates
+    upcoming_matches = sorted(upcoming_candidates, key=lambda r: r.kickoff_at)
 
     scoring_event_rows: list[ScoringEventMatchRow] = []
     for event in sorted(
@@ -911,8 +911,8 @@ def team_detail(
         else:
             upcoming_candidates.append(row)
 
-    recent = recent_candidates[:8]
-    upcoming = sorted(upcoming_candidates, key=lambda r: r.kickoff_at)[:8]
+    recent = recent_candidates
+    upcoming = sorted(upcoming_candidates, key=lambda r: r.kickoff_at)
     next_three = upcoming[:3]
     opp_ranks = [r.opponent_table_position for r in next_three if r.opponent_table_position]
     upcoming_difficulty = {

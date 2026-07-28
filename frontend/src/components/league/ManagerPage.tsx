@@ -1,17 +1,19 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useApiQuery } from "@/lib/useApiQuery";
 import { formatNumber } from "@/lib/format";
 import type {
   BonusAward,
+  Manager,
   ManagerDetail,
   ManagerHighlights,
   ScoringEventMatch,
   UUID,
   VenueSplitRow,
 } from "@/lib/types";
-import { managerLabel } from "@/lib/types";
+import { managerLabel, managerOptionLabel } from "@/lib/types";
+import { filterTeamFixtures } from "@/lib/teamFixtureFilters";
 import { Empty, ErrorState, Loading } from "@/components/ui/State";
 import {
   Card,
@@ -23,6 +25,8 @@ import {
   StatTile,
 } from "@/components/ui/Card";
 import { Breadcrumbs } from "@/components/ui/Breadcrumbs";
+import { Button } from "@/components/ui/Button";
+import { Select } from "@/components/ui/Field";
 import {
   compareRosterClubs,
   effectiveRosterClubOrder,
@@ -34,10 +38,14 @@ import { TeamLink } from "./TeamLink";
 import { TeamNameEditor } from "./TeamNameEditor";
 import { BonusAwardsPanel } from "./BonusAwardsPanel";
 
+const FIXTURE_SELECT_CLASS =
+  "min-h-9 w-auto min-w-0 flex-1 basis-[9.5rem] rounded-lg px-2.5 py-1.5 text-sm sm:flex-none sm:basis-auto";
+
 export function ManagerPage({
   leagueId,
   managerId,
   currentManagerId,
+  members = [],
   onTeamNameSaved,
   leagueStatus,
   rosterClubOrder = "draft",
@@ -46,6 +54,7 @@ export function ManagerPage({
   leagueId: UUID;
   managerId: UUID;
   currentManagerId?: UUID | null;
+  members?: Manager[];
   onTeamNameSaved?: () => void;
   leagueStatus?: string;
   rosterClubOrder?: RosterClubOrder;
@@ -69,6 +78,8 @@ export function ManagerPage({
   const splits = splitsQ.data ?? undefined;
   const error = detailQ.error || highlightsQ.error || splitsQ.error || "";
   const reloadDetail = detailQ.reload;
+  const [clubId, setClubId] = useState("");
+  const [opponentMemberId, setOpponentMemberId] = useState("");
 
   const eventsByMatchId = useMemo(() => {
     const map = new Map<string, ScoringEventMatch[]>();
@@ -109,8 +120,23 @@ export function ManagerPage({
   const bonuses = detail.bonuses || [];
   const clubs = [...detail.clubs].sort((a, b) => compareRosterClubs(a, b, clubOrder));
   const ownedTeamIds = new Set(clubs.map((c) => c.team_id));
-  const recentMatches = detail.recent_matches || [];
-  const upcomingMatches = detail.upcoming_matches || [];
+  const opponentOptions = members
+    .filter((m) => m.id !== managerId)
+    .sort((a, b) =>
+      managerOptionLabel(a).localeCompare(managerOptionLabel(b), undefined, {
+        sensitivity: "base",
+      }),
+    );
+  const fixtureFilters = { clubId, opponentMemberId };
+  const fixtureResetKey = `${clubId}|${opponentMemberId}`;
+  const recentMatches = filterTeamFixtures(
+    detail.recent_matches || [],
+    fixtureFilters,
+  );
+  const upcomingMatches = filterTeamFixtures(
+    detail.upcoming_matches || [],
+    fixtureFilters,
+  );
 
   return (
     <Stack gap="md" className="animate-in">
@@ -355,13 +381,54 @@ export function ManagerPage({
         </Stack>
       </Card>
 
+      <div className="flex flex-wrap items-center gap-2 lg:justify-center">
+        <Select
+          aria-label="Club"
+          className={FIXTURE_SELECT_CLASS}
+          value={clubId}
+          onChange={(e) => setClubId(e.target.value)}
+        >
+          <option value="">All clubs</option>
+          {clubs.map((c) => (
+            <option key={c.team_id} value={c.team_id}>
+              {c.team_name}
+            </option>
+          ))}
+        </Select>
+        <Select
+          aria-label="Opponent"
+          className={FIXTURE_SELECT_CLASS}
+          value={opponentMemberId}
+          onChange={(e) => setOpponentMemberId(e.target.value)}
+        >
+          <option value="">All opponents</option>
+          {opponentOptions.map((m) => (
+            <option key={m.id} value={m.id}>
+              {managerOptionLabel(m)}
+            </option>
+          ))}
+        </Select>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          disabled={!clubId && !opponentMemberId}
+          onClick={() => {
+            setClubId("");
+            setOpponentMemberId("");
+          }}
+        >
+          Clear filters
+        </Button>
+      </div>
+
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
         <Card className="min-w-0 overflow-hidden">
           <Stack>
             <h2>Recent results</h2>
             <TeamFixtureList
               leagueId={leagueId}
-              fixtures={recentMatches.slice(0, 5)}
+              fixtures={recentMatches}
               empty="No finished matches yet"
               showPoints
               showFocusClub
@@ -369,6 +436,7 @@ export function ManagerPage({
               eventsByMatchId={eventsByMatchId}
               bonusesByMatchId={bonusesByMatchId}
               eventTypeLabels={eventTypeLabels}
+              resetKey={fixtureResetKey}
             />
           </Stack>
         </Card>
@@ -377,10 +445,11 @@ export function ManagerPage({
             <h2>Upcoming fixtures</h2>
             <TeamFixtureList
               leagueId={leagueId}
-              fixtures={upcomingMatches.slice(0, 5)}
+              fixtures={upcomingMatches}
               empty="No upcoming fixtures"
               showFocusClub
               ownedTeamIds={ownedTeamIds}
+              resetKey={fixtureResetKey}
             />
           </Stack>
         </Card>
