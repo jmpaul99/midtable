@@ -37,13 +37,15 @@ In-app logo uses inline SVG via `MidtableLogo` so it shares the site’s `next/f
 
 ### Sync to Next.js public
 
-`frontend/public/brand/` mirrors `logos/product/` (`svg/`, `png/`, `icons/`). Sync with:
+`frontend/public/brand/` mirrors `logos/product/` (`svg/`, `png/`, `icons/`).
+
+Manual sync from the repo root:
 
 ```bash
 python scripts/sync-brand-public.py
 ```
 
-Frontend `predev` / `prebuild` run this automatically.
+Frontend `predev` / `prebuild` run the equivalent Node script [`frontend/scripts/sync-brand-public.mjs`](../frontend/scripts/sync-brand-public.mjs) (same behavior; no Python needed in Docker/CI).
 
 ### Regenerate font embeds
 
