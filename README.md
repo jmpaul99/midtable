@@ -10,6 +10,7 @@ Platform for running multi-pool football draft leagues: create a league from a c
 | App | Next.js 16, React 19, Tailwind CSS 4 |
 | Auth / DB | Supabase Auth + Postgres |
 | Fixtures | [football-data.org](https://www.football-data.org/) API |
+| Rankings | [Parse.bot](https://parse.bot/) (FIFA ranking catalog; optional) |
 
 Python **3.14+**, Node **26.5.0+**.
 
@@ -20,19 +21,25 @@ Python **3.14+**, Node **26.5.0+**.
 - **Draft** — linear/snake order, preassigns, picks, undo last pick, roster tweaks (draft reset only when `APP_ENV=development`)
 - **Sync & scoring** — pull fixtures/results, recompute standings, match events, sync status
 - **Analytics** — standings, points-per-game, matchweeks, upsets, form, splits, highlights
-- **Admin** — manual bonuses, bonus types, ranking lists
-- **Cron** — `POST /internal/sync-and-score` (secured with `CRON_SECRET`) for active/drafting leagues
+- **Admin** — manual bonuses, bonus types, ranking lists (FIFA catalog sync via Parse when `PARSE_API_KEY` is set)
+- **Cron** (all secured with `CRON_SECRET`):
+  - `POST /internal/sync-and-score` — fixtures + scoring for active/drafting leagues
+  - `POST /internal/draft-maintenance` — auto-open drafts / catch expired picks
+  - `POST /internal/sync-fifa-rankings` — refresh FIFA ranking catalog (needs `PARSE_API_KEY`)
 
 Interactive API docs: `http://localhost:8000/docs`
 
 ## Repo layout
 
 ```
-backend/          FastAPI app (`app/`), tests, seed script, Dockerfile
-frontend/         Next.js app (+ Dockerfile for Cloud Run)
-supabase/         Postgres migrations (`migrations/001`–`011`)
-compose.yaml      API + frontend containers (local; override adds API --reload)
-.env.example      Shared backend + frontend env template
+backend/                 FastAPI app (`app/`), tests, seed script, Dockerfile
+frontend/                Next.js app (+ Dockerfile for Cloud Run)
+supabase/                Postgres migrations (`migrations/001`–`023`) + email templates
+brand/                   Logos, fonts, brand guide, league-invite HTML
+scripts/                 Brand asset helpers (sync / font embed)
+.github/workflows/       CI, Cloud Run deploy, cron jobs
+compose.yaml             API + frontend containers (local; override adds API --reload)
+.env.example             Shared backend + frontend env template
 ```
 
 ## Prerequisites
@@ -56,10 +63,13 @@ Fill in values. Root `.env` is loaded by the backend; frontend reads `frontend/.
 
 | Variable | Purpose |
 | --- | --- |
+| `APP_ENV` | `development` / `production` (draft reset only when `development`; JSON logs in production) |
+| `LOG_LEVEL` | `DEBUG`, `INFO`, `WARNING`, `ERROR`, or `CRITICAL` |
 | `DATABASE_URL` | Postgres URL (`postgresql+psycopg://…`); hosted Supabase should use `?sslmode=require` (also enforced for remote hosts in code) |
 | `SUPABASE_URL` | Auth issuer base; JWKS at `{SUPABASE_URL}/auth/v1/.well-known/jwks.json` |
 | `SUPABASE_JWT_AUDIENCE` | Usually `authenticated` |
 | `FOOTBALL_DATA_API_TOKEN` | Provider token |
+| `PARSE_API_KEY` | Parse.bot key for FIFA ranking catalog (admin sync + `/internal/sync-fifa-rankings`; optional for core play) |
 | `CRON_SECRET` | Protects `/internal/*` (required non-default in production) |
 | `INTERNAL_API_SECRET` | Shared by API + Next.js BFF for `/auth/email-status` (required non-default in production) |
 | `TURNSTILE_SECRET` | Cloudflare Turnstile secret key (required in production) |
@@ -73,6 +83,7 @@ Fill in values. Root `.env` is loaded by the backend; frontend reads `frontend/.
 | `NEXT_PUBLIC_API_URL` | Backend base URL (browser) |
 | `NEXT_PUBLIC_SUPABASE_URL` | Same project URL the browser uses |
 | `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Publishable key |
+| `NEXT_PUBLIC_SITE_URL` | Public frontend origin (metadata / absolute URLs; Cloud Run maps from `PUBLIC_APP_URL`) |
 | `NEXT_PUBLIC_TURNSTILE_SITEKEY` | Cloudflare Turnstile sitekey (public) |
 
 ### 2. Database
@@ -154,7 +165,9 @@ App: `http://localhost:3000`
 
 Frontend and API both deploy to **Google Cloud Run** via GitHub Actions (same GCP project and Artifact Registry Docker repo `midtable` in `us-central1`).
 
-Workflows: [`.github/workflows/deploy-backend.yml`](.github/workflows/deploy-backend.yml), [`.github/workflows/deploy-frontend.yml`](.github/workflows/deploy-frontend.yml), [`.github/workflows/sync.yml`](.github/workflows/sync.yml).
+Deploy: [`.github/workflows/deploy-backend.yml`](.github/workflows/deploy-backend.yml), [`.github/workflows/deploy-frontend.yml`](.github/workflows/deploy-frontend.yml).
+
+Cron: [`.github/workflows/sync.yml`](.github/workflows/sync.yml) (`/internal/sync-and-score`), [`.github/workflows/draft-maintenance.yml`](.github/workflows/draft-maintenance.yml) (`/internal/draft-maintenance`), [`.github/workflows/sync-fifa-rankings.yml`](.github/workflows/sync-fifa-rankings.yml) (`/internal/sync-fifa-rankings`).
 
 #### What to set in GitHub
 
@@ -167,6 +180,7 @@ Settings → Secrets and variables → Actions.
 | `DATABASE_URL` | Secret | Hosted Supabase Postgres URL with `?sslmode=require` (also used to apply migrations on backend deploy) |
 | `SUPABASE_URL` | Secret | Hosted Supabase project URL (`https://….supabase.co`) |
 | `FOOTBALL_DATA_API_TOKEN` | Secret | football-data.org API token |
+| `PARSE_API_KEY` | Secret | Parse.bot API key (wired to Cloud Run; needed for FIFA ranking sync) |
 | `CRON_SECRET` | Secret | Long random string |
 | `INTERNAL_API_SECRET` | Secret | Long random string (same value on API + frontend Cloud Run) |
 | `TURNSTILE_SECRET` | Secret | Cloudflare Turnstile secret key |
@@ -179,13 +193,14 @@ Settings → Secrets and variables → Actions.
 | `API_URL` | Secret | API origin (e.g. `https://….run.app`, no path) |
 | `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Secret | Supabase publishable key |
 
-**1 variable + 15 secrets.** Shared mappings (do not create these as separate GitHub secrets):
+**1 variable + 16 secrets.** Shared mappings (do not create these as separate GitHub secrets):
 
 - `API_URL` → frontend build `NEXT_PUBLIC_API_URL` + frontend runtime `API_URL` (BFF) + cron base URL
 - `PUBLIC_APP_URL` → backend `PUBLIC_APP_URL` + `CORS_ORIGINS` + frontend `NEXT_PUBLIC_SITE_URL`
 - `SUPABASE_URL` → backend + frontend `NEXT_PUBLIC_SUPABASE_URL`
 - `CRON_SECRET` → backend + cron
 - `INTERNAL_API_SECRET` → backend + frontend runtime (BFF → `/auth/email-status`)
+- `PARSE_API_KEY` → backend only (FIFA ranking sync; optional for core play)
 
 Use **hosted** Supabase URLs — not `127.0.0.1` or `host.docker.internal`. Backend workflow sets `APP_ENV=production` and `MAILJET_FROM_NAME=Midtable`.
 
@@ -195,11 +210,11 @@ Backend deploy runs `python -m app.scripts.run_migrations` with `DATABASE_URL` a
 
 1. Enable Cloud Run + Artifact Registry; create Artifact Registry Docker repo `midtable` in `us-central1`.
 2. Deploy SA JSON → secret `GCP_SA_KEY`; set variable `GCP_PROJECT_ID`.
-3. Set secrets that do not need Cloud Run URLs yet (`DATABASE_URL`, `SUPABASE_URL`, Mailjet, `FOOTBALL_DATA_API_TOKEN`, `CRON_SECRET`, `INTERNAL_API_SECRET`, Turnstile keys/hostnames, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`). Schema migrations are applied by the backend deploy workflow.
+3. Set secrets that do not need Cloud Run URLs yet (`DATABASE_URL`, `SUPABASE_URL`, Mailjet, `FOOTBALL_DATA_API_TOKEN`, `PARSE_API_KEY`, `CRON_SECRET`, `INTERNAL_API_SECRET`, Turnstile keys/hostnames, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`). Schema migrations are applied by the backend deploy workflow.
 4. Temporary `PUBLIC_APP_URL` (e.g. `https://example.com`) → deploy **backend** → copy API origin → set `API_URL`.
 5. Deploy **frontend** → copy frontend origin → set `PUBLIC_APP_URL` to that origin → update `TURNSTILE_HOSTNAMES` to match → redeploy backend and frontend.
 6. Supabase Auth redirects: `{frontend-origin}`, `{frontend-origin}/auth/callback`.
-7. Confirm cron secrets (`API_URL` + `CRON_SECRET`); run Sync and score via `workflow_dispatch`.
+7. Confirm cron secrets (`API_URL` + `CRON_SECRET`); run Sync and score / Draft maintenance / Sync FIFA rankings via `workflow_dispatch` as needed.
 
 Local smoke tests:
 
@@ -236,10 +251,16 @@ docker run --rm -p 3000:3000 \
 5. Create a league from a template, invite managers, bootstrap teams, open the draft.
 6. Sync fixtures when the season is live; standings and stats update from scored results.
 
-Cron-style scoring for all drafting/active leagues:
+Internal cron endpoints (same `X-Cron-Secret` header):
 
 ```bash
 curl -X POST http://localhost:8000/internal/sync-and-score \
+  -H "X-Cron-Secret: $CRON_SECRET"
+
+curl -X POST http://localhost:8000/internal/draft-maintenance \
+  -H "X-Cron-Secret: $CRON_SECRET"
+
+curl -X POST http://localhost:8000/internal/sync-fifa-rankings \
   -H "X-Cron-Secret: $CRON_SECRET"
 ```
 
@@ -254,4 +275,4 @@ npx tsc --noEmit
 npm run build
 ```
 
-GitHub Actions (`.github/workflows/ci.yml`) runs backend pytest, a frontend typecheck + production build, and Docker image builds for the API and frontend on push/PR. Production deploys: `.github/workflows/deploy-backend.yml` and `.github/workflows/deploy-frontend.yml` (Cloud Run).
+GitHub Actions (`.github/workflows/ci.yml`) runs backend pytest, a frontend typecheck + production build, and Docker image builds for the API and frontend on `pull_request`, `workflow_dispatch`, and `workflow_call` (deploy workflows invoke CI). Production deploys: `.github/workflows/deploy-backend.yml` and `.github/workflows/deploy-frontend.yml` (Cloud Run).
