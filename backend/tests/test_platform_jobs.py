@@ -198,6 +198,31 @@ def test_run_platform_job_teams_failure(monkeypatch):
     assert out.error == "provider down"
 
 
+def test_run_platform_job_fails_when_snapshots_fail(monkeypatch):
+    job_id = uuid4()
+    job = _job(public_id=job_id, status="pending")
+
+    db = MagicMock()
+    first = MagicMock()
+    first.first.return_value = job
+    db.scalars.return_value = first
+
+    monkeypatch.setattr(
+        "app.services.global_sync.sync_all_teams_and_rankings",
+        lambda *_a, **_k: {
+            "ok": False,
+            "season_year": 2025,
+            "teams": {"ok": True, "created": 1, "updated": 0},
+            "rankings": {"ok": True},
+            "table_snapshots": {"ok": False, "competitions_failed": 1},
+        },
+    )
+
+    out = run_platform_job(db, job_id, MagicMock(), MagicMock())
+    assert out.status == "failed"
+    assert out.error == "Table snapshots failed"
+
+
 def test_global_sync_ok_requires_table_snapshots(monkeypatch):
     from app.services.global_sync import sync_all_teams_and_rankings
 

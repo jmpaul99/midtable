@@ -133,6 +133,43 @@ def test_bootstrap_teams_requires_pools():
     assert "competition" in msg or "pool" in msg
 
 
+def test_bootstrap_teams_maps_rate_limit_to_conflict():
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    import pytest
+
+    from app.providers.football_data import FootballDataError
+    from app.services.bootstrap import bootstrap_teams_for_league
+    from app.services.errors import ConflictError
+
+    pool = SimpleNamespace(
+        key="pl",
+        competition_code="PL",
+        season_year=2025,
+        provider="football-data.org",
+        competition_type=None,
+    )
+    db = MagicMock()
+    out = MagicMock()
+    out.all.return_value = [pool]
+    db.scalars.return_value = out
+    provider = MagicMock()
+    provider.resolve_competition_season.side_effect = FootballDataError(
+        "rate limit exceeded",
+        rate_limited=True,
+    )
+
+    with pytest.raises(ConflictError) as exc:
+        bootstrap_teams_for_league(
+            db,
+            league=SimpleNamespace(id=1, public_id="lg"),
+            provider=provider,
+            pool_provider_params=[],
+        )
+    assert "rate limited" in str(exc.value.message).lower()
+
+
 def test_bootstrap_teams_response_schema():
     from app.schemas.leagues import BootstrapTeamsResponse
 

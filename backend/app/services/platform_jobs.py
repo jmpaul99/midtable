@@ -226,11 +226,17 @@ def run_platform_job(
                 season_year=season_year,
             )
             summary = _json_safe_teams_and_rankings_summary(result)
-            if not result.get("ok") and not (result.get("teams") or {}).get("ok"):
+            if not result.get("ok"):
+                snaps = result.get("table_snapshots") if isinstance(result.get("table_snapshots"), dict) else {}
                 job.status = "failed"
                 job.error = str(
                     (result.get("teams") or {}).get("error")
                     or (result.get("rankings") or {}).get("error")
+                    or (
+                        "Table snapshots failed"
+                        if snaps and not snaps.get("ok")
+                        else None
+                    )
                     or "Sync failed"
                 )
                 job.summary = summary

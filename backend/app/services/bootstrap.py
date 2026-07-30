@@ -21,6 +21,7 @@ from app.models import (
     TeamPool,
 )
 from app.providers.base import FootballProvider
+from app.providers.football_data import FootballDataError
 from app.services.competitions import should_apply_team_kind, team_kind_for_competition
 from app.services.draft_schedule import validate_draft_scheduled_at
 from app.services.errors import (
@@ -32,6 +33,22 @@ from app.services.errors import (
 from app.services.preassign import effective_preassign_count
 
 logger = logging.getLogger(__name__)
+
+
+def _provider_call(op, *, context: dict[str, Any]):
+    """Run a provider call; map rate limits to ConflictError for API callers."""
+    try:
+        return op()
+    except FootballDataError as exc:
+        if exc.rate_limited:
+            raise ConflictError(
+                {
+                    "message": "provider rate limited; retry shortly",
+                    **context,
+                    "provider_message": str(exc),
+                }
+            ) from exc
+        raise
 
 
 def prior_leagues_blocking(
@@ -97,7 +114,10 @@ def bootstrap_season(
     for params in pool_provider_params:
         code = params["competition_code"]
         year = int(params["season_year"])
-        info, _ = provider.resolve_competition_season(code, year)
+        info, _ = _provider_call(
+            lambda: provider.resolve_competition_season(code, year),
+            context={"competition_code": code, "season_year": year},
+        )
         if not info.available:
             logger.warning(
                 "bootstrap_season provider unavailable competition_code=%s season_year=%s "
@@ -344,8 +364,15 @@ def bootstrap_teams_for_league(
             )
             continue
 
-        info, _ = provider.resolve_competition_season(
-            pool.competition_code, int(pool.season_year)
+        info, _ = _provider_call(
+            lambda: provider.resolve_competition_season(
+                pool.competition_code, int(pool.season_year)
+            ),
+            context={
+                "pool_key": pool.key,
+                "competition_code": pool.competition_code,
+                "season_year": pool.season_year,
+            },
         )
         if info.competition_type:
             pool.competition_type = info.competition_type
@@ -368,7 +395,14 @@ def bootstrap_teams_for_league(
                 },
             )
 
-        teams, _ = provider.list_teams(pool.competition_code, int(pool.season_year))
+        teams, _ = _provider_call(
+            lambda: provider.list_teams(pool.competition_code, int(pool.season_year)),
+            context={
+                "pool_key": pool.key,
+                "competition_code": pool.competition_code,
+                "season_year": pool.season_year,
+            },
+        )
         kind = team_kind_for_competition(pool.competition_code)
         pool_linked = 0
         for pt in teams:
