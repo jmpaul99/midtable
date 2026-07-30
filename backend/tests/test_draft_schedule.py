@@ -88,6 +88,46 @@ def test_validate_skips_first_match_when_unknown():
         )
 
 
+def test_clear_draft_schedule_if_after_first_kickoff():
+    from app.services.draft_schedule import clear_draft_schedule_if_after_first_kickoff
+
+    scheduled = datetime(2026, 8, 20, 12, 0, tzinfo=UTC)
+    first = datetime(2026, 8, 15, 15, 0, tzinfo=UTC)
+    league = SimpleNamespace(
+        id=1,
+        public_id=uuid4(),
+        status="pre_draft",
+        draft_scheduled_at=scheduled,
+    )
+    db = MagicMock()
+    with patch(
+        "app.services.draft_schedule.earliest_kickoff_for_league",
+        return_value=first,
+    ):
+        assert clear_draft_schedule_if_after_first_kickoff(db, league) is True
+    assert league.draft_scheduled_at is None
+
+
+def test_clear_draft_schedule_keeps_valid_pre_kickoff():
+    from app.services.draft_schedule import clear_draft_schedule_if_after_first_kickoff
+
+    scheduled = datetime(2026, 8, 10, 12, 0, tzinfo=UTC)
+    first = datetime(2026, 8, 15, 15, 0, tzinfo=UTC)
+    league = SimpleNamespace(
+        id=1,
+        public_id=uuid4(),
+        status="pre_draft",
+        draft_scheduled_at=scheduled,
+    )
+    db = MagicMock()
+    with patch(
+        "app.services.draft_schedule.earliest_kickoff_for_league",
+        return_value=first,
+    ):
+        assert clear_draft_schedule_if_after_first_kickoff(db, league) is False
+    assert league.draft_scheduled_at == scheduled
+
+
 def test_earliest_kickoff_normalizes_codes():
     db = MagicMock()
     db.scalar.return_value = datetime(2026, 8, 15, 15, 0, tzinfo=UTC)

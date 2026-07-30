@@ -70,6 +70,16 @@ def test_competition_type_resolves_with_competition_identity():
     provider.resolve_competition_season.assert_called_once_with("CL", 2026)
 
 
+def test_competition_type_provider_error_returns_none():
+    from app.providers.football_data import FootballDataError
+
+    provider = MagicMock()
+    provider.resolve_competition_season.side_effect = FootballDataError(
+        "rate limited", rate_limited=True
+    )
+    assert _competition_type_from_provider(provider, "PL", 2026) is None
+
+
 def _league(*, status: str = "pre_draft", lid: int = 1) -> SimpleNamespace:
     return SimpleNamespace(
         id=lid,

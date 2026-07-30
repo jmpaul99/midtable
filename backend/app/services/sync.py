@@ -392,10 +392,13 @@ def sync_league_fixtures(
                 changed_matches.append(m)
 
     score_summary = score_changed_matches(db, league, changed_matches)
+    from app.services.draft_schedule import clear_draft_schedule_if_after_first_kickoff
+
+    cleared_schedule = clear_draft_schedule_if_after_first_kickoff(db, league)
     db.commit()
     logger.info(
         "sync_league_fixtures ok league_id=%s created=%s updated=%s changed=%s "
-        "scored=%s skipped_missing_teams=%s skipped_pools=%s",
+        "scored=%s skipped_missing_teams=%s skipped_pools=%s cleared_draft_schedule=%s",
         log_id(league),
         created,
         updated,
@@ -403,6 +406,7 @@ def sync_league_fixtures(
         score_summary.get("scored", 0),
         skipped_missing_teams,
         skipped_pools_missing_code,
+        cleared_schedule,
     )
     return {
         "ok": True,

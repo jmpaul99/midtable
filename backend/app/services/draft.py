@@ -944,6 +944,15 @@ def try_auto_open_if_scheduled(db: Session, league: League) -> bool:
         return False
     if _aware(league.draft_scheduled_at) > datetime.now(UTC):
         return False
+    from app.services.draft_schedule import clear_draft_schedule_if_after_first_kickoff
+
+    if clear_draft_schedule_if_after_first_kickoff(db, league):
+        db.flush()
+        logger.info(
+            "draft auto-open blocked league_id=%s reason=after_first_kickoff",
+            log_id(league),
+        )
+        return False
     state = db.scalars(select(DraftState).where(DraftState.league_id == league.id)).first()
     if state is not None and state.status != "pending":
         return False

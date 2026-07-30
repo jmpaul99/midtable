@@ -58,6 +58,12 @@ def _competition_type_from_provider(
     competition_code: str,
     season_year: int,
 ) -> str | None:
+    """Resolve competition type from the provider.
+
+    Returns ``None`` on missing resolver or provider failure. Callers must not
+    treat failure ``None`` as “clear the stored type” — only assign when a
+    concrete type is returned.
+    """
     resolve = getattr(provider, "resolve_competition_season", None)
     if not callable(resolve):
         return None
@@ -205,8 +211,9 @@ def create_league(
     else:
         db.add(DraftState(league_id=league.id, current_pick_number=1, status="pending"))
     try:
-        # Past-date only here — competition keys are finalized by bootstrap-teams.
-        validate_draft_scheduled_at(db, payload.draft_scheduled_at)
+        # Use league pools when present so shared fixtures can enforce the
+        # before-first-match rule at create; otherwise past-date only until bootstrap.
+        validate_draft_scheduled_at(db, payload.draft_scheduled_at, league=league)
     except DomainError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
     db.commit()
@@ -619,9 +626,13 @@ def update_settings(
                 and pool.competition_code
                 and pool.season_year is not None
             ):
-                pool.competition_type = _competition_type_from_provider(
+                resolved_type = _competition_type_from_provider(
                     provider, pool.competition_code, int(pool.season_year)
                 )
+                # Keep the previous type on transient provider failures so period
+                # labels are not wiped to round-style defaults until bootstrap.
+                if resolved_type is not None:
+                    pool.competition_type = resolved_type
             if "slot_count" in item and item["slot_count"] is not None:
                 new_slots = int(item["slot_count"])
                 team_count = len(

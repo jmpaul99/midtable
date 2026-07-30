@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 
 from sqlalchemy import func, select
@@ -15,6 +16,8 @@ from app.services.match_queries import (
     competition_keys_from_pools,
     scoring_pools_for_league,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def aware(dt: datetime) -> datetime:
@@ -45,6 +48,29 @@ def earliest_kickoff_for_keys(
 def earliest_kickoff_for_league(db: Session, league: League) -> datetime | None:
     pools = scoring_pools_for_league(db, league)
     return earliest_kickoff_for_keys(db, competition_keys_from_pools(pools))
+
+
+def draft_schedule_after_first_kickoff(db: Session, league: League) -> bool:
+    """True when a scheduled draft would open on/after the first competition match."""
+    if league.draft_scheduled_at is None:
+        return False
+    first_kickoff = earliest_kickoff_for_league(db, league)
+    if first_kickoff is None:
+        return False
+    return aware(league.draft_scheduled_at) >= first_kickoff
+
+
+def clear_draft_schedule_if_after_first_kickoff(db: Session, league: League) -> bool:
+    """Clear an invalid pre-draft schedule once fixtures make the kickoff known."""
+    if league.status != "pre_draft" or not draft_schedule_after_first_kickoff(db, league):
+        return False
+    logger.warning(
+        "clearing draft_scheduled_at league_id=%s scheduled_at=%s reason=after_first_kickoff",
+        getattr(league, "public_id", league.id),
+        league.draft_scheduled_at,
+    )
+    league.draft_scheduled_at = None
+    return True
 
 
 def validate_draft_scheduled_at(
