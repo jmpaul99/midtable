@@ -22,6 +22,7 @@ export default function LeagueManagerPage({
       leagueStatus={league.status}
       rosterClubOrder={league.roster_club_order}
       eventTypeLabels={upsetNameByKey(league.upset_rules)}
+      bonusesConfigured={(league.bonus_type_keys || []).length > 0}
     />
   );
 }

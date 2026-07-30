@@ -61,7 +61,11 @@ function shortRosterLabel(slot: RosterSlot, pools: PoolDef[]): string {
   if (raw) return raw;
   const pool = pools.find((p) => p.key && p.key === slot.pool_key);
   if (pool) {
-    return competitionDisplayLabel(pool.competition_code, pool.label) || pool.key || "clubs";
+    return (
+      competitionDisplayLabel(pool.competition_code, pool.label) ||
+      (pool.label || "").trim() ||
+      "clubs"
+    );
   }
   return "clubs";
 }

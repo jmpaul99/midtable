@@ -249,6 +249,24 @@ def sync_competition_fixtures(
         status.in_progress = False
         status.in_progress_since = None
         db.flush()
+        try:
+            from app.services.standings import ensure_competition_season_table_baselines
+
+            ensure_competition_season_table_baselines(
+                db,
+                provider,
+                provider_key=provider_key,
+                competition_code=competition_code,
+                season_year=season_year,
+            )
+            db.flush()
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "sync_competition table baselines failed competition=%s/%s",
+                competition_code,
+                season_year,
+                exc_info=True,
+            )
         logger.info(
             "sync_competition ok competition=%s/%s created=%s updated=%s changed=%s "
             "skipped_missing_teams=%s",
@@ -331,6 +349,29 @@ def sync_league_fixtures(
     seen_changed: set[int] = set()
 
     for provider_key, competition_code, season_year in keys:
+        try:
+            resolved = provider.resolve_competition_season(competition_code, season_year)
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "sync_league_fixtures could not resolve competition type "
+                "competition=%s/%s",
+                competition_code,
+                season_year,
+                exc_info=True,
+            )
+            resolved = None
+        if isinstance(resolved, tuple) and resolved:
+            info = resolved[0]
+            ctype = getattr(info, "competition_type", None)
+            if ctype:
+                for pool in all_pools:
+                    if (
+                        (pool.provider or "football-data.org") == provider_key
+                        and (pool.competition_code or "").upper()
+                        == competition_code.upper()
+                        and int(pool.season_year or 0) == int(season_year)
+                    ):
+                        pool.competition_type = ctype
         result = sync_competition_fixtures(
             db,
             provider,
@@ -351,10 +392,13 @@ def sync_league_fixtures(
                 changed_matches.append(m)
 
     score_summary = score_changed_matches(db, league, changed_matches)
+    from app.services.draft_schedule import clear_draft_schedule_if_after_first_kickoff
+
+    cleared_schedule = clear_draft_schedule_if_after_first_kickoff(db, league)
     db.commit()
     logger.info(
         "sync_league_fixtures ok league_id=%s created=%s updated=%s changed=%s "
-        "scored=%s skipped_missing_teams=%s skipped_pools=%s",
+        "scored=%s skipped_missing_teams=%s skipped_pools=%s cleared_draft_schedule=%s",
         log_id(league),
         created,
         updated,
@@ -362,6 +406,7 @@ def sync_league_fixtures(
         score_summary.get("scored", 0),
         skipped_missing_teams,
         skipped_pools_missing_code,
+        cleared_schedule,
     )
     return {
         "ok": True,
@@ -503,7 +548,9 @@ def score_changed_matches(
         pool_by_match[m.id] = pool
         all_inputs.append(match_to_input(m, pool_id=pool.id))
     by_id = {m.id: m for m in all_matches}
-    fixed_ranks = ranks_for_league(db, league, upset_rules)
+    fixed_ranks = ranks_for_league(
+        db, league, upset_rules, allow_live_catalog=True
+    )
 
     scored = 0
     cascaded = 0

@@ -2,7 +2,9 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
-import { formatDate, formatNumber, formatTeamOrientedScoreline } from "@/lib/format";
+import { formatDate, formatNumber, formatTeamOrientedScoreline, formatPeriodShort } from "@/lib/format";
+import { scoringEventLabel } from "@/lib/scoringLabels";
+import { humanizeKey } from "@/components/settings/types";
 import type { BonusAward, ScoringEventMatch, UUID } from "@/lib/types";
 import { Card, Eyebrow, Muted, Stack } from "@/components/ui/Card";
 import { TeamLink } from "./TeamLink";
@@ -21,6 +23,7 @@ const CATEGORY_ORDER = [
   "major_upset_draw",
 ] as const;
 
+/** Plural category headings for the expandable points breakdown. */
 const CATEGORY_LABELS: Record<string, string> = {
   win: "Wins",
   win_et: "Wins (extra time)",
@@ -36,7 +39,9 @@ const CATEGORY_LABELS: Record<string, string> = {
 };
 
 function categoryLabel(key: string, labels?: Record<string, string>) {
-  return labels?.[key] || CATEGORY_LABELS[key] || key.replaceAll("_", " ");
+  const custom = labels?.[key]?.trim();
+  if (custom) return custom;
+  return CATEGORY_LABELS[key] || scoringEventLabel(key);
 }
 
 function Chevron({ open }: { open: boolean }) {
@@ -61,7 +66,6 @@ function Chevron({ open }: { open: boolean }) {
 
 function CategoryRow({
   label,
-  count,
   points,
   open,
   expandable,
@@ -69,7 +73,6 @@ function CategoryRow({
   children,
 }: {
   label: string;
-  count: number;
   points: number;
   open: boolean;
   expandable: boolean;
@@ -78,13 +81,7 @@ function CategoryRow({
 }) {
   const summary = (
     <div className="flex min-w-0 flex-1 items-center justify-between gap-2">
-      <div className="min-w-0">
-        <strong className="block truncate capitalize">{label}</strong>
-        <Muted className="text-xs tabular-nums">
-          {count === 0 ? "None yet" : `${count}×`}
-          {expandable ? (open ? " · hide" : " · expand") : ""}
-        </Muted>
-      </div>
+      <strong className="min-w-0 truncate">{label}</strong>
       <div className="flex shrink-0 items-center gap-2">
         <span className="font-display text-lg font-extrabold tabular-nums">
           {formatNumber(points)}
@@ -123,6 +120,8 @@ export function TeamScoringBreakdown({
   eventPointsByType,
   eventCountsByType,
   eventTypeLabels,
+  bonusesConfigured = false,
+  competitionType = null,
 }: {
   leagueId: UUID;
   events: ScoringEventMatch[];
@@ -132,6 +131,9 @@ export function TeamScoringBreakdown({
   eventCountsByType?: Record<string, number>;
   /** Upset threshold key → display name from league settings. */
   eventTypeLabels?: Record<string, string>;
+  /** When false, omit the bonus row unless awards already exist. */
+  bonusesConfigured?: boolean;
+  competitionType?: string | null;
 }) {
   const [openKey, setOpenKey] = useState<string | null>(null);
 
@@ -170,17 +172,23 @@ export function TeamScoringBreakdown({
       .filter((c) => c.points > 0 || c.count > 0);
   }, [eventPointsByType, eventCountsByType, eventsByType]);
 
-  // Always show at least the known scoring + bonus rows when anything exists,
-  // and always show bonus so the category is discoverable.
+  // Only surface bonuses when the league defines bonus types, or awards already exist.
+  const showBonus =
+    bonusesConfigured || bonusPoints > 0 || bonuses.length > 0;
+
   const hasAnyPoints =
-    categories.some((c) => c.points > 0) || bonusPoints > 0 || bonuses.length > 0;
+    categories.some((c) => c.points > 0) || (showBonus && (bonusPoints > 0 || bonuses.length > 0));
 
   if (!hasAnyPoints && categories.length === 0) {
     return (
       <Card className="min-w-0 overflow-hidden">
         <Stack>
           <h2>Points breakdown</h2>
-          <Muted className="text-sm">No scoring events or bonus awards yet.</Muted>
+          <Muted className="text-sm">
+            {showBonus
+              ? "No scoring events or bonus awards yet."
+              : "No scoring events yet."}
+          </Muted>
         </Stack>
       </Card>
     );
@@ -206,7 +214,6 @@ export function TeamScoringBreakdown({
               <CategoryRow
                 key={cat.key}
                 label={categoryLabel(cat.key, eventTypeLabels)}
-                count={cat.count}
                 points={cat.points}
                 open={open}
                 expandable={expandable}
@@ -228,7 +235,7 @@ export function TeamScoringBreakdown({
                               <Muted className="text-[11px] sm:text-xs">
                                 {formatDate(e.kickoff_at)}
                                 {e.scheduled_matchweek != null
-                                  ? ` · MW${e.scheduled_matchweek}`
+                                  ? ` · ${formatPeriodShort(e.scheduled_matchweek, competitionType)}`
                                   : ""}
                                 {e.is_home ? " · Home" : " · Away"}
                                 {gap != null ? ` · Gap ${gap}` : ""}
@@ -260,60 +267,61 @@ export function TeamScoringBreakdown({
             );
           })}
 
-          <CategoryRow
-            label={categoryLabel("bonus")}
-            count={bonuses.length}
-            points={bonusPoints}
-            open={openKey === "bonus"}
-            expandable
-            onToggle={() => toggle("bonus")}
-          >
-            {!bonuses.length ? (
-              <Muted className="text-sm">No bonus awards for this club yet.</Muted>
-            ) : (
-              <ul className="flex flex-col gap-2">
-                {bonuses.map((b) => (
-                  <li
-                    key={b.id}
-                    className="rounded-lg border border-line bg-surface px-3 py-2.5"
-                  >
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="min-w-0">
-                        <strong className="block truncate text-sm">
-                          {b.bonus_type_label || b.bonus_type}
-                        </strong>
-                        {b.match_label && (
-                          <Muted className="mt-0.5 block truncate text-xs">
-                            {b.match_id ? (
-                              <Link
-                                href={`/leagues/${leagueId}/matches/${b.match_id}`}
-                                className="underline-offset-2 hover:underline"
-                              >
-                                {b.match_label}
-                              </Link>
-                            ) : (
-                              b.match_label
-                            )}
-                          </Muted>
-                        )}
-                        {b.reason && (
-                          <p className="mt-1 break-words text-xs text-muted">{b.reason}</p>
-                        )}
-                        {b.awarded_at && (
-                          <Muted className="mt-1 text-[11px]">
-                            Awarded {formatDate(b.awarded_at)}
-                          </Muted>
-                        )}
+          {showBonus && (
+            <CategoryRow
+              label={categoryLabel("bonus")}
+              points={bonusPoints}
+              open={openKey === "bonus"}
+              expandable
+              onToggle={() => toggle("bonus")}
+            >
+              {!bonuses.length ? (
+                <Muted className="text-sm">No bonus awards for this club yet.</Muted>
+              ) : (
+                <ul className="flex flex-col gap-2">
+                  {bonuses.map((b) => (
+                    <li
+                      key={b.id}
+                      className="rounded-lg border border-line bg-surface px-3 py-2.5"
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <strong className="block truncate text-sm">
+                            {b.bonus_type_label || humanizeKey(b.bonus_type)}
+                          </strong>
+                          {b.match_label && (
+                            <Muted className="mt-0.5 block truncate text-xs">
+                              {b.match_id ? (
+                                <Link
+                                  href={`/leagues/${leagueId}/matches/${b.match_id}`}
+                                  className="underline-offset-2 hover:underline"
+                                >
+                                  {b.match_label}
+                                </Link>
+                              ) : (
+                                b.match_label
+                              )}
+                            </Muted>
+                          )}
+                          {b.reason && (
+                            <p className="mt-1 break-words text-xs text-muted">{b.reason}</p>
+                          )}
+                          {b.awarded_at && (
+                            <Muted className="mt-1 text-[11px]">
+                              Awarded {formatDate(b.awarded_at)}
+                            </Muted>
+                          )}
+                        </div>
+                        <div className="shrink-0 font-display text-sm font-extrabold tabular-nums">
+                          +{formatNumber(b.points)}
+                        </div>
                       </div>
-                      <div className="shrink-0 font-display text-sm font-extrabold tabular-nums">
-                        +{formatNumber(b.points)}
-                      </div>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </CategoryRow>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </CategoryRow>
+          )}
         </ul>
       </Stack>
     </Card>

@@ -23,6 +23,8 @@ export interface LeagueSummary {
   roster_club_order?: "draft" | "competition";
   draft_scheduled_at?: string | null;
   pick_timer_seconds?: number | null;
+  /** Earliest kickoff across scoring competitions; caps draft schedule. */
+  first_match_kickoff_at?: string | null;
   slug?: string;
   my_rank?: number | null;
   member_count?: number | null;
@@ -91,6 +93,7 @@ export interface Pool {
   provider: string;
   competition_code: string | null;
   season_year: number | null;
+  competition_type?: string | null;
 }
 
 export interface PhaseMetadata {
@@ -224,6 +227,8 @@ export interface PoolTeam {
   drafted: boolean;
   current_owner: { member_id: UUID; display_name: string; acquired_via: string } | null;
   available: boolean;
+  /** 0 = highest autopick priority; comparable across competitions. */
+  draft_order?: number | null;
 }
 
 export interface DraftPick {
@@ -235,6 +240,14 @@ export interface DraftPick {
   team_name?: string;
   crest_url?: string | null;
   pool_id?: UUID;
+}
+
+export interface AutopickPreview {
+  mode: "ranking" | "table" | "random";
+  team_id?: UUID | null;
+  team_name?: string | null;
+  crest_url?: string | null;
+  pool_id?: UUID | null;
 }
 
 export interface DraftState {
@@ -250,6 +263,7 @@ export interface DraftState {
   pick_deadline_at?: string | null;
   pick_timer_seconds?: number | null;
   draft_scheduled_at?: string | null;
+  autopick_preview?: AutopickPreview | null;
 }
 
 export interface RosterRow {
@@ -383,6 +397,24 @@ export interface LatestLeagueJobs {
   cron: LeagueJob | null;
 }
 
+export interface PlatformJob {
+  id: UUID;
+  kind: "teams_and_rankings" | "fifa_rankings" | string;
+  source: "admin" | "cron" | string;
+  status: "pending" | "running" | "succeeded" | "failed" | string;
+  error: string | null;
+  summary: Record<string, unknown> | null;
+  params: Record<string, unknown> | null;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+}
+
+export interface LatestPlatformJobs {
+  manual: PlatformJob | null;
+  cron: PlatformJob | null;
+}
+
 export interface ReadinessCheck {
   key: string;
   label: string;
@@ -403,6 +435,39 @@ export interface MatchOwnerInfo {
   display_name: string | null;
   team_name?: string | null;
   acquired_via?: string;
+  draft_pick_number?: number | null;
+}
+
+/** GET /leagues/{id}/matches/{matchId}/events */
+export interface MatchEventRow {
+  id: UUID;
+  team_id: UUID | null;
+  team_name?: string | null;
+  event_type: string;
+  points: number;
+  metadata?: Record<string, Json> | null;
+}
+
+export interface MatchEventsResponse {
+  match_id: UUID;
+  kickoff_at: string;
+  status: string;
+  scheduled_matchweek: number | null;
+  duration?: string | null;
+  stage?: string | null;
+  pool_label?: string | null;
+  home_team_id: UUID;
+  away_team_id: UUID;
+  home_team_name: string;
+  away_team_name: string;
+  home_goals: number | null;
+  away_goals: number | null;
+  home_points?: number | null;
+  away_points?: number | null;
+  home_owner?: MatchOwnerInfo | null;
+  away_owner?: MatchOwnerInfo | null;
+  snapshot_id?: UUID | null;
+  events: MatchEventRow[];
 }
 
 export interface MatchLogRow {
@@ -499,6 +564,7 @@ export interface TeamDetail {
     display_name: string | null;
     team_name?: string | null;
     acquired_via: string;
+    draft_pick_number?: number | null;
   } | null;
   stats: {
     total_points: number;
@@ -513,6 +579,13 @@ export interface TeamDetail {
     event_counts_by_type?: Record<string, number>;
     bonus_points_by_type?: Record<string, number>;
     points_by_stage?: Record<string, number>;
+    points_by_period?: Array<{
+      period_key: string;
+      label: string;
+      stage: string | null;
+      scheduled_matchweek: number | null;
+      points: number;
+    }>;
     goals_for?: number;
     goals_against?: number;
     goal_difference?: number;
@@ -585,8 +658,21 @@ export interface ManagerDetail {
 export interface ManagerHighlights {
   member_id: UUID;
   display_name: string;
-  best_matchweek: { scheduled_matchweek: number; points: number } | null;
-  worst_matchweek: { scheduled_matchweek: number; points: number } | null;
+  best_matchweek: {
+    scheduled_matchweek?: number | null;
+    period_key?: string | null;
+    label?: string | null;
+    stage?: string | null;
+    points: number;
+  } | null;
+  worst_matchweek: {
+    scheduled_matchweek?: number | null;
+    period_key?: string | null;
+    label?: string | null;
+    stage?: string | null;
+    points: number;
+  } | null;
+  period_kind?: "matchweek" | "round" | null;
   biggest_upset: {
     event_type: string;
     points: number;
@@ -641,7 +727,19 @@ export interface PpgRow {
 export interface MatchweekRow {
   member_id: UUID;
   display_name: string;
-  scheduled_matchweek: number;
+  scheduled_matchweek: number | null;
+  period_key?: string | null;
+  label?: string | null;
+  stage?: string | null;
+  competition_code?: string | null;
+  points: number;
+}
+
+export interface PeriodPointsRow {
+  period_key: string;
+  label: string;
+  stage: string | null;
+  scheduled_matchweek: number | null;
   points: number;
 }
 

@@ -3,6 +3,8 @@
 import { useMemo } from "react";
 import { formatDate } from "@/lib/api";
 import { formatScoreline } from "@/lib/format";
+import { scoringEventLabel } from "@/lib/scoringLabels";
+import { humanizeKey } from "@/components/settings/types";
 import type { Json, Snapshot, UUID } from "@/lib/types";
 import { Empty, ErrorState, Loading } from "@/components/ui/State";
 import { Card, Eyebrow, Muted, Stack } from "@/components/ui/Card";
@@ -83,14 +85,16 @@ export function SnapshotAudit({
                 return (
                   <div key={e.id}>
                     <strong>
-                      {e.event_type.replaceAll("_", " ")}
+                      {scoringEventLabel(e.event_type)}
                     </strong>{" "}
                     · {e.points} pts
                     <Muted className="mt-1 text-xs">
                       Underdog rank {String(meta.underdog_rank ?? meta.home_rank ?? "—")} · Opponent
                       rank {String(meta.opponent_rank ?? meta.away_rank ?? "—")} · Gap{" "}
                       {String(meta.gap ?? "—")}
-                      {meta.rank_source ? ` · ${String(meta.rank_source)}` : ""}
+                      {meta.rank_source
+                        ? ` · ${humanizeKey(String(meta.rank_source))}`
+                        : ""}
                     </Muted>
                   </div>
                 );

@@ -133,17 +133,24 @@ def test_stage_draw_loss_overrides() -> None:
     assert points_for_result(Result.DRAW, pts, "FINAL") == 1
 
 
-def test_stage_empty_et_always_uses_default_not_stage_win() -> None:
-    """Empty stage ET/PK fields always fall back to Default, never stage win."""
+def test_stage_empty_et_inherits_stage_win() -> None:
+    """Empty stage ET/PK fields inherit that stage's win/loss before Default."""
     pts = ResultPoints.from_config(
-        {"win": 3, "draw": 1, "loss": 0, "by_stage": {"FINAL": {"win": 6}}}
+        {
+            "win": 3,
+            "draw": 1,
+            "loss": 0,
+            "by_stage": {"FINAL": {"win": 6, "loss": 0.5}},
+        }
     )
     assert points_for_result(Result.WIN, pts, "FINAL") == 6
-    assert points_for_result(Result.WIN_ET, pts, "FINAL") == 3
-    assert points_for_result(Result.WIN_PK, pts, "FINAL") == 3
+    assert points_for_result(Result.WIN_ET, pts, "FINAL") == 6
+    assert points_for_result(Result.WIN_PK, pts, "FINAL") == 6
+    assert points_for_result(Result.LOSS_ET, pts, "FINAL") == Decimal("0.5")
+    assert points_for_result(Result.LOSS_PK, pts, "FINAL") == Decimal("0.5")
 
 
-def test_default_win_et_applies_when_stage_omits_et() -> None:
+def test_stage_win_beats_default_et_when_stage_omits_et() -> None:
     pts = ResultPoints.from_config(
         {
             "win": 3,
@@ -154,11 +161,26 @@ def test_default_win_et_applies_when_stage_omits_et() -> None:
         }
     )
     assert points_for_result(Result.WIN, pts, "FINAL") == 6
-    assert points_for_result(Result.WIN_ET, pts, "FINAL") == 2
+    assert points_for_result(Result.WIN_ET, pts, "FINAL") == 6
     assert points_for_result(Result.WIN_ET, pts, "GROUP_STAGE") == 2
 
 
-def test_stage_et_override_beats_default_et() -> None:
+def test_default_win_et_applies_when_stage_has_no_win() -> None:
+    pts = ResultPoints.from_config(
+        {
+            "win": 3,
+            "draw": 1,
+            "loss": 0,
+            "win_et": 2,
+            "by_stage": {"FINAL": {"draw": 2}},
+        }
+    )
+    assert points_for_result(Result.DRAW, pts, "FINAL") == 2
+    assert points_for_result(Result.WIN_ET, pts, "FINAL") == 2
+    assert points_for_result(Result.WIN_PK, pts, "FINAL") == 3
+
+
+def test_stage_et_override_beats_stage_win_and_default_et() -> None:
     pts = ResultPoints.from_config(
         {
             "win": 3,

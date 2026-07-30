@@ -1,7 +1,7 @@
 import logging
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
@@ -11,9 +11,11 @@ from app.db import get_db
 from app.deps import (
     get_football_provider,
     get_league_by_public_id,
+    require_cron_secret,
     require_platform_admin,
 )
 from app.models import (
+    PlatformJob,
     Profile,
     RankingCatalog,
     RankingCatalogEntry,
@@ -26,6 +28,10 @@ from app.schemas.ranking_catalog import (
     CompetitionTeamResponse,
     CompetitionTeamsRequest,
     CompetitionTeamsResponse,
+    CompetitionTierRow,
+    CompetitionTierUpdateRequest,
+    LatestPlatformJobsResponse,
+    PlatformJobResponse,
     RankingCatalogCreate,
     RankingCatalogDetailResponse,
     RankingCatalogEntryResponse,
@@ -37,9 +43,18 @@ from app.schemas.ranking_catalog import (
 )
 from app.services.competitions import (
     is_allowed_competition_code,
+    list_competition_tiers_for_admin,
     normalize_competition_code,
+    update_competition_tiers,
 )
-from app.services.global_sync import sync_all_teams_and_rankings
+from app.services.platform_jobs import (
+    ActivePlatformJobConflict,
+    enqueue_platform_job,
+    get_platform_job_by_public_id,
+    latest_platform_jobs,
+    run_platform_job,
+    trigger_platform_job_run,
+)
 from app.services.ranking_catalog import (
     create_user_catalog,
     get_catalog_for_viewer,
@@ -323,30 +338,139 @@ def list_teams_for_admin_rematch(
     ]
 
 
-@router.post("/admin/sync-teams-and-rankings")
+@router.post(
+    "/admin/sync-teams-and-rankings",
+    response_model=PlatformJobResponse,
+)
 def admin_sync_teams_and_rankings(
+    response: Response,
     payload: AdminSyncTeamsAndRankingsRequest | None = None,
-    _admin: Profile = Depends(require_platform_admin),
+    admin: Profile = Depends(require_platform_admin),
     db: Session = Depends(get_db),
-    provider: FootballDataProvider = Depends(get_football_provider),
-    settings: Settings = Depends(get_settings),
-) -> dict:
-    """Upsert global teams for all free-plan competitions, then refresh FIFA catalogs."""
+) -> PlatformJobResponse:
+    """Enqueue global teams + FIFA rankings sync (runs in the background)."""
     body = payload or AdminSyncTeamsAndRankingsRequest()
     if body.season_year is not None and (
         body.season_year < 1990 or body.season_year > 2100
     ):
         raise HTTPException(status_code=400, detail="Invalid season_year")
+    params = {"season_year": body.season_year} if body.season_year is not None else None
     logger.info(
-        "admin sync-teams-and-rankings started season_year=%s",
+        "admin sync-teams-and-rankings enqueue season_year=%s",
         body.season_year,
     )
-    result = sync_all_teams_and_rankings(
-        db,
-        provider,
-        settings=settings,
-        season_year=body.season_year,
+    try:
+        job = enqueue_platform_job(
+            db,
+            kind="teams_and_rankings",
+            source="admin",
+            created_by_profile_id=admin.id,
+            params=params,
+        )
+    except ActivePlatformJobConflict as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": str(exc),
+                "job": _platform_job_response(exc.job).model_dump(mode="json"),
+            },
+        ) from exc
+    trigger_platform_job_run(job.public_id)
+    response.status_code = status.HTTP_202_ACCEPTED
+    return _platform_job_response(job)
+
+
+@router.get("/admin/jobs/latest", response_model=LatestPlatformJobsResponse)
+def admin_latest_platform_jobs(
+    _admin: Profile = Depends(require_platform_admin),
+    db: Session = Depends(get_db),
+) -> LatestPlatformJobsResponse:
+    latest = latest_platform_jobs(db)
+    return LatestPlatformJobsResponse(
+        manual=_platform_job_response(latest["manual"]) if latest["manual"] else None,
+        cron=_platform_job_response(latest["cron"]) if latest["cron"] else None,
     )
-    if not result.get("ok") and not result.get("teams", {}).get("ok"):
-        raise HTTPException(status_code=502, detail=result)
-    return result
+
+
+@router.get("/admin/jobs/{job_id}", response_model=PlatformJobResponse)
+def admin_get_platform_job(
+    job_id: UUID,
+    _admin: Profile = Depends(require_platform_admin),
+    db: Session = Depends(get_db),
+) -> PlatformJobResponse:
+    job = get_platform_job_by_public_id(db, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return _platform_job_response(job)
+
+
+@router.post(
+    "/internal/platform-jobs/{job_id}/run",
+    dependencies=[Depends(require_cron_secret)],
+)
+def run_platform_job_internal(
+    job_id: UUID,
+    db: Session = Depends(get_db),
+    provider: FootballDataProvider = Depends(get_football_provider),
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    logger.info("platform_job internal run start job_id=%s", job_id)
+    try:
+        job = run_platform_job(db, job_id, provider, settings)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {
+        "ok": job.status == "succeeded",
+        "job": _platform_job_response(job).model_dump(mode="json"),
+    }
+
+
+def _platform_job_response(job: PlatformJob) -> PlatformJobResponse:
+    return PlatformJobResponse(
+        id=job.public_id,
+        kind=job.kind,
+        source=job.source,
+        status=job.status,
+        error=job.error,
+        summary=job.summary,
+        params=job.params,
+        created_at=job.created_at,
+        started_at=job.started_at,
+        finished_at=job.finished_at,
+    )
+
+
+@router.get("/admin/competition-tiers", response_model=list[CompetitionTierRow])
+def admin_list_competition_tiers(
+    _admin: Profile = Depends(require_platform_admin),
+    db: Session = Depends(get_db),
+) -> list[CompetitionTierRow]:
+    """List curated competitions with editable domestic ladder tiers."""
+    return [
+        CompetitionTierRow.model_validate(row)
+        for row in list_competition_tiers_for_admin(db)
+    ]
+
+
+@router.put("/admin/competition-tiers", response_model=list[CompetitionTierRow])
+def admin_update_competition_tiers(
+    payload: CompetitionTierUpdateRequest,
+    _admin: Profile = Depends(require_platform_admin),
+    db: Session = Depends(get_db),
+) -> list[CompetitionTierRow]:
+    """Update domestic tiers for free-plan competitions (null = cup / no ladder)."""
+    if not payload.tiers:
+        raise HTTPException(status_code=400, detail="No tiers provided")
+    try:
+        rows = update_competition_tiers(
+            db,
+            [(item.code, item.domestic_tier) for item in payload.tiers],
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    db.commit()
+    logger.info(
+        "admin competition tiers updated count=%s",
+        len(payload.tiers),
+    )
+    return [CompetitionTierRow.model_validate(row) for row in rows]

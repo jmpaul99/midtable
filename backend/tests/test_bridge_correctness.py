@@ -133,6 +133,124 @@ def test_bootstrap_teams_requires_pools():
     assert "competition" in msg or "pool" in msg
 
 
+def test_bootstrap_teams_maps_rate_limit_to_conflict():
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    import pytest
+
+    from app.providers.football_data import FootballDataError
+    from app.services.bootstrap import bootstrap_teams_for_league
+    from app.services.errors import ConflictError
+
+    pool = SimpleNamespace(
+        key="pl",
+        competition_code="PL",
+        season_year=2025,
+        provider="football-data.org",
+        competition_type=None,
+    )
+    db = MagicMock()
+    out = MagicMock()
+    out.all.return_value = [pool]
+    db.scalars.return_value = out
+    provider = MagicMock()
+    provider.resolve_competition_season.side_effect = FootballDataError(
+        "rate limit exceeded",
+        rate_limited=True,
+    )
+
+    with pytest.raises(ConflictError) as exc:
+        bootstrap_teams_for_league(
+            db,
+            league=SimpleNamespace(id=1, public_id="lg"),
+            provider=provider,
+            pool_provider_params=[],
+        )
+    assert "rate limited" in str(exc.value.message).lower()
+
+
+def test_bootstrap_season_maps_list_teams_rate_limit_to_conflict(monkeypatch):
+    from datetime import date
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    import pytest
+
+    from app.providers.base import CompetitionSeasonInfo, RateLimitInfo
+    from app.providers.football_data import FootballDataError
+    from app.services import bootstrap as bootstrap_mod
+    from app.services.bootstrap import bootstrap_season
+    from app.services.errors import ConflictError
+
+    monkeypatch.setattr(bootstrap_mod, "prior_leagues_blocking", lambda *a, **k: [])
+
+    template = SimpleNamespace(
+        id=1,
+        key="pl",
+        draft_style="snake",
+        preassign_mode="none",
+        preassign_count=None,
+        result_points={},
+        upset_rules={},
+        leaderboard_phases=[],
+        leaderboard_tiebreaks=[],
+        buy_in=0,
+        payouts=[],
+        roster_club_order="draft",
+        bonus_types=[],
+        pool_definitions=[
+            {
+                "key": "pl",
+                "label": "Premier League",
+                "scores_match_results": True,
+                "slot_count": 2,
+                "sort_order": 1,
+            }
+        ],
+    )
+    provider = MagicMock()
+    provider.resolve_competition_season.return_value = (
+        CompetitionSeasonInfo(
+            code="PL",
+            season_year=2025,
+            start_date=None,
+            end_date=None,
+            available=True,
+        ),
+        RateLimitInfo(),
+    )
+    provider.list_teams.side_effect = FootballDataError(
+        "rate limit exceeded",
+        rate_limited=True,
+    )
+
+    db = MagicMock()
+    db.add = MagicMock()
+    db.flush = MagicMock()
+
+    with pytest.raises(ConflictError) as exc:
+        bootstrap_season(
+            db,
+            template=template,
+            name="Test",
+            season_label="2025/26",
+            provider=provider,
+            pool_provider_params=[
+                {
+                    "key": "pl",
+                    "competition_code": "PL",
+                    "season_year": 2025,
+                    "provider": "football-data.org",
+                }
+            ],
+            scheduled_start_date=date(2025, 8, 1),
+            scheduled_end_date=date(2026, 5, 30),
+        )
+    assert "rate limited" in str(exc.value.message).lower()
+    assert provider.list_teams.called
+
+
 def test_bootstrap_teams_response_schema():
     from app.schemas.leagues import BootstrapTeamsResponse
 

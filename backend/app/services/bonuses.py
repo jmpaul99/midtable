@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.models import BonusType, ManualBonus, Match, Team
 from app.schemas.leagues import BonusAwardRow
+from app.services.period_labels import format_period_short
 
 
 def bonus_target(bonus: ManualBonus) -> str:
@@ -19,14 +20,19 @@ def bonus_target(bonus: ManualBonus) -> str:
     return "team"
 
 
-def match_label(match: Match, teams: dict[int, Team]) -> str:
+def match_label(
+    match: Match,
+    teams: dict[int, Team],
+    *,
+    competition_type: str | None = None,
+) -> str:
     home = teams.get(match.home_team_id)
     away = teams.get(match.away_team_id)
     home_name = home.name if home else "Home"
     away_name = away.name if away else "Away"
     label = f"{home_name} vs {away_name}"
     if match.scheduled_matchweek is not None:
-        label = f"{label} · MW{match.scheduled_matchweek}"
+        label = f"{label} · {format_period_short(match.scheduled_matchweek, competition_type)}"
     return label
 
 
@@ -64,12 +70,19 @@ def bonus_award_row(
     bonus_types: dict[int, BonusType],
     teams: dict[int, Team],
     matches: dict[int, Match],
+    competition_type: str | None = None,
+    competition_type_by_code: dict[str, str | None] | None = None,
 ) -> BonusAwardRow:
     bt = bonus_types.get(bonus.bonus_type_id)
     key = bt.key if bt else "bonus"
     label = (bt.label or bt.key) if bt else "bonus"
     team = teams.get(bonus.team_id) if bonus.team_id is not None else None
     match = matches.get(bonus.match_id) if bonus.match_id is not None else None
+    ctype = competition_type
+    if match is not None and competition_type_by_code:
+        code = getattr(match, "competition_code", None)
+        if code:
+            ctype = competition_type_by_code.get(str(code).upper(), competition_type)
     return BonusAwardRow(
         id=bonus.public_id,
         target=bonus_target(bonus),
@@ -77,7 +90,7 @@ def bonus_award_row(
         team_name=team.name if team else None,
         crest_url=team.crest_url if team else None,
         match_id=match.public_id if match else None,
-        match_label=match_label(match, teams) if match else None,
+        match_label=match_label(match, teams, competition_type=ctype) if match else None,
         scheduled_matchweek=match.scheduled_matchweek if match else None,
         bonus_type=key,
         bonus_type_label=label,
@@ -101,6 +114,8 @@ def accumulate_bonus_awards(
     teams: dict[int, Team],
     matches: dict[int, Match],
     points_by_team: dict[int, float] | None = None,
+    competition_type: str | None = None,
+    competition_type_by_code: dict[str, str | None] | None = None,
 ) -> BonusAccumulation:
     """Fold bonuses into totals, by-type map, award rows; optionally mutate points_by_team."""
     acc = BonusAccumulation()
@@ -118,6 +133,8 @@ def accumulate_bonus_awards(
                 bonus_types=bonus_types,
                 teams=teams,
                 matches=matches,
+                competition_type=competition_type,
+                competition_type_by_code=competition_type_by_code,
             )
         )
     return acc

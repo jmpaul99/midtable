@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.auth.jwt import get_current_profile
 from app.db import get_db
-from app.deps import require_commissioner, require_league_member
+from app.deps import get_football_provider, require_commissioner, require_league_member
 from app.models import (
     CompetitionTemplate,
     DraftState,
@@ -37,12 +37,15 @@ from app.schemas.leagues import (
     MemberSelfUpdate,
 )
 from app.services.bootstrap import attach_template_structure
+from app.services.draft_schedule import validate_draft_scheduled_at
 from app.services.members import (
     default_team_name,
     is_sole_commissioner,
     renumber_draft_slots,
 )
+from app.services.errors import DomainError
 from app.logging_config import log_id
+from app.providers.football_data import FootballDataError, FootballDataProvider
 from app.services import analytics as analytics_service
 
 logger = logging.getLogger(__name__)
@@ -50,10 +53,37 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["leagues"])
 
 
-def _league_list_sort_key(league: League) -> tuple[bool, datetime]:
-    """Active seasons first; within a group, newest created first (caller uses reverse=True)."""
+def _competition_type_from_provider(
+    provider: FootballDataProvider,
+    competition_code: str,
+    season_year: int,
+) -> str | None:
+    """Resolve competition type from the provider.
+
+    Returns ``None`` on missing resolver or provider failure. Callers must not
+    treat failure ``None`` as “clear the stored type” — only assign when a
+    concrete type is returned.
+    """
+    resolve = getattr(provider, "resolve_competition_season", None)
+    if not callable(resolve):
+        return None
+    try:
+        info, _ = resolve(competition_code, season_year)
+    except FootballDataError as exc:
+        logger.warning(
+            "competition type resolve failed competition=%s season=%s error=%s",
+            competition_code,
+            season_year,
+            exc,
+        )
+        return None
+    return info.competition_type
+
+
+def _league_list_sort_key(league: League) -> tuple[bool, bool, datetime]:
+    """Drafting first, then other non-complete; newest created first within a group (reverse=True)."""
     created = league.created_at or datetime.min.replace(tzinfo=UTC)
-    return (league.status != "complete", created)
+    return (league.status == "drafting", league.status != "complete", created)
 
 
 def _league_config_from_template(
@@ -180,6 +210,12 @@ def create_league(
         attach_template_structure(db, league=league, template=template)
     else:
         db.add(DraftState(league_id=league.id, current_pick_number=1, status="pending"))
+    try:
+        # Use league pools when present so shared fixtures can enforce the
+        # before-first-match rule at create; otherwise past-date only until bootstrap.
+        validate_draft_scheduled_at(db, payload.draft_scheduled_at, league=league)
+    except DomainError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
     db.commit()
     db.refresh(league)
     db.refresh(member)
@@ -314,6 +350,7 @@ def update_settings(
     payload: LeagueSettingsUpdate,
     membership: tuple[League, LeagueMember] = Depends(require_commissioner),
     db: Session = Depends(get_db),
+    provider: FootballDataProvider = Depends(get_football_provider),
 ) -> LeagueDetailResponse:
     league, member = membership
     data = payload.model_dump(exclude_unset=True)
@@ -361,6 +398,12 @@ def update_settings(
                 status_code=409,
                 detail="Draft schedule can only be changed before the draft opens.",
             )
+        try:
+            validate_draft_scheduled_at(
+                db, data.get("draft_scheduled_at"), league=league
+            )
+        except DomainError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
     if "pick_timer_seconds" in data and league.status == "complete":
         raise HTTPException(
             status_code=409,
@@ -490,6 +533,9 @@ def update_settings(
                     provider=item.get("provider") or "football-data.org",
                     competition_code=code,
                     season_year=int(item["season_year"]),
+                    competition_type=_competition_type_from_provider(
+                        provider, code, int(item["season_year"])
+                    ),
                 )
                 db.add(pool)
                 keys_in_use.add(key)
@@ -551,7 +597,9 @@ def update_settings(
                         detail="Roster slots can only be changed before the draft opens.",
                     )
 
+            competition_identity_changed = False
             if "provider" in item and item["provider"] is not None:
+                competition_identity_changed = item["provider"] != pool.provider
                 pool.provider = item["provider"]
             if "competition_code" in item and item["competition_code"] is not None:
                 new_code = item["competition_code"]
@@ -564,9 +612,27 @@ def update_settings(
                 if old_code:
                     codes_in_use.discard(old_code)
                 pool.competition_code = new_code
+                competition_identity_changed = competition_identity_changed or new_code != old_code
                 codes_in_use.add(new_code)
             if "season_year" in item and item["season_year"] is not None:
-                pool.season_year = int(item["season_year"])
+                new_season_year = int(item["season_year"])
+                competition_identity_changed = (
+                    competition_identity_changed
+                    or new_season_year != int(pool.season_year or 0)
+                )
+                pool.season_year = new_season_year
+            if (
+                competition_identity_changed
+                and pool.competition_code
+                and pool.season_year is not None
+            ):
+                resolved_type = _competition_type_from_provider(
+                    provider, pool.competition_code, int(pool.season_year)
+                )
+                # Keep the previous type on transient provider failures so period
+                # labels are not wiped to round-style defaults until bootstrap.
+                if resolved_type is not None:
+                    pool.competition_type = resolved_type
             if "slot_count" in item and item["slot_count"] is not None:
                 new_slots = int(item["slot_count"])
                 team_count = len(

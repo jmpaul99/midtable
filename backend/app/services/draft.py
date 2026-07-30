@@ -6,8 +6,9 @@ import logging
 import random
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from typing import Literal
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -18,10 +19,13 @@ from app.models import (
     League,
     LeagueMember,
     PoolTeam,
+    RankingList,
     RosterEntry,
+    StandingsSnapshotRow,
     Team,
     TeamPool,
 )
+from app.services.competitions import resolve_domestic_tiers
 from app.services.errors import (
     ConflictError,
     DomainError,
@@ -29,9 +33,28 @@ from app.services.errors import (
     NotFoundError,
 )
 from app.logging_config import log_id
+from app.services.ranking_catalog import freeze_catalog_for_league_lock, ranks_for_league
 from app.services.readiness import evaluate_readiness
+from app.services.scoring import RankedTeam, UpsetRules
+from app.services.standings import (
+    previous_final_snapshot_for_competition,
+    zeroed_opener_snapshot_for_competition,
+)
 
 logger = logging.getLogger(__name__)
+
+AutopickMode = Literal["ranking", "table", "random"]
+
+# Ranking/table order is stable for an open draft (freeze snapshot). Cache until
+# open/reset — not a short TTL — so hour-long drafts do not rebuild.
+_draft_order_cache: dict[int, dict[tuple[int, int], int]] = {}
+
+
+def invalidate_draft_order_cache(league_id: int | None = None) -> None:
+    if league_id is None:
+        _draft_order_cache.clear()
+    else:
+        _draft_order_cache.pop(league_id, None)
 
 
 @dataclass(frozen=True)
@@ -40,6 +63,13 @@ class OnClockInfo:
     round_number: int
     member_id: int
     member_public_id: str
+
+
+@dataclass(frozen=True)
+class AutopickSelection:
+    mode: AutopickMode
+    team: Team | None
+    pool: TeamPool | None
 
 
 def ordered_members(members: list[LeagueMember]) -> list[LeagueMember]:
@@ -78,13 +108,34 @@ def roster_slot_counts(league: League) -> dict[str, int]:
 
 
 def member_pool_filled(db: Session, member_id: int, pool_id: int, slot_count: int) -> bool:
-    count = db.scalars(
-        select(RosterEntry).where(
+    count = db.scalar(
+        select(func.count())
+        .select_from(RosterEntry)
+        .where(
             RosterEntry.member_id == member_id,
             RosterEntry.pool_id == pool_id,
         )
+    )
+    return int(count or 0) >= slot_count
+
+
+def _roster_fill_counts(
+    db: Session, *, league_id: int
+) -> dict[tuple[int, int], int]:
+    """Map (member_id, pool_id) → roster entry count for one league."""
+    rows = db.execute(
+        select(RosterEntry.member_id, RosterEntry.pool_id, func.count())
+        .where(RosterEntry.league_id == league_id)
+        .group_by(RosterEntry.member_id, RosterEntry.pool_id)
     ).all()
-    return len(count) >= slot_count
+    return {(int(member_id), int(pool_id)): int(n) for member_id, pool_id, n in rows}
+
+
+def _cached_ranks_for_league(
+    db: Session, league: League, upset: UpsetRules
+) -> dict[int, RankedTeam] | None:
+    """Ranks come from freeze/TeamRanking rows — cheap enough to read each call."""
+    return ranks_for_league(db, league, upset)
 
 
 def find_idempotent_pick(
@@ -157,6 +208,14 @@ def peek_on_clock_member(
     pools: list[TeamPool],
 ) -> tuple[LeagueMember, int] | None:
     """Return (on-clock manager, round) with open slots without mutating pick number."""
+    fills = _roster_fill_counts(db, league_id=league.id)
+
+    def has_open(member_id: int) -> bool:
+        for pool in pools:
+            if fills.get((member_id, pool.id), 0) < int(pool.slot_count):
+                return True
+        return False
+
     safety = max(1, len(ordered) * max(1, sum(p.slot_count for p in pools)) + 1)
     pick_number = state.current_pick_number
     for _ in range(safety):
@@ -165,12 +224,317 @@ def peek_on_clock_member(
             ordered=ordered,
             pick_number=pick_number,
         )
-        if _member_has_open_draft_slots(db, expected.id, pools):
+        if has_open(expected.id):
             return expected, round_number
         pick_number += 1
-        if all(not _member_has_open_draft_slots(db, m.id, pools) for m in ordered):
+        if all(not has_open(m.id) for m in ordered):
             return None
     return None
+
+
+def _available_candidates(
+    db: Session,
+    *,
+    league: League,
+    member: LeagueMember,
+    pools: list[TeamPool],
+) -> list[tuple[Team, TeamPool]]:
+    drafted_ids = set(
+        db.scalars(
+            select(RosterEntry.team_id).where(RosterEntry.league_id == league.id)
+        ).all()
+    )
+    fills = _roster_fill_counts(db, league_id=league.id)
+    open_pools = [
+        pool
+        for pool in pools
+        if fills.get((member.id, pool.id), 0) < int(pool.slot_count)
+    ]
+    if not open_pools:
+        return []
+
+    pool_by_id = {p.id: p for p in open_pools}
+    rows = db.execute(
+        select(Team, PoolTeam.pool_id)
+        .join(PoolTeam, PoolTeam.team_id == Team.id)
+        .where(PoolTeam.pool_id.in_(pool_by_id.keys()))
+    ).all()
+    candidates: list[tuple[Team, TeamPool]] = []
+    for team, pool_id in rows:
+        if team.id in drafted_ids:
+            continue
+        pool = pool_by_id.get(int(pool_id))
+        if pool is not None:
+            candidates.append((team, pool))
+    return candidates
+
+
+@dataclass(frozen=True)
+class CompetitionTableState:
+    """Previous-final rows + zeroed-opener squad for one competition season."""
+
+    previous_rows: dict[int, StandingsSnapshotRow]
+    # None when the zeroed opener is missing; set difference is then unavailable.
+    opener_ids: frozenset[int] | None
+
+    @property
+    def departed_ids(self) -> frozenset[int]:
+        """In previous-final but not in zeroed opener (left the competition)."""
+        if self.opener_ids is None:
+            return frozenset()
+        return frozenset(self.previous_rows) - self.opener_ids
+
+    @property
+    def arrival_ids(self) -> frozenset[int]:
+        """In zeroed opener but not in previous-final (new to the competition)."""
+        if self.opener_ids is None:
+            return frozenset()
+        return self.opener_ids - frozenset(self.previous_rows)
+
+
+def _table_row_lookup(
+    db: Session, pools: list[TeamPool]
+) -> dict[tuple[str, int], CompetitionTableState]:
+    """Load previous-final + zeroed opener per competition for draft ordering.
+
+    Promotion/relegation is inferred from set difference between those snapshots
+    (not from finishing positions alone), since playoffs/etc. vary by league.
+
+    Keys are ``(competition_code, season_year)`` so pools that share a code
+    across seasons do not overwrite each other.
+    """
+    by_comp: dict[tuple[str, int], CompetitionTableState] = {}
+    seen_keys: set[tuple[str, str, int]] = set()
+    for pool in pools:
+        if not pool.competition_code or not pool.season_year:
+            continue
+        key = (
+            pool.provider or "football-data.org",
+            pool.competition_code.upper(),
+            int(pool.season_year),
+        )
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        prev = previous_final_snapshot_for_competition(
+            db,
+            provider=key[0],
+            competition_code=key[1],
+            season_year=key[2],
+        )
+        previous_rows: dict[int, StandingsSnapshotRow] = {}
+        if prev is not None:
+            previous_rows = {row.team_id: row for row in prev.rows}
+
+        opener = zeroed_opener_snapshot_for_competition(
+            db,
+            provider=key[0],
+            competition_code=key[1],
+            season_year=key[2],
+        )
+        opener_ids: frozenset[int] | None = None
+        if opener is not None:
+            opener_ids = frozenset(row.team_id for row in opener.rows)
+
+        if not previous_rows and opener_ids is None:
+            continue
+        by_comp[(key[1], key[2])] = CompetitionTableState(
+            previous_rows=previous_rows,
+            opener_ids=opener_ids,
+        )
+    return by_comp
+
+
+def sort_candidates_for_autopick(
+    db: Session,
+    *,
+    league: League,
+    candidates: list[tuple[Team, TeamPool]],
+) -> tuple[list[tuple[Team, TeamPool]], AutopickMode]:
+    """Sort candidates best-first using the league's rank source.
+
+    When no ranking/table data is available, sorts alphabetically (stable UI for
+    random autopick mode).
+
+    Table mode (per domestic tier, best first):
+    1. Relegated into the pool (left a better-tier competition's opener)
+    2. Stayers (in both previous-final and zeroed opener), by previous-final rank
+    3. New to the competition (in opener only / not in previous-final)
+    """
+    if not candidates:
+        return [], "random"
+
+    upset = UpsetRules.from_config(league.upset_rules)
+    if upset.rank_source == "fixed_ranking_at_event_start":
+        ranks = _cached_ranks_for_league(db, league, upset)
+        if ranks:
+            def fixed_key(item: tuple[Team, TeamPool]) -> tuple:
+                team, _ = item
+                ranked = team.id in ranks
+                rank = ranks[team.id].rank if ranked else 0
+                return (0 if ranked else 1, rank, (team.name or "").lower())
+
+            return sorted(candidates, key=fixed_key), "ranking"
+
+    if upset.rank_source == "league_table_at_kickoff":
+        # Load every league pool so higher-tier departures are visible even when
+        # the current pick's open slots are only in a lower tier.
+        pools_for_lookup = list({p.id: p for _, p in candidates}.values())
+        league_id = getattr(league, "id", None)
+        if league_id is not None:
+            fetched = db.scalars(
+                select(TeamPool).where(TeamPool.league_id == league_id)
+            ).all()
+            # Real sessions return a list; unconfigured mocks may not — keep candidates.
+            if isinstance(fetched, (list, tuple)) and fetched:
+                pools_for_lookup = list(fetched)
+        by_comp = _table_row_lookup(db, pools_for_lookup)
+        if any(s.previous_rows for s in by_comp.values()):
+            tier_by_code = resolve_domestic_tiers(db)
+
+            def table_key(item: tuple[Team, TeamPool]) -> tuple:
+                team, pool = item
+                code = (pool.competition_code or "").upper()
+                season = int(pool.season_year) if pool.season_year else 0
+                tier = tier_by_code.get(code)
+                tier_key = 999 if tier is None else tier
+                name = (team.name or "").lower()
+                state = by_comp.get((code, season))
+                prev = (
+                    state.previous_rows.get(team.id) if state is not None else None
+                )
+                in_opener = (
+                    None
+                    if state is None or state.opener_ids is None
+                    else team.id in state.opener_ids
+                )
+
+                # Stayer: finished last season here and confirmed in the opener.
+                # Unknown opener (None) must not count as a stayer.
+                if prev is not None and in_opener is True:
+                    return (
+                        0,
+                        tier_key,
+                        1,
+                        int(prev.rank),
+                        -int(prev.points),
+                        -int(prev.goal_difference),
+                        -int(prev.goals_for),
+                        name,
+                    )
+
+                # Relegated in: new to this competition, left a better-tier one.
+                best: StandingsSnapshotRow | None = None
+                best_other_tier: int | None = None
+                for (other_code, other_year), other_state in by_comp.items():
+                    if (
+                        other_year != season
+                        or other_code == code
+                        or team.id not in other_state.departed_ids
+                    ):
+                        continue
+                    row = other_state.previous_rows.get(team.id)
+                    if row is None:
+                        continue
+                    other_tier = tier_by_code.get(other_code)
+                    if tier is None or other_tier is None or other_tier >= tier:
+                        continue
+                    if (
+                        best is None
+                        or other_tier < (best_other_tier or 999)
+                        or (
+                            other_tier == best_other_tier
+                            and int(row.rank) < int(best.rank)
+                        )
+                    ):
+                        best = row
+                        best_other_tier = other_tier
+                if best is not None:
+                    return (
+                        0,
+                        tier_key,
+                        0,
+                        int(best.rank),
+                        -int(best.points),
+                        -int(best.goal_difference),
+                        -int(best.goals_for),
+                        name,
+                    )
+
+                # Promoted / newly added / opener unknown.
+                return (0, tier_key, 2, 0, 0, 0, 0, name)
+
+            return sorted(candidates, key=table_key), "table"
+
+    return (
+        sorted(candidates, key=lambda item: (item[0].name or "").lower()),
+        "random",
+    )
+
+
+def select_autopick_team(
+    db: Session,
+    *,
+    league: League,
+    member: LeagueMember,
+    pools: list[TeamPool],
+    for_preview: bool = False,
+) -> AutopickSelection | None:
+    """Choose autopick team using fixed rankings or table baseline; else random."""
+    candidates = _available_candidates(db, league=league, member=member, pools=pools)
+    if not candidates:
+        return None
+
+    ordered, mode = sort_candidates_for_autopick(
+        db, league=league, candidates=candidates
+    )
+    if mode == "random":
+        if for_preview:
+            return AutopickSelection(mode="random", team=None, pool=None)
+        team, pool = random.choice(candidates)
+        return AutopickSelection(mode="random", team=team, pool=pool)
+
+    team, pool = ordered[0]
+    return AutopickSelection(mode=mode, team=team, pool=pool)
+
+
+def draft_order_by_team_pool(
+    db: Session,
+    *,
+    league: League,
+) -> dict[tuple[int, int], int]:
+    """Map (team_id, pool_id) → 0-based autopick display order for the league.
+
+    Ranking/table order is stable for a given snapshot and is cached until
+    open/reset. Alphabetical (random-mode) fallbacks are never cached so a
+    later freeze or table baseline can still produce the real order.
+    """
+    cached = _draft_order_cache.get(league.id)
+    if cached is not None:
+        return cached
+
+    pools = list(db.scalars(select(TeamPool).where(TeamPool.league_id == league.id)).all())
+    if not pools:
+        return {}
+    pool_by_id = {p.id: p for p in pools}
+    rows = db.execute(
+        select(Team, PoolTeam.pool_id)
+        .join(PoolTeam, PoolTeam.team_id == Team.id)
+        .where(PoolTeam.pool_id.in_(pool_by_id.keys()))
+    ).all()
+    candidates: list[tuple[Team, TeamPool]] = []
+    for team, pool_id in rows:
+        pool = pool_by_id.get(int(pool_id))
+        if pool is not None:
+            candidates.append((team, pool))
+    ordered, mode = sort_candidates_for_autopick(db, league=league, candidates=candidates)
+    result = {
+        (team.id, pool.id): index
+        for index, (team, pool) in enumerate(ordered)
+    }
+    if mode != "random":
+        _draft_order_cache[league.id] = result
+    return result
 
 
 def _random_available_team(
@@ -180,25 +544,13 @@ def _random_available_team(
     member: LeagueMember,
     pools: list[TeamPool],
 ) -> tuple[Team, TeamPool] | None:
-    drafted_ids = {
-        e.team_id
-        for e in db.scalars(
-            select(RosterEntry).where(RosterEntry.league_id == league.id)
-        ).all()
-    }
-    candidates: list[tuple[Team, TeamPool]] = []
-    for pool in pools:
-        if member_pool_filled(db, member.id, pool.id, pool.slot_count):
-            continue
-        for pt in db.scalars(select(PoolTeam).where(PoolTeam.pool_id == pool.id)).all():
-            if pt.team_id in drafted_ids:
-                continue
-            team = db.get(Team, pt.team_id)
-            if team is not None:
-                candidates.append((team, pool))
-    if not candidates:
+    """Backward-compatible helper; prefer ``select_autopick_team``."""
+    selection = select_autopick_team(
+        db, league=league, member=member, pools=pools, for_preview=False
+    )
+    if selection is None or selection.team is None or selection.pool is None:
         return None
-    return random.choice(candidates)
+    return selection.team, selection.pool
 
 
 def make_pick(
@@ -420,6 +772,7 @@ def reset_draft(db: Session, league: League) -> DraftState:
     league.status = "pre_draft"
     # Clear schedule so a past draft_scheduled_at cannot auto-open again immediately.
     league.draft_scheduled_at = None
+    invalidate_draft_order_cache(league.id)
     db.flush()
     logger.info("draft reset league_id=%s", log_id(league))
     return state
@@ -532,6 +885,37 @@ def reassign_roster_entry(
     return entry
 
 
+def ensure_draft_ranking_freeze(db: Session, league: League) -> bool:
+    """Ensure fixed-rank leagues have a freeze snapshot for draft/autopick.
+
+    Returns True when a freeze was newly attached (caller should commit).
+    Idempotent if already frozen/locked.
+    """
+    rules = UpsetRules.from_config(league.upset_rules)
+    if rules.rank_source != "fixed_ranking_at_event_start" or not rules.ranking_list_key:
+        return False
+    key = rules.ranking_list_key
+    ranking_list = db.scalars(
+        select(RankingList).where(
+            RankingList.league_id == league.id,
+            RankingList.key == key,
+        )
+    ).first()
+    before = ranking_list.freeze_id if ranking_list is not None else None
+    if before is not None:
+        return False
+    freeze_catalog_for_league_lock(db, league, key)
+    invalidate_draft_order_cache(league.id)
+    ranking_list = db.scalars(
+        select(RankingList).where(
+            RankingList.league_id == league.id,
+            RankingList.key == key,
+        )
+    ).first()
+    after = ranking_list.freeze_id if ranking_list is not None else None
+    return after is not None
+
+
 def open_draft(db: Session, league: League) -> DraftState:
     if league.status not in {"pre_draft", "drafting"}:
         raise ConflictError(f"Cannot open draft from league status {league.status}")
@@ -551,6 +935,9 @@ def open_draft(db: Session, league: League) -> DraftState:
         state.status = "open"
     league.status = "drafting"
     apply_pick_deadline(state, league)
+    # Snap fixed rankings once so autopick/UI read freeze rows, not live catalog match.
+    ensure_draft_ranking_freeze(db, league)
+    invalidate_draft_order_cache(league.id)
     db.flush()
     logger.info(
         "draft opened league_id=%s managers=%s pick_timer_seconds=%s",
@@ -566,6 +953,15 @@ def try_auto_open_if_scheduled(db: Session, league: League) -> bool:
     if league.draft_scheduled_at is None or league.status != "pre_draft":
         return False
     if _aware(league.draft_scheduled_at) > datetime.now(UTC):
+        return False
+    from app.services.draft_schedule import clear_draft_schedule_if_after_first_kickoff
+
+    if clear_draft_schedule_if_after_first_kickoff(db, league):
+        db.flush()
+        logger.info(
+            "draft auto-open blocked league_id=%s reason=after_first_kickoff",
+            log_id(league),
+        )
         return False
     state = db.scalars(select(DraftState).where(DraftState.league_id == league.id)).first()
     if state is not None and state.status != "pending":
@@ -586,13 +982,20 @@ def try_auto_open_if_scheduled(db: Session, league: League) -> bool:
 def try_auto_pick_if_expired(db: Session, league: League) -> str:
     """Auto-pick when the pick clock has expired.
 
+    Locks ``draft_state`` first so concurrent GET /draft polls (and cron) cannot
+    race: only one writer selects+picks; waiters re-read and no-op once the
+    deadline has advanced. Without this lock, failed races used to rewrite the
+    *next* pick's deadline and look like broken live updates.
+
     Returns:
       "picked" — a pick was made
       "completed" — draft marked complete
       "deferred" — could not pick; deadline pushed forward
       "noop" — nothing to do
     """
-    state = db.scalars(select(DraftState).where(DraftState.league_id == league.id)).first()
+    state = db.scalars(
+        select(DraftState).where(DraftState.league_id == league.id).with_for_update()
+    ).first()
     if state is None or state.status != "open" or state.pick_deadline_at is None:
         return "noop"
     if _aware(state.pick_deadline_at) > datetime.now(UTC):
@@ -630,8 +1033,10 @@ def try_auto_pick_if_expired(db: Session, league: League) -> str:
         return "deferred"
 
     on_clock, _ = peeked
-    picked = _random_available_team(db, league=league, member=on_clock, pools=pools)
-    if picked is None:
+    selection = select_autopick_team(
+        db, league=league, member=on_clock, pools=pools, for_preview=False
+    )
+    if selection is None or selection.team is None or selection.pool is None:
         logger.warning(
             "draft auto-pick no available teams league_id=%s member_id=%s",
             log_id(league),
@@ -641,7 +1046,7 @@ def try_auto_pick_if_expired(db: Session, league: League) -> str:
         apply_pick_deadline(state, league)
         return "deferred"
 
-    team, pool = picked
+    team, pool = selection.team, selection.pool
     try:
         make_pick(
             db,
@@ -658,16 +1063,27 @@ def try_auto_pick_if_expired(db: Session, league: League) -> str:
             log_id(league),
             getattr(exc, "message", str(exc)),
         )
-        # Push the clock forward so failed picks do not leave an expired deadline.
-        apply_pick_deadline(state, league)
-        return "deferred"
+        # Only push the clock when it is still expired. Never rewrite a fresh
+        # deadline another request already set for the next pick.
+        db.refresh(state)
+        if (
+            state.status == "open"
+            and state.pick_deadline_at is not None
+            and _aware(state.pick_deadline_at) <= datetime.now(UTC)
+        ):
+            apply_pick_deadline(state, league)
+            return "deferred"
+        return "noop"
 
 
 def enforce_league_draft_timers(db: Session, league: League) -> dict[str, int | bool]:
     """Auto-open if scheduled and catch up expired pick clocks for one league."""
     opened = try_auto_open_if_scheduled(db, league)
+    frozen = False
+    if league.status == "drafting":
+        frozen = ensure_draft_ranking_freeze(db, league)
     auto_picks = 0
-    changed = bool(opened)
+    changed = bool(opened or frozen)
     for _ in range(50):
         result = try_auto_pick_if_expired(db, league)
         if result == "noop":
@@ -678,7 +1094,12 @@ def enforce_league_draft_timers(db: Session, league: League) -> dict[str, int | 
             continue
         # completed or deferred — stop the catch-up loop
         break
-    return {"opened": opened, "auto_picks": auto_picks, "changed": changed}
+    return {
+        "opened": opened,
+        "frozen": frozen,
+        "auto_picks": auto_picks,
+        "changed": changed,
+    }
 
 
 def run_draft_maintenance(db: Session) -> dict:

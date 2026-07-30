@@ -2,6 +2,7 @@
 
 import { FormEvent, useState } from "react";
 import { formatDate } from "@/lib/format";
+import { humanizeKey } from "@/components/settings/types";
 import type { LatestLeagueJobs, League, LeagueJob, Readiness } from "@/lib/types";
 import { ErrorState, Status, StatusBanner } from "@/components/ui/State";
 import { IconButton } from "@/components/ui/IconButton";
@@ -162,7 +163,7 @@ export function AdminPanel({
           teamCounts={teamCounts}
           bonusTypeOptions={bonusTypes.map((b) => ({
             value: b.key,
-            label: b.label || b.key,
+            label: (b.label || "").trim() || humanizeKey(b.key),
           }))}
           invites={invites}
           joinLink={joinLink}

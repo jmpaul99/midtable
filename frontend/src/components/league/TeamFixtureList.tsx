@@ -1,7 +1,9 @@
 "use client";
 
-import { formatDate, formatNumber, formatTeamOrientedScoreline } from "@/lib/format";
-import type { BonusAward, ScoringEventMatch, TeamFixture, UUID } from "@/lib/types";
+import { formatDate, formatNumber, formatTeamOrientedScoreline, formatPeriodShort } from "@/lib/format";
+import { scoringEventLabel } from "@/lib/scoringLabels";
+import { humanizeKey } from "@/components/settings/types";
+import type { BonusAward, MatchOwnerInfo, ScoringEventMatch, TeamFixture, UUID } from "@/lib/types";
 import { matchOwnerLabel } from "@/lib/types";
 import { Empty, Loading, Status } from "@/components/ui/State";
 import { Muted } from "@/components/ui/Card";
@@ -10,29 +12,32 @@ import { TeamLink } from "./TeamLink";
 import { ManagerLink } from "./ManagerLink";
 import { MatchRowShell } from "./MatchRowShell";
 
-const EVENT_LABELS: Record<string, string> = {
-  win: "Win",
-  win_et: "Win (ET)",
-  win_pk: "Win (PK)",
-  draw: "Draw",
-  loss: "Loss",
-  loss_et: "Loss (ET)",
-  loss_pk: "Loss (PK)",
-  minor_upset: "Minor upset",
-  major_upset: "Major upset",
-  major_upset_draw: "Major upset draw",
-};
-
-function eventLabel(key: string, labels?: Record<string, string>) {
-  return labels?.[key] || EVENT_LABELS[key] || key.replaceAll("_", " ");
-}
-
 function focusTeamId(m: TeamFixture): UUID {
   return m.is_home ? m.home_team_id : m.away_team_id;
 }
 
 function focusTeamName(m: TeamFixture): string {
   return m.is_home ? m.home_team_name : m.away_team_name;
+}
+
+function OwnerLink({
+  leagueId,
+  owner,
+}: {
+  leagueId: UUID;
+  owner?: MatchOwnerInfo | null;
+}) {
+  const name = matchOwnerLabel(owner);
+  if (!name) return null;
+  return (
+    <ManagerLink
+      leagueId={leagueId}
+      managerId={owner?.member_id}
+      className="font-semibold text-ink hover:text-brand"
+    >
+      {name}
+    </ManagerLink>
+  );
 }
 
 export function TeamFixtureList({
@@ -49,6 +54,7 @@ export function TeamFixtureList({
   hasMore,
   loadingMore,
   onShowMore,
+  competitionType = null,
 }: {
   leagueId: UUID;
   fixtures: TeamFixture[];
@@ -64,6 +70,7 @@ export function TeamFixtureList({
   hasMore?: boolean;
   loadingMore?: boolean;
   onShowMore?: () => void;
+  competitionType?: string | null;
 }) {
   if (loading) return <Loading label="Loading matches" />;
   if (!fixtures.length) return <Empty title={empty} />;
@@ -88,13 +95,13 @@ export function TeamFixtureList({
           const parts: { label: string; points: number }[] = [];
           for (const e of matchEvents) {
             parts.push({
-              label: eventLabel(e.event_type, eventTypeLabels),
+              label: scoringEventLabel(e.event_type, eventTypeLabels),
               points: e.points,
             });
           }
           for (const b of matchBonuses) {
             parts.push({
-              label: b.bonus_type_label || b.bonus_type,
+              label: b.bonus_type_label || humanizeKey(b.bonus_type),
               points: b.points,
             });
           }
@@ -105,8 +112,16 @@ export function TeamFixtureList({
               : null;
           const scoreline = formatTeamOrientedScoreline(m);
           const showBreakdown = showPoints && parts.length > 1;
-          const ownerName = matchOwnerLabel(m.opponent_owner);
+          const opponentOwnerName = matchOwnerLabel(m.opponent_owner);
+          const focusOwner = m.is_home ? m.home_owner : m.away_owner;
+          const otherOwner = m.is_home ? m.away_owner : m.home_owner;
+          const focusOwnerName = matchOwnerLabel(focusOwner);
+          const otherOwnerName = matchOwnerLabel(otherOwner);
           const matchHref = `/leagues/${leagueId}/matches/${m.id}`;
+          const periodChip =
+            m.scheduled_matchweek != null
+              ? formatPeriodShort(m.scheduled_matchweek, competitionType)
+              : null;
 
           return (
             <li key={`${m.id}-${focusId}`}>
@@ -116,16 +131,11 @@ export function TeamFixtureList({
                     <Muted className="text-[11px] leading-snug sm:text-xs">
                       <span className="block sm:inline">{formatDate(m.kickoff_at)}</span>
                       <span className="hidden sm:inline">
-                        {m.scheduled_matchweek != null ? ` · MW${m.scheduled_matchweek}` : ""}
+                        {periodChip ? ` · ${periodChip}` : ""}
                         {m.is_home ? " · Home" : " · Away"}
                       </span>
                       <span className="mt-0.5 block sm:hidden">
-                        {[
-                          m.scheduled_matchweek != null ? `MW${m.scheduled_matchweek}` : null,
-                          m.is_home ? "Home" : "Away",
-                        ]
-                          .filter(Boolean)
-                          .join(" · ")}
+                        {[periodChip, m.is_home ? "Home" : "Away"].filter(Boolean).join(" · ")}
                       </span>
                     </Muted>
                     <strong className="mt-1 block truncate text-sm leading-snug sm:text-base">
@@ -148,16 +158,28 @@ export function TeamFixtureList({
                         </>
                       )}
                     </strong>
-                    {ownerName && (
-                      <Muted className="mt-0.5 block truncate text-[11px] sm:text-xs">
-                        <ManagerLink
-                          leagueId={leagueId}
-                          managerId={m.opponent_owner?.member_id}
-                          className="font-semibold text-ink hover:text-brand"
-                        >
-                          {ownerName}
-                        </ManagerLink>
-                      </Muted>
+                    {showFocusClub ? (
+                      (focusOwnerName || otherOwnerName) && (
+                        <Muted className="mt-0.5 block truncate text-[11px] sm:text-xs">
+                          {focusOwnerName ? (
+                            <OwnerLink leagueId={leagueId} owner={focusOwner} />
+                          ) : (
+                            "—"
+                          )}
+                          {" vs "}
+                          {otherOwnerName ? (
+                            <OwnerLink leagueId={leagueId} owner={otherOwner} />
+                          ) : (
+                            "—"
+                          )}
+                        </Muted>
+                      )
+                    ) : (
+                      opponentOwnerName && (
+                        <Muted className="mt-0.5 block truncate text-[11px] sm:text-xs">
+                          <OwnerLink leagueId={leagueId} owner={m.opponent_owner} />
+                        </Muted>
+                      )
                     )}
                     {showBreakdown && (
                       <Muted className="mt-1 block text-[11px] tabular-nums sm:text-xs">

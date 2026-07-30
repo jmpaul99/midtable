@@ -66,7 +66,7 @@ function NavChrome({ loginHref }: { loginHref: string }) {
           ? [
               {
                 href: "/admin/rankings",
-                label: "Ranking rematch",
+                label: "Platform admin",
                 active: pathname.startsWith("/admin/rankings"),
               },
             ]

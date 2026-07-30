@@ -41,6 +41,7 @@ class PoolResponse(IdSchema):
     provider: str
     competition_code: str | None = None
     season_year: int | None = None
+    competition_type: str | None = None
     tie_break_order: list[Any] = Field(default_factory=list)
 
 
@@ -123,6 +124,43 @@ class LeagueDetailResponse(LeagueResponse):
     phases: list[PhaseResponse] = Field(default_factory=list)
     bonus_type_keys: list[str] = Field(default_factory=list)
     provider_params: dict[str, Any] = Field(default_factory=dict)
+    # Earliest kickoff across scoring competitions; used to cap draft schedule.
+    first_match_kickoff_at: datetime | None = None
+
+
+class CompetitionKickoffRef(BaseModel):
+    provider: str = Field(default="football-data.org", min_length=1, max_length=80)
+    competition_code: str = Field(min_length=1, max_length=16)
+    season_year: int = Field(ge=2000, le=2100)
+
+    @field_validator("provider")
+    @classmethod
+    def trim_provider(cls, value: str) -> str:
+        trimmed = value.strip()
+        if not trimmed:
+            raise ValueError("Value cannot be empty")
+        return trimmed
+
+    @field_validator("competition_code")
+    @classmethod
+    def normalize_code(cls, value: str) -> str:
+        normalized = normalize_competition_code(value)
+        if normalized is None:
+            raise ValueError("Value cannot be empty")
+        if not is_allowed_competition_code(normalized):
+            raise ValueError(
+                f"Unsupported competition code: {normalized}. "
+                "Choose a competition from the free-plan list."
+            )
+        return normalized
+
+
+class EarliestKickoffRequest(BaseModel):
+    competitions: list[CompetitionKickoffRef] = Field(min_length=1)
+
+
+class EarliestKickoffResponse(BaseModel):
+    kickoff_at: datetime | None = None
 
 
 class InviteCreate(BaseModel):
@@ -325,6 +363,7 @@ class MatchOwnerInfo(BaseModel):
     display_name: str | None = None
     team_name: str | None = None
     acquired_via: str | None = None
+    draft_pick_number: int | None = None
 
 
 class PoolTeamResponse(IdSchema):
@@ -334,6 +373,8 @@ class PoolTeamResponse(IdSchema):
     drafted: bool = False
     available: bool = True
     current_owner: MatchOwnerInfo | None = None
+    # 0 = highest autopick priority; comparable across competitions in the league.
+    draft_order: int | None = None
 
 
 class RosterRowResponse(BaseModel):

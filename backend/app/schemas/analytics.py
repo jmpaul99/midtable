@@ -7,6 +7,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
+from app.schemas.leagues import MatchOwnerInfo
+
 
 class StandingsPhaseMeta(BaseModel):
     key: str
@@ -52,7 +54,11 @@ class PointsPerGameRow(BaseModel):
 class MatchweekStatRow(BaseModel):
     member_id: UUID
     display_name: str
-    scheduled_matchweek: int
+    scheduled_matchweek: int | None = None
+    period_key: str | None = None
+    label: str | None = None
+    stage: str | None = None
+    competition_code: str | None = None
     points: float
 
 
@@ -104,11 +110,13 @@ class MemberHighlightsResponse(BaseModel):
     worst_matchweek: dict[str, Any] | None = None
     biggest_upset: dict[str, Any] | None = None
     top_club: dict[str, Any] | None = None
+    period_kind: str | None = None
 
 
 class MatchEventRow(BaseModel):
     id: UUID
     team_id: UUID | None = None
+    team_name: str | None = None
     event_type: str
     points: float
     metadata: dict[str, Any] | None = None
@@ -117,9 +125,20 @@ class MatchEventRow(BaseModel):
 class MatchEventsResponse(BaseModel):
     match_id: UUID
     kickoff_at: str
+    status: str
+    scheduled_matchweek: int | None = None
+    duration: str | None = None
+    stage: str | None = None
+    pool_label: str | None = None
     home_team_id: UUID
     away_team_id: UUID
+    home_team_name: str
+    away_team_name: str
     home_goals: int | None = None
     away_goals: int | None = None
+    home_points: float | None = None
+    away_points: float | None = None
+    home_owner: MatchOwnerInfo | None = None
+    away_owner: MatchOwnerInfo | None = None
     snapshot_id: UUID | None = None
     events: list[MatchEventRow] = Field(default_factory=list)

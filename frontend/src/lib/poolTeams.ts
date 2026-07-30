@@ -1,4 +1,5 @@
 import { api } from "@/lib/api";
+import { humanizeKey } from "@/components/settings/types";
 import type { PoolTeam, UUID } from "@/lib/types";
 
 export type AnnotatedPoolTeam = PoolTeam & {
@@ -37,7 +38,8 @@ export async function fetchPoolTeams(
           (t): AnnotatedPoolTeam => ({
             ...t,
             pool_id: p.id,
-            pool_label: p.label || p.key || "",
+            pool_label:
+              (p.label || "").trim() || (p.key ? humanizeKey(p.key) : ""),
           }),
         );
       } catch {

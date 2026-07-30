@@ -40,7 +40,7 @@ _STAGE_POINT_KEYS = ("win", "draw", "loss", "win_et", "loss_et", "win_pk", "loss
 
 @dataclass(frozen=True)
 class StageResultPoints:
-    """Sparse per-stage overrides; None means use Default for that field."""
+    """Sparse per-stage overrides; None means inherit (see points_for_result)."""
 
     win: Decimal | None = None
     draw: Decimal | None = None
@@ -367,8 +367,8 @@ def points_for_result(
 ) -> Decimal:
     """Resolve fantasy points for a result, optionally scoped to a match stage.
 
-    Stage sparse overrides win when set; any empty stage field always uses Default
-    for that same result type (Default ET/PK still inherit Default win/loss).
+    Stage sparse overrides win when set. Empty stage ET/PK inherit that stage's
+    win/loss when set, then Default (Default ET/PK still inherit Default win/loss).
     """
     if stage:
         stage_pts = points.by_stage.get(stage)
@@ -376,6 +376,13 @@ def points_for_result(
             stage_val = stage_pts.get(result.value)
             if stage_val is not None:
                 return stage_val
+            # Unset stage ET/PK inherit stage win/loss before falling to Default.
+            if result is Result.WIN_ET or result is Result.WIN_PK:
+                if stage_pts.win is not None:
+                    return stage_pts.win
+            elif result is Result.LOSS_ET or result is Result.LOSS_PK:
+                if stage_pts.loss is not None:
+                    return stage_pts.loss
     return _default_points_for_result(result, points)
 
 

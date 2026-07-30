@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from datetime import UTC, datetime, timedelta
 from email.utils import parsedate_to_datetime
 from typing import Any
@@ -12,11 +13,15 @@ import httpx
 from app.providers.base import (
     CompetitionSeasonInfo,
     ProviderMatch,
+    ProviderStandingRow,
     ProviderTeam,
     RateLimitInfo,
 )
+from app.services.period_labels import normalize_competition_type
 
 logger = logging.getLogger(__name__)
+
+_KNOWN_TYPES = frozenset({"LEAGUE", "LEAGUE_CUP", "CUP", "PLAYOFFS"})
 
 
 class FootballDataError(RuntimeError):
@@ -30,6 +35,64 @@ class FootballDataError(RuntimeError):
         super().__init__(message)
         self.rate_limit = rate_limit or RateLimitInfo()
         self.rate_limited = rate_limited
+
+
+def rate_limit_wait_seconds(
+    rate: RateLimitInfo,
+    *,
+    hit_limit: bool = False,
+    low_budget_threshold: int = 2,
+    default_hit_limit_wait: int = 60,
+    default_low_budget_wait: int = 8,
+) -> int | None:
+    """Seconds to sleep before the next call, using response header info.
+
+    Prefers ``Retry-After``, then ``X-RequestCounter-Reset``, then defaults.
+    Returns ``None`` when no wait is needed.
+    """
+
+    def from_reset() -> int | None:
+        if rate.request_counter_reset is None:
+            return None
+        secs = (rate.request_counter_reset - datetime.now(UTC)).total_seconds()
+        return max(1, int(secs) + 1)
+
+    if hit_limit:
+        if rate.retry_after_seconds is not None:
+            return max(1, int(rate.retry_after_seconds))
+        reset_wait = from_reset()
+        if reset_wait is not None:
+            return reset_wait
+        return default_hit_limit_wait
+
+    if (
+        rate.requests_available_minute is not None
+        and rate.requests_available_minute <= low_budget_threshold
+    ):
+        if rate.retry_after_seconds is not None:
+            return max(1, int(rate.retry_after_seconds))
+        reset_wait = from_reset()
+        if reset_wait is not None:
+            return reset_wait
+        return default_low_budget_wait
+    return None
+
+
+def respect_rate_limit(rate: RateLimitInfo, *, hit_limit: bool = False) -> None:
+    """Block until football-data.org rate budget should allow another request."""
+    wait = rate_limit_wait_seconds(rate, hit_limit=hit_limit)
+    if wait is None:
+        return
+    logger.info(
+        "football-data.org waiting for rate budget wait_s=%s hit_limit=%s "
+        "available_minute=%s reset=%s retry_after=%s",
+        wait,
+        hit_limit,
+        rate.requests_available_minute,
+        rate.request_counter_reset,
+        rate.retry_after_seconds,
+    )
+    time.sleep(wait)
 
 
 class FootballDataProvider:
@@ -84,21 +147,30 @@ class FootballDataProvider:
         )
 
     def _get(self, path: str, params: dict[str, Any] | None = None) -> tuple[Any, RateLimitInfo]:
+        # Fail fast on 429 — do not sleep here. Request handlers map rate limits to
+        # ConflictError; background syncs wait/retry via respect_rate_limit.
         try:
             response = self._client.get(path, params=params)
         except httpx.HTTPError as exc:
-            logger.error("football-data.org request failed path=%s error=%s", path, exc)
-            raise FootballDataError(f"football-data.org request failed: {exc}") from exc
+            logger.error(
+                "football-data.org request failed path=%s error=%s", path, exc
+            )
+            raise FootballDataError(
+                f"football-data.org request failed: {exc}"
+            ) from exc
         rate = self.parse_rate_limit_headers(response.headers)
         if response.status_code == 429:
             logger.warning(
-                "football-data.org rate limited path=%s retry_after=%s available_minute=%s",
+                "football-data.org rate limited path=%s retry_after=%s "
+                "available_minute=%s reset=%s",
                 path,
                 rate.retry_after_seconds,
                 rate.requests_available_minute,
+                rate.request_counter_reset,
             )
             raise FootballDataError(
-                f"rate limit exceeded; retry after {rate.retry_after_seconds or 'unknown'}s",
+                f"rate limit exceeded; retry after "
+                f"{rate.retry_after_seconds or 'unknown'}s",
                 rate,
                 rate_limited=True,
             )
@@ -118,9 +190,11 @@ class FootballDataProvider:
             and rate.requests_available_minute <= 2
         ):
             logger.warning(
-                "football-data.org low rate budget path=%s available_minute=%s",
+                "football-data.org low rate budget path=%s available_minute=%s "
+                "reset=%s",
                 path,
                 rate.requests_available_minute,
+                rate.request_counter_reset,
             )
         return response.json(), rate
 
@@ -188,11 +262,123 @@ class FootballDataProvider:
             )
         return matches, rate
 
+    def list_standings(
+        self, competition_code: str, season_year: int
+    ) -> tuple[list[ProviderStandingRow], RateLimitInfo]:
+        payload, rate = self._get(
+            f"/competitions/{competition_code}/standings", {"season": season_year}
+        )
+        all_blocks = [
+            block
+            for block in (payload.get("standings") or [])
+            if isinstance(block, dict)
+        ]
+        total_blocks = [
+            block
+            for block in all_blocks
+            if str(block.get("type") or "").upper() == "TOTAL"
+        ]
+        overall = [
+            block for block in total_blocks if block.get("group") in (None, "")
+        ]
+        if overall:
+            # Domestic leagues: single overall TOTAL table.
+            table_blocks = [overall[0]]
+        elif total_blocks:
+            # Multi-group cups: merge every TOTAL group table.
+            table_blocks = total_blocks
+        else:
+            # No TOTAL blocks: merge remaining blocks so group-only payloads
+            # still include every team rather than the first block alone.
+            table_blocks = all_blocks
+
+        rows: list[ProviderStandingRow] = []
+        seen_team_ids: set[str] = set()
+        for chosen in table_blocks:
+            for item in chosen.get("table") or []:
+                if not isinstance(item, dict):
+                    continue
+                team = item.get("team") or {}
+                team_id = team.get("id")
+                if team_id is None:
+                    continue
+                external_id = str(team_id)
+                if external_id in seen_team_ids:
+                    continue
+                seen_team_ids.add(external_id)
+                played = int(item.get("playedGames") or 0)
+                goals_for = int(item.get("goalsFor") or 0)
+                goals_against = int(item.get("goalsAgainst") or 0)
+                gd = item.get("goalDifference")
+                if gd is None:
+                    gd = goals_for - goals_against
+                raw_position = item.get("position")
+                try:
+                    position = int(raw_position) if raw_position is not None else 0
+                except (TypeError, ValueError):
+                    position = 0
+                rows.append(
+                    ProviderStandingRow(
+                        external_team_id=external_id,
+                        position=position,
+                        played=played,
+                        points=int(item.get("points") or 0),
+                        goals_for=goals_for,
+                        goals_against=goals_against,
+                        goal_difference=int(gd),
+                        team_name=team.get("name"),
+                    )
+                )
+        # Re-rank when we merged multiple blocks (group-local positions) or when
+        # any row lacks a valid position (>= 1), so missing/zero ranks cannot
+        # sort ahead of real table places for draft snapshots / autopick.
+        needs_rerank = len(table_blocks) > 1 or any(r.position < 1 for r in rows)
+        if needs_rerank:
+            rows = self._rerank_standing_rows(rows)
+        else:
+            rows.sort(key=lambda r: (r.position, r.external_team_id))
+        return rows, rate
+
+    @staticmethod
+    def _rerank_standing_rows(
+        rows: list[ProviderStandingRow],
+    ) -> list[ProviderStandingRow]:
+        ordered = sorted(
+            rows,
+            key=lambda r: (
+                -r.points,
+                -r.goal_difference,
+                -r.goals_for,
+                r.external_team_id,
+            ),
+        )
+        return [
+            ProviderStandingRow(
+                external_team_id=row.external_team_id,
+                position=index,
+                played=row.played,
+                points=row.points,
+                goals_for=row.goals_for,
+                goals_against=row.goals_against,
+                goal_difference=row.goal_difference,
+                team_name=row.team_name,
+            )
+            for index, row in enumerate(ordered, start=1)
+        ]
+
     @staticmethod
     def _parse_provider_date(value: str | None) -> datetime | None:
         if not value:
             return None
         return datetime.fromisoformat(value).replace(tzinfo=UTC)
+
+    @staticmethod
+    def _competition_type_from_payload(payload: dict[str, Any]) -> str | None:
+        raw = payload.get("type")
+        normalized = normalize_competition_type(str(raw) if raw is not None else None)
+        if normalized in _KNOWN_TYPES:
+            return normalized
+        return None
 
     @staticmethod
     def _season_start_year(season: dict[str, Any]) -> int | None:
@@ -247,6 +433,10 @@ class FootballDataProvider:
         try:
             payload, rate = self._get(f"/competitions/{competition_code}")
         except FootballDataError as exc:
+            # Rate limits are transient; callers wait/retry. Other errors mean
+            # the season is unavailable for this code/year.
+            if exc.rate_limited:
+                raise
             return (
                 CompetitionSeasonInfo(
                     code=competition_code,
@@ -281,6 +471,7 @@ class FootballDataProvider:
                 start_date=self._parse_provider_date(match.get("startDate")),
                 end_date=self._parse_provider_date(match.get("endDate")),
                 available=True,
+                competition_type=self._competition_type_from_payload(payload),
             ),
             rate,
         )
@@ -295,6 +486,8 @@ class FootballDataProvider:
         try:
             payload, rate = self._get(f"/competitions/{competition_code}")
         except FootballDataError as exc:
+            if exc.rate_limited:
+                raise
             return (
                 CompetitionSeasonInfo(
                     code=competition_code,
@@ -337,6 +530,7 @@ class FootballDataProvider:
                 end_date=self._parse_provider_date(match.get("endDate")),
                 available=True,
                 message=message,
+                competition_type=self._competition_type_from_payload(payload),
             ),
             rate,
         )

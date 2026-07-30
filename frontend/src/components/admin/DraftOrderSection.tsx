@@ -3,6 +3,7 @@
 import { FormEvent } from "react";
 import type { League, PoolTeam, UUID } from "@/lib/types";
 import { managerLabel, managerOptionLabel } from "@/lib/types";
+import { humanizeKey } from "@/components/settings/types";
 import { IconButton } from "@/components/ui/IconButton";
 import { Button } from "@/components/ui/Button";
 import { ChevronDownIcon, ChevronUpIcon, SaveIcon, UserPlusIcon } from "@/components/ui/icons";
@@ -12,6 +13,13 @@ import { FieldHelp, LabelRow } from "@/components/ui/FieldHelp";
 import { ChoiceToggle } from "@/components/ui/ChoiceToggle";
 import { PoolFilterSelect } from "@/components/ui/PoolFilterSelect";
 import { DraftTimingFields } from "@/components/settings/DraftTimingFields";
+
+function poolDisplayLabel(pool: { label?: string | null; key?: string | null }): string {
+  const label = (pool.label || "").trim();
+  if (label) return label;
+  if (pool.key) return humanizeKey(pool.key);
+  return "Competition";
+}
 
 export type PreassignMode = "off" | "optional" | "required";
 
@@ -38,6 +46,8 @@ export function DraftOrderSection({
   onScheduledLocalChange,
   onPickTimerSecondsChange,
   onSave,
+  firstMatchKickoffAt,
+  scheduleError,
 }: {
   league: League;
   draftOrder: UUID[];
@@ -61,6 +71,8 @@ export function DraftOrderSection({
   onScheduledLocalChange: (value: string) => void;
   onPickTimerSecondsChange: (value: string) => void;
   onSave: () => void;
+  firstMatchKickoffAt?: string | null;
+  scheduleError?: string | null;
 }) {
   const multiPool = league.pools.length > 1;
   const showPreassignTools = preassignMode !== "off";
@@ -68,7 +80,7 @@ export function DraftOrderSection({
   const preassignsByMember = new Map<UUID, string[]>();
   if (showPreassignTools) {
     for (const pool of league.pools) {
-      const poolLabel = pool.label || pool.key;
+      const poolLabel = poolDisplayLabel(pool);
       for (const team of poolTeams[pool.id] || []) {
         const owner = team.current_owner;
         if (!owner || owner.acquired_via !== "preassigned") continue;
@@ -124,6 +136,8 @@ export function DraftOrderSection({
           onPickTimerSecondsChange={onPickTimerSecondsChange}
           scheduleDisabled={!scheduleEditable || settingsBusy}
           timerDisabled={!timerEditable || settingsBusy}
+          firstMatchKickoffAt={firstMatchKickoffAt}
+          scheduleError={scheduleError}
           hint="Schedule auto-open and the pick clock. Schedule can only be changed before the draft opens."
         />
 
@@ -299,16 +313,16 @@ export function DraftOrderSection({
                       ? (poolTeams[teamPool] || []).map((t) => ({
                           ...t,
                           pool_id: teamPool,
-                          pool_label:
-                            league.pools.find((p) => p.id === teamPool)?.label ||
-                            league.pools.find((p) => p.id === teamPool)?.key ||
-                            "",
+                          pool_label: (() => {
+                            const pool = league.pools.find((p) => p.id === teamPool);
+                            return pool ? poolDisplayLabel(pool) : "";
+                          })(),
                         }))
                       : league.pools.flatMap((pool) =>
                           (poolTeams[pool.id] || []).map((t) => ({
                             ...t,
                             pool_id: pool.id,
-                            pool_label: pool.label || pool.key,
+                            pool_label: poolDisplayLabel(pool),
                           })),
                         )
                     )

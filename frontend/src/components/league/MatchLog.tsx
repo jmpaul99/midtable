@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/Button";
 import { ChoiceToggle } from "@/components/ui/ChoiceToggle";
 import { PoolFilterSelect } from "@/components/ui/PoolFilterSelect";
 import { MatchLogCard } from "./MatchLogCard";
+import { scoringCompetitionType } from "@/lib/format";
 
 type ViewMode = "recent" | "upcoming";
 
@@ -63,6 +64,7 @@ export function MatchLog({
   section?: "upcoming" | "results";
 }) {
   const pageSize = limit ?? (compact ? 10 : 20);
+  const competitionType = scoringCompetitionType(league?.pools);
   const scoringPools = useMemo(
     () => (league?.pools || []).filter((p) => p.scores_match_results),
     [league?.pools],
@@ -190,7 +192,12 @@ export function MatchLog({
       <ul className="flex flex-col gap-2">
         {list.items.map((m) => (
           <li key={m.id}>
-            <MatchLogCard leagueId={leagueId} match={m} showPoolLabel={multiPool} />
+            <MatchLogCard
+              leagueId={leagueId}
+              match={m}
+              showPoolLabel={multiPool}
+              competitionType={competitionType}
+            />
           </li>
         ))}
       </ul>
@@ -271,6 +278,7 @@ export function MatchLog({
                     leagueId={leagueId}
                     match={m}
                     showPoolLabel={multiPool}
+                    competitionType={competitionType}
                   />
                 </li>
               ))}

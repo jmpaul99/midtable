@@ -2,7 +2,7 @@
 
 import { Input, Label, Select } from "@/components/ui/Field";
 import { AddRowButton, EditorSection, RemoveButton, RowItem, RowList } from "./chrome";
-import type { RosterSlot } from "./types";
+import { humanizeKey, type RosterSlot } from "./types";
 
 const blankSlot = (poolKey = ""): RosterSlot => ({
   pool_key: poolKey,
@@ -28,7 +28,7 @@ export function RosterSlotsEditor({
   const known = new Set(pools.map((p) => p.value));
   for (const row of value) {
     if (row.pool_key && !known.has(row.pool_key)) {
-      pools.push({ value: row.pool_key, label: row.pool_key });
+      pools.push({ value: row.pool_key, label: humanizeKey(row.pool_key) });
       known.add(row.pool_key);
     }
   }

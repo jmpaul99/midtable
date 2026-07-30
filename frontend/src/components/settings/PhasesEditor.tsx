@@ -9,6 +9,7 @@ import { cn } from "@/lib/cn";
 import { AddRowButton, EditorSection, RemoveButton, RowItem, RowList } from "./chrome";
 import { StageMultiSelect } from "./StageMultiSelect";
 import {
+  humanizeKey,
   slugifyKey,
   uniqueKey,
   type LeaderboardPhase,
@@ -23,13 +24,6 @@ function blankPhase(existingKeys: string[]): LeaderboardPhase {
   };
 }
 
-function humanize(key: string): string {
-  return key
-    .split("_")
-    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-    .join(" ");
-}
-
 function BonusTypePicker({
   selected,
   options,
@@ -40,11 +34,20 @@ function BonusTypePicker({
   onChange: (next: string[]) => void;
 }) {
   const [query, setQuery] = useState("");
-  const known = new Map(options.filter((o) => o.value).map((o) => [o.value, o.label || o.value]));
+  const known = new Map(
+    options
+      .filter((o) => o.value)
+      .map((o) => [o.value, (o.label || "").trim() || humanizeKey(o.value)]),
+  );
   const orphanKeys = selected.filter((k) => k && !known.has(k));
   const items = [
-    ...options.filter((o) => o.value),
-    ...orphanKeys.map((k) => ({ value: k, label: `${humanize(k)} (missing)` })),
+    ...options
+      .filter((o) => o.value)
+      .map((o) => ({
+        value: o.value,
+        label: (o.label || "").trim() || humanizeKey(o.value),
+      })),
+    ...orphanKeys.map((k) => ({ value: k, label: `${humanizeKey(k)} (missing)` })),
   ];
   const selectedSet = new Set(selected);
   const q = query.trim().toLowerCase();
@@ -187,7 +190,7 @@ export function PhasesEditor({
   return (
     <EditorSection
       title="Leaderboard phases"
-      description="Create separate leaderboards for parts of the competition—for example, group stage vs knockout—by matchweek range or stages. Full competition is always available."
+      description="Create separate leaderboards for parts of the competition—for example, group stage vs knockout—by period range or stages. Full competition is always available."
     >
       {value.length > 0 && (
         <RowList>
@@ -223,14 +226,14 @@ export function PhasesEditor({
                           });
                         }}
                       >
-                        <option value="matchweek_range">Matchweek range</option>
+                        <option value="matchweek_range">Matchweek / round range</option>
                         <option value="stage_in">Stages</option>
                       </Select>
                     </Label>
                     {filterType === "matchweek_range" ? (
                       <>
                         <Label className="w-[5.5rem]">
-                          From MW
+                          From
                           <Input
                             type="number"
                             min={1}
@@ -252,7 +255,7 @@ export function PhasesEditor({
                           />
                         </Label>
                         <Label className="w-[5.5rem]">
-                          To MW
+                          To
                           <Input
                             type="number"
                             min={1}

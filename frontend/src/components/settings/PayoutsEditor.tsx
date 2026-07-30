@@ -2,7 +2,7 @@
 
 import { Input, Label, Select } from "@/components/ui/Field";
 import { AddRowButton, EditorSection, RemoveButton, RowItem, RowList } from "./chrome";
-import type { PayoutRow } from "./types";
+import { humanizeKey, type PayoutRow } from "./types";
 
 const compactInput = "min-h-10 rounded-lg px-2.5 py-2 text-sm";
 
@@ -35,7 +35,7 @@ export function PayoutsEditor({
   const known = new Set(phases.map((p) => p.value));
   for (const row of value) {
     if (row.phase && !known.has(row.phase)) {
-      phases.push({ value: row.phase, label: row.phase });
+      phases.push({ value: row.phase, label: humanizeKey(row.phase) });
       known.add(row.phase);
     }
   }

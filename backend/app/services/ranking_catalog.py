@@ -331,17 +331,62 @@ def resolve_catalog_team_ranks(
     )
     by_code, by_name = _override_map(overrides)
     teams = candidate_teams_for_catalog(db, catalog, sample_league=sample_league)
+    # Index once — match_team_for_entry used to linear-scan (+ fuzzy) per entry.
+    by_external_id = {
+        t.external_id: t
+        for t in teams
+        if t.provider == PROVIDER_KEY and t.external_id
+    }
+    by_tla: dict[str, Team] = {}
+    by_team_name: dict[str, Team] = {}
+    for t in teams:
+        tla = (t.tla or "").strip().upper()
+        if tla and tla not in by_tla:
+            by_tla[tla] = t
+        name_l = t.name.strip().lower()
+        if name_l and name_l not in by_team_name:
+            by_team_name[name_l] = t
+        if t.short_name:
+            short_l = t.short_name.strip().lower()
+            if short_l and short_l not in by_team_name:
+                by_team_name[short_l] = t
+
     ranks: dict[int, int] = {}
+    unmatched: list[RankingCatalogEntry] = []
     for entry in entries:
+        team: Team | None = None
+        if entry.country_code:
+            ext = by_code.get(entry.country_code.strip().upper())
+            if ext:
+                team = by_external_id.get(ext)
+        if team is None:
+            ext = by_name.get(entry.team_name.strip().lower())
+            if ext:
+                team = by_external_id.get(ext)
+        if team is None and entry.country_code:
+            team = by_tla.get(entry.country_code.strip().upper())
+        if team is None:
+            team = by_team_name.get(entry.team_name.strip().lower())
+        if team is None or team.id in ranks:
+            if team is None:
+                unmatched.append(entry)
+            continue
+        ranks[team.id] = entry.rank
+
+    # Fuzzy only for leftovers — avoids O(entries × teams) on the common path.
+    claimed = set(ranks.keys())
+    remaining_teams = [t for t in teams if t.id not in claimed]
+    for entry in unmatched:
         team = match_team_for_entry(
             entry,
-            teams,
+            remaining_teams,
             overrides_by_code=by_code,
             overrides_by_name=by_name,
         )
         if team is None or team.id in ranks:
             continue
         ranks[team.id] = entry.rank
+        remaining_teams = [t for t in remaining_teams if t.id != team.id]
     return ranks
 
 
@@ -737,8 +782,15 @@ def ranks_for_league(
     db: Session,
     league: League,
     upset_rules: UpsetRules,
+    *,
+    allow_live_catalog: bool = False,
 ) -> dict[int, RankedTeam] | None:
-    """Resolve fixed ranks: freeze if locked, else live catalog or manual list."""
+    """Resolve fixed ranks from stored freeze / TeamRanking rows.
+
+    Admin catalog matching + overrides are applied when a freeze is created
+    (draft open / ranking lock). Draft polls must not re-run live fuzzy match.
+    Scoring may opt into live catalog resolution before a freeze exists.
+    """
     if upset_rules.rank_source != "fixed_ranking_at_event_start":
         return None
     key = upset_rules.ranking_list_key
@@ -756,24 +808,39 @@ def ranks_for_league(
     ).first()
 
     team_ranks: dict[int, int] = {}
-    if ranking_list is not None and ranking_list.locked and ranking_list.freeze_id:
+    freeze_id = ranking_list.freeze_id if ranking_list is not None else None
+
+    if freeze_id is None and catalog is not None and catalog.as_of is not None:
+        shared = db.scalars(
+            select(RankingFreeze).where(
+                RankingFreeze.catalog_id == catalog.id,
+                RankingFreeze.as_of == catalog.as_of,
+            )
+        ).first()
+        if shared is not None:
+            freeze_id = shared.id
+
+    if freeze_id is not None:
         for row in db.scalars(
             select(RankingFreezeEntry).where(
-                RankingFreezeEntry.freeze_id == ranking_list.freeze_id
+                RankingFreezeEntry.freeze_id == freeze_id
             )
         ).all():
             team_ranks[row.team_id] = row.rank
-    elif catalog is not None and (
-        ranking_list is None or ranking_list.source != "manual"
-    ):
-        team_ranks = resolve_catalog_team_ranks(db, catalog, sample_league=league)
     elif ranking_list is not None:
         for row in db.scalars(
             select(TeamRanking).where(TeamRanking.ranking_list_id == ranking_list.id)
         ).all():
             team_ranks[row.team_id] = row.rank
-    else:
-        return None
+
+    if (
+        freeze_id is None
+        and not team_ranks
+        and allow_live_catalog
+        and catalog is not None
+        and (ranking_list is None or ranking_list.source != "manual")
+    ):
+        team_ranks = resolve_catalog_team_ranks(db, catalog, sample_league=league)
 
     if not team_ranks:
         return None

@@ -2,11 +2,12 @@
 
 import { use } from "react";
 import { useLeague } from "@/components/LeagueShell";
-import { SnapshotAudit } from "@/components/SnapshotAudit";
+import { MatchDetail } from "@/components/league/MatchDetail";
+import { upsetNameByKey } from "@/components/settings/types";
 import { PageHeader, Stack } from "@/components/ui/Card";
 import { Breadcrumbs } from "@/components/ui/Breadcrumbs";
 
-export default function MatchSnapshotPage({
+export default function MatchDetailPage({
   params,
 }: {
   params: Promise<{ id: string; matchId: string }>;
@@ -20,14 +21,18 @@ export default function MatchSnapshotPage({
           <Breadcrumbs
             items={[
               { label: "Matches", href: `/leagues/${league.id}/matches` },
-              { label: "Snapshot" },
+              { label: "Match" },
             ]}
           />
         }
-        title="Match snapshot"
-        description={`Snapshot audit for match ${matchId}`}
+        title="Match"
+        description="Result summary and scoring events"
       />
-      <SnapshotAudit leagueId={league.id} matchId={matchId} />
+      <MatchDetail
+        leagueId={league.id}
+        matchId={matchId}
+        eventTypeLabels={upsetNameByKey(league.upset_rules)}
+      />
     </Stack>
   );
 }

@@ -2,6 +2,7 @@
 
 import { useMemo } from "react";
 import { formatNumber } from "@/lib/format";
+import { humanizeKey } from "@/components/settings/types";
 import type { Manager, RosterRow, UUID } from "@/lib/types";
 import { managerLabel } from "@/lib/types";
 import { Empty, ErrorState, Loading } from "@/components/ui/State";
@@ -16,7 +17,6 @@ import { TeamCrest } from "./TeamCrest";
 import { TeamLink } from "./TeamLink";
 import { ManagerLink } from "./ManagerLink";
 import { TeamNameEditor } from "./TeamNameEditor";
-import { StagePointsBreakdown } from "./StagePointsBreakdown";
 
 function FormDots({ form }: { form?: string[] | null }) {
   if (!form?.length) return null;
@@ -216,7 +216,7 @@ export function RosterGrid({
                           {r.draft_pick_number != null
                             ? ` · Pick #${r.draft_pick_number}`
                             : r.acquired_via
-                              ? ` · ${r.acquired_via.replaceAll("_", " ")}`
+                              ? ` · ${humanizeKey(r.acquired_via)}`
                               : " · Awaiting draft"}
                         </Muted>
                         {r.team_id && (
@@ -227,12 +227,6 @@ export function RosterGrid({
                             </span>
                             <FormDots form={r.form} />
                           </div>
-                        )}
-                        {r.team_id && (
-                          <StagePointsBreakdown
-                            pointsByStage={r.points_by_stage}
-                            compact
-                          />
                         )}
                       </div>
                     </div>

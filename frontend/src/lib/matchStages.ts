@@ -1,7 +1,21 @@
+import { humanizeKey } from "@/components/settings/types";
+
 export type MatchStage = {
   code: string;
   label: string;
 };
+
+/** Football-data.org match duration codes with display labels. */
+const MATCH_DURATION_LABELS: Record<string, string> = {
+  REGULAR: "Regulation",
+  EXTRA_TIME: "Extra time",
+  PENALTY_SHOOTOUT: "Penalties",
+};
+
+/** Customer-facing label for a match duration code — never show raw keys. */
+export function matchDurationLabel(code: string): string {
+  return MATCH_DURATION_LABELS[code] || humanizeKey(code);
+}
 
 /** Football-data.org / API stage codes with display labels. */
 export const MATCH_STAGES: MatchStage[] = [

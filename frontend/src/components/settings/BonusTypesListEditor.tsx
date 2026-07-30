@@ -8,6 +8,7 @@ import { CheckIcon, PencilIcon, PlusIcon, TrashIcon, XIcon } from "@/components/
 import { Muted, Stack } from "@/components/ui/Card";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { Input } from "@/components/ui/Field";
+import { randomUUID } from "@/lib/randomUUID";
 import { slugifyKey, uniqueKey, type BonusTypeDef } from "./types";
 
 export type BonusTypeListItem = BonusTypeDef & {
@@ -122,7 +123,7 @@ export function BonusTypesListEditor({
         onChange?.([
           ...value,
           {
-            id: `temp-${crypto.randomUUID()}`,
+            id: `temp-${randomUUID()}`,
             key,
             label,
             default_points,

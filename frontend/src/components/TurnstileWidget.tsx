@@ -29,6 +29,8 @@ type Props = {
 };
 
 const SITEKEY = process.env.NEXT_PUBLIC_TURNSTILE_SITEKEY || "";
+/** Turnstile is skipped in `next dev` so local auth is not blocked by the challenge. */
+export const TURNSTILE_ENABLED = process.env.NODE_ENV !== "development";
 const LOAD_TIMEOUT_MS = 12_000;
 const LOAD_ERROR =
   "Verification failed to load. Check your connection and try again.";
@@ -47,7 +49,7 @@ export function TurnstileWidget({ action, onToken, onWidgetId }: Props) {
   const [retryNonce, setRetryNonce] = useState(0);
 
   useEffect(() => {
-    if (!SITEKEY || !containerRef.current) return;
+    if (!TURNSTILE_ENABLED || !SITEKEY || !containerRef.current) return;
 
     let cancelled = false;
     setLoadError(null);
@@ -132,6 +134,10 @@ export function TurnstileWidget({ action, onToken, onWidgetId }: Props) {
     onToken(null);
     setLoadError(null);
     setRetryNonce((n) => n + 1);
+  }
+
+  if (!TURNSTILE_ENABLED) {
+    return null;
   }
 
   if (!SITEKEY) {

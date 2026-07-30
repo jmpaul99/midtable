@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { useCallback, useMemo, useState } from "react";
-import { formatNumber } from "@/lib/format";
+import { formatNumber, scoringCompetitionType } from "@/lib/format";
+import { humanizeKey } from "@/components/settings/types";
 import type {
   BonusAward,
   Manager,
@@ -26,10 +27,11 @@ import { Breadcrumbs } from "@/components/ui/Breadcrumbs";
 import { Button } from "@/components/ui/Button";
 import { Select } from "@/components/ui/Field";
 import { useApiQuery } from "@/lib/useApiQuery";
+import { useLeague } from "@/components/LeagueShell";
 import { TeamCrest } from "./TeamCrest";
 import { TeamFixtureList } from "./TeamFixtureList";
 import { TeamScoringBreakdown } from "./TeamScoringBreakdown";
-import { StagePointsBreakdown } from "./StagePointsBreakdown";
+import { StagePointsBreakdown, PeriodPointsBreakdown } from "./StagePointsBreakdown";
 
 const FIXTURE_SELECT_CLASS =
   "min-h-9 w-auto min-w-0 flex-1 basis-[9.5rem] rounded-lg px-2.5 py-1.5 text-sm sm:flex-none sm:basis-auto";
@@ -64,6 +66,7 @@ export function TeamPage({
   members = [],
   currentManagerId,
   eventTypeLabels,
+  bonusesConfigured = false,
 }: {
   leagueId: UUID;
   leagueName: string;
@@ -71,7 +74,11 @@ export function TeamPage({
   members?: Manager[];
   currentManagerId?: UUID | null;
   eventTypeLabels?: Record<string, string>;
+  /** League has at least one bonus type defined. */
+  bonusesConfigured?: boolean;
 }) {
+  const league = useLeague();
+  const competitionType = scoringCompetitionType(league.pools);
   const {
     data: team,
     error,
@@ -202,9 +209,11 @@ export function TeamPage({
             ) : (
               ownerPersonName
             )}
-            {team.owner.acquired_via
-              ? ` · ${team.owner.acquired_via.replaceAll("_", " ")}`
-              : ""}
+            {team.owner.draft_pick_number != null
+              ? ` · Pick #${team.owner.draft_pick_number}`
+              : team.owner.acquired_via
+                ? ` · ${humanizeKey(team.owner.acquired_via)}`
+                : ""}
           </Muted>
         )}
       </div>
@@ -228,15 +237,17 @@ export function TeamPage({
           hint={`${s.goals_for ?? 0} GF · ${s.goals_against ?? 0} GA`}
         />
         <StatTile label="Upset pts" value={formatNumber(s.upset_points)} />
-        <StatTile
-          label="Bonus pts"
-          value={formatNumber(s.bonus_points)}
-          hint={
-            bonuses.length
-              ? `${bonuses.length} award${bonuses.length === 1 ? "" : "s"}`
-              : "None yet"
-          }
-        />
+        {(bonusesConfigured || bonuses.length > 0 || s.bonus_points > 0) && (
+          <StatTile
+            label="Bonus pts"
+            value={formatNumber(s.bonus_points)}
+            hint={
+              bonuses.length
+                ? `${bonuses.length} award${bonuses.length === 1 ? "" : "s"}`
+                : "None yet"
+            }
+          />
+        )}
       </StatGrid>
 
       <TeamScoringBreakdown
@@ -247,15 +258,23 @@ export function TeamPage({
         eventPointsByType={s.event_points_by_type}
         eventCountsByType={s.event_counts_by_type}
         eventTypeLabels={eventTypeLabels}
+        bonusesConfigured={bonusesConfigured}
+        competitionType={competitionType}
       />
 
-      {s.points_by_stage && Object.keys(s.points_by_stage).length > 1 && (
+      {s.points_by_period && s.points_by_period.length > 1 ? (
+        <Card className="min-w-0 overflow-hidden">
+          <Stack>
+            <PeriodPointsBreakdown periods={s.points_by_period} />
+          </Stack>
+        </Card>
+      ) : s.points_by_stage && Object.keys(s.points_by_stage).length > 1 ? (
         <Card className="min-w-0 overflow-hidden">
           <Stack>
             <StagePointsBreakdown pointsByStage={s.points_by_stage} />
           </Stack>
         </Card>
-      )}
+      ) : null}
 
       {(s.home || s.away) && (
         <Card className="min-w-0 overflow-hidden">
@@ -334,6 +353,7 @@ export function TeamPage({
                 hasMore={recentFixtures.hasMore}
                 loadingMore={recentFixtures.loadingMore}
                 onShowMore={recentFixtures.showMore}
+                competitionType={competitionType}
               />
             )}
           </Stack>
@@ -353,6 +373,7 @@ export function TeamPage({
                 hasMore={upcomingFixtures.hasMore}
                 loadingMore={upcomingFixtures.loadingMore}
                 onShowMore={upcomingFixtures.showMore}
+                competitionType={competitionType}
               />
             )}
           </Stack>

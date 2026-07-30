@@ -9,6 +9,8 @@ from unittest.mock import MagicMock
 from uuid import uuid4
 
 from app.models import Match
+from app.services import ranking_catalog as ranking_catalog_mod
+from app.services import standings as standings_mod
 from app.services.match_adapters import match_to_input
 from app.services.match_queries import competition_keys_from_pools
 from app.services.ranking_catalog import (
@@ -106,7 +108,7 @@ def test_ranks_for_league_uses_freeze_when_locked():
             out.first.return_value = ranking_list
             return out
         if "ranking_catalog" in sql:
-            out.first.return_value = SimpleNamespace(id=1, key="fifa_men")
+            out.first.return_value = SimpleNamespace(id=1, key="fifa_men", as_of=None)
             return out
         if "ranking_freeze_entr" in sql or "rankingfreezeentry" in sql:
             out.all.return_value = freeze_rows
@@ -120,6 +122,176 @@ def test_ranks_for_league_uses_freeze_when_locked():
     assert ranked is not None
     assert ranked[1].rank == 3
     assert ranked[2].rank == 7
+
+
+def test_ranks_for_league_uses_shared_freeze_without_league_lock():
+    """Unlocked lists still read the catalog freeze — never live fuzzy match."""
+    league = SimpleNamespace(id=1)
+    rules = UpsetRules.from_config(
+        {
+            "enabled": True,
+            "rank_source": "fixed_ranking_at_event_start",
+            "ranking_list_key": "fifa_men",
+            "eligibility": {"min_played": 0},
+            "thresholds": [],
+        }
+    )
+    ranking_list = SimpleNamespace(
+        id=10,
+        key="fifa_men",
+        locked=False,
+        freeze_id=None,
+        source="parse_fifa",
+    )
+    catalog = SimpleNamespace(id=1, key="fifa_men", as_of=date(2026, 1, 1))
+    shared_freeze = SimpleNamespace(id=9, catalog_id=1, as_of=date(2026, 1, 1))
+    freeze_rows = [SimpleNamespace(team_id=1, rank=2)]
+    db = MagicMock()
+
+    def scalars(stmt):
+        sql = str(stmt).lower()
+        out = MagicMock()
+        if "ranking_list" in sql:
+            out.first.return_value = ranking_list
+            return out
+        if "ranking_catalog" in sql and "freeze" not in sql:
+            out.first.return_value = catalog
+            return out
+        if "ranking_freeze" in sql and "entr" not in sql:
+            out.first.return_value = shared_freeze
+            return out
+        if "ranking_freeze_entr" in sql or "rankingfreezeentry" in sql:
+            out.all.return_value = freeze_rows
+            return out
+        out.first.return_value = None
+        out.all.return_value = []
+        return out
+
+    db.scalars.side_effect = scalars
+    ranked = ranks_for_league(db, league, rules)
+    assert ranked is not None
+    assert ranked[1].rank == 2
+
+
+def test_ranks_for_league_live_catalog_is_scoring_opt_in(monkeypatch):
+    league = SimpleNamespace(id=1)
+    rules = UpsetRules.from_config(
+        {
+            "enabled": True,
+            "rank_source": "fixed_ranking_at_event_start",
+            "ranking_list_key": "fifa_men",
+            "eligibility": {"min_played": 0},
+            "thresholds": [],
+        }
+    )
+    ranking_list = SimpleNamespace(
+        id=10,
+        key="fifa_men",
+        locked=False,
+        freeze_id=None,
+        source="parse_fifa",
+    )
+    catalog = SimpleNamespace(id=1, key="fifa_men", as_of=None)
+    db = MagicMock()
+
+    def scalars(stmt):
+        sql = str(stmt).lower()
+        out = MagicMock()
+        if "ranking_list" in sql:
+            out.first.return_value = ranking_list
+        elif "ranking_catalog" in sql:
+            out.first.return_value = catalog
+        else:
+            out.all.return_value = []
+        return out
+
+    db.scalars.side_effect = scalars
+    resolve = MagicMock(return_value={7: 4})
+    monkeypatch.setattr(ranking_catalog_mod, "resolve_catalog_team_ranks", resolve)
+
+    assert ranks_for_league(db, league, rules) is None
+    resolve.assert_not_called()
+
+    ranked = ranks_for_league(db, league, rules, allow_live_catalog=True)
+    assert ranked is not None
+    assert ranked[7].rank == 4
+    resolve.assert_called_once_with(db, catalog, sample_league=league)
+
+
+def test_previous_final_rejects_midseason_snapshot_without_opener(monkeypatch):
+    midseason = SimpleNamespace(
+        kickoff_at=datetime(2026, 9, 1, tzinfo=UTC),
+        rows=[SimpleNamespace(played=3)],
+    )
+    monkeypatch.setattr(
+        standings_mod,
+        "_snapshots_for_competition",
+        MagicMock(return_value=[midseason]),
+    )
+
+    assert (
+        standings_mod.previous_final_snapshot_for_competition(
+            MagicMock(),
+            provider="football-data.org",
+            competition_code="PL",
+            season_year=2026,
+        )
+        is None
+    )
+
+
+def test_previous_final_accepts_season_final_without_opener(monkeypatch):
+    previous_final = SimpleNamespace(
+        kickoff_at=datetime(2026, 6, 1, tzinfo=UTC),
+        rows=[
+            SimpleNamespace(played=38),
+            SimpleNamespace(played=37),
+            SimpleNamespace(played=38),
+        ],
+    )
+    monkeypatch.setattr(
+        standings_mod,
+        "_snapshots_for_competition",
+        MagicMock(return_value=[previous_final]),
+    )
+
+    result = standings_mod.previous_final_snapshot_for_competition(
+        MagicMock(),
+        provider="football-data.org",
+        competition_code="PL",
+        season_year=2026,
+    )
+
+    assert result is previous_final
+
+
+def test_previous_final_precedes_zeroed_opener(monkeypatch):
+    previous_final = SimpleNamespace(
+        kickoff_at=datetime(2026, 6, 1, tzinfo=UTC),
+        rows=[SimpleNamespace(played=38)],
+    )
+    opener = SimpleNamespace(
+        kickoff_at=datetime(2026, 8, 1, tzinfo=UTC),
+        rows=[SimpleNamespace(played=0)],
+    )
+    midseason = SimpleNamespace(
+        kickoff_at=datetime(2026, 9, 1, tzinfo=UTC),
+        rows=[SimpleNamespace(played=3)],
+    )
+    monkeypatch.setattr(
+        standings_mod,
+        "_snapshots_for_competition",
+        MagicMock(return_value=[previous_final, opener, midseason]),
+    )
+
+    result = standings_mod.previous_final_snapshot_for_competition(
+        MagicMock(),
+        provider="football-data.org",
+        competition_code="PL",
+        season_year=2026,
+    )
+
+    assert result is previous_final
 
 
 def test_ensure_or_create_ranking_freeze_reuses_existing(monkeypatch):

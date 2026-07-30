@@ -1,4 +1,5 @@
-from datetime import date
+from datetime import date, datetime
+from typing import Any
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -70,6 +71,42 @@ class RankingCatalogMatchRow(BaseModel):
 
 class AdminSyncTeamsAndRankingsRequest(BaseModel):
     season_year: int | None = None
+
+
+class PlatformJobResponse(BaseModel):
+    id: UUID
+    kind: str
+    source: str
+    status: str
+    error: str | None = None
+    summary: dict[str, Any] | None = None
+    params: dict[str, Any] | None = None
+    created_at: datetime
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+
+
+class LatestPlatformJobsResponse(BaseModel):
+    manual: PlatformJobResponse | None = None
+    cron: PlatformJobResponse | None = None
+
+
+class CompetitionTierRow(BaseModel):
+    code: str
+    label: str
+    key: str
+    team_kind: str
+    domestic_tier: int | None = None
+    default_domestic_tier: int | None = None
+
+
+class CompetitionTierUpdateItem(BaseModel):
+    code: str
+    domestic_tier: int | None = None
+
+
+class CompetitionTierUpdateRequest(BaseModel):
+    tiers: list[CompetitionTierUpdateItem] = Field(default_factory=list)
 
 
 class CompetitionTeamsQueryItem(BaseModel):

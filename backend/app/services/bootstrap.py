@@ -21,7 +21,14 @@ from app.models import (
     TeamPool,
 )
 from app.providers.base import FootballProvider
-from app.services.competitions import should_apply_team_kind, team_kind_for_competition
+from app.providers.football_data import FootballDataError
+from app.services.competitions import (
+    default_competition_type_for_code,
+    should_apply_team_kind,
+    team_kind_for_competition,
+)
+from app.services.period_labels import normalize_competition_type
+from app.services.draft_schedule import validate_draft_scheduled_at
 from app.services.errors import (
     ConflictError,
     DomainError,
@@ -31,6 +38,22 @@ from app.services.errors import (
 from app.services.preassign import effective_preassign_count
 
 logger = logging.getLogger(__name__)
+
+
+def _provider_call(op, *, context: dict[str, Any]):
+    """Run a provider call; map rate limits to ConflictError for API callers."""
+    try:
+        return op()
+    except FootballDataError as exc:
+        if exc.rate_limited:
+            raise ConflictError(
+                {
+                    "message": "provider rate limited; retry shortly",
+                    **context,
+                    "provider_message": str(exc),
+                }
+            ) from exc
+        raise
 
 
 def prior_leagues_blocking(
@@ -96,7 +119,10 @@ def bootstrap_season(
     for params in pool_provider_params:
         code = params["competition_code"]
         year = int(params["season_year"])
-        info, _ = provider.resolve_competition_season(code, year)
+        info, _ = _provider_call(
+            lambda: provider.resolve_competition_season(code, year),
+            context={"competition_code": code, "season_year": year},
+        )
         if not info.available:
             logger.warning(
                 "bootstrap_season provider unavailable competition_code=%s season_year=%s "
@@ -167,7 +193,16 @@ def bootstrap_season(
         db.flush()
 
         if pool.competition_code and pool.season_year:
-            teams, _ = provider.list_teams(pool.competition_code, int(pool.season_year))
+            teams, _ = _provider_call(
+                lambda: provider.list_teams(
+                    pool.competition_code, int(pool.season_year)
+                ),
+                context={
+                    "pool_key": pool.key,
+                    "competition_code": pool.competition_code,
+                    "season_year": pool.season_year,
+                },
+            )
             kind = team_kind_for_competition(pool.competition_code)
             for pt in teams:
                 team = db.scalars(
@@ -192,6 +227,20 @@ def bootstrap_season(
                     team.team_kind = kind
                 db.add(PoolTeam(pool_id=pool.id, team_id=team.id))
 
+    validate_draft_scheduled_at(
+        db,
+        draft_scheduled_at,
+        competition_keys=[
+            (
+                str(p.get("provider", "football-data.org")),
+                str(p["competition_code"]),
+                int(p["season_year"]),
+            )
+            for p in pool_provider_params
+            if p.get("competition_code") and p.get("season_year") is not None
+        ],
+    )
+
     for index, bonus in enumerate(template.bonus_types or []):
         db.add(
             BonusType(
@@ -207,8 +256,38 @@ def bootstrap_season(
     db.add(DraftState(league_id=league.id, current_pick_number=1, status="pending"))
     db.flush()
     from app.services.ranking_catalog import ensure_fixed_ranking_for_league
+    from app.services.standings import ensure_competition_season_table_baselines
 
     ensure_fixed_ranking_for_league(db, league)
+    seen_baselines: set[tuple[str, str, int]] = set()
+    pools = list(db.scalars(select(TeamPool).where(TeamPool.league_id == league.id)).all())
+    for pool in pools:
+        if not pool.competition_code or not pool.season_year:
+            continue
+        key = (
+            pool.provider or "football-data.org",
+            pool.competition_code.upper(),
+            int(pool.season_year),
+        )
+        if key in seen_baselines:
+            continue
+        seen_baselines.add(key)
+        try:
+            ensure_competition_season_table_baselines(
+                db,
+                provider,
+                provider_key=key[0],
+                competition_code=key[1],
+                season_year=key[2],
+            )
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "bootstrap_season table baselines failed league_id=%s competition=%s/%s",
+                league.public_id,
+                key[1],
+                key[2],
+                exc_info=True,
+            )
     db.flush()
     logger.info(
         "bootstrap_season ok league_id=%s name=%s season_label=%s pools=%s",
@@ -229,6 +308,11 @@ def attach_template_structure(
     """Clone pools, bonus types, and draft state from a template without provider calls."""
     for index, definition in enumerate(template.pool_definitions or []):
         key = definition["key"]
+        competition_code = definition.get("competition_code")
+        raw_type = definition.get("competition_type")
+        competition_type = normalize_competition_type(
+            str(raw_type) if raw_type is not None else None
+        ) or default_competition_type_for_code(competition_code)
         db.add(
             TeamPool(
                 league_id=league.id,
@@ -241,8 +325,9 @@ def attach_template_structure(
                     "tie_break_order", ["points", "gd", "gf", "name"]
                 ),
                 provider=definition.get("provider", "football-data.org"),
-                competition_code=definition.get("competition_code"),
+                competition_code=competition_code,
                 season_year=definition.get("season_year"),
+                competition_type=competition_type,
             )
         )
     for index, bonus in enumerate(template.bonus_types or []):
@@ -299,9 +384,18 @@ def bootstrap_teams_for_league(
             )
             continue
 
-        info, _ = provider.resolve_competition_season(
-            pool.competition_code, int(pool.season_year)
+        info, _ = _provider_call(
+            lambda: provider.resolve_competition_season(
+                pool.competition_code, int(pool.season_year)
+            ),
+            context={
+                "pool_key": pool.key,
+                "competition_code": pool.competition_code,
+                "season_year": pool.season_year,
+            },
         )
+        if info.competition_type:
+            pool.competition_type = info.competition_type
         if not info.available:
             logger.warning(
                 "bootstrap_teams provider unavailable league_id=%s pool_key=%s "
@@ -321,7 +415,14 @@ def bootstrap_teams_for_league(
                 },
             )
 
-        teams, _ = provider.list_teams(pool.competition_code, int(pool.season_year))
+        teams, _ = _provider_call(
+            lambda: provider.list_teams(pool.competition_code, int(pool.season_year)),
+            context={
+                "pool_key": pool.key,
+                "competition_code": pool.competition_code,
+                "season_year": pool.season_year,
+            },
+        )
         kind = team_kind_for_competition(pool.competition_code)
         pool_linked = 0
         for pt in teams:
@@ -370,9 +471,39 @@ def bootstrap_teams_for_league(
 
     db.flush()
     from app.services.ranking_catalog import ensure_fixed_ranking_for_league
+    from app.services.standings import ensure_competition_season_table_baselines
 
     ensure_fixed_ranking_for_league(db, league)
+    seen_baselines: set[tuple[str, str, int]] = set()
+    for pool in pools:
+        if not pool.competition_code or not pool.season_year:
+            continue
+        key = (
+            pool.provider or "football-data.org",
+            pool.competition_code.upper(),
+            int(pool.season_year),
+        )
+        if key in seen_baselines:
+            continue
+        seen_baselines.add(key)
+        try:
+            ensure_competition_season_table_baselines(
+                db,
+                provider,
+                provider_key=key[0],
+                competition_code=key[1],
+                season_year=key[2],
+            )
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "bootstrap_teams table baselines failed league_id=%s competition=%s/%s",
+                league.public_id,
+                key[1],
+                key[2],
+                exc_info=True,
+            )
     db.flush()
+    validate_draft_scheduled_at(db, league.draft_scheduled_at, league=league)
     summary = {
         "created_teams": created_teams,
         "linked": linked,

@@ -10,6 +10,7 @@ import { AddRowButton, RemoveButton } from "./chrome";
 import {
   EMPTY_STAGE_RESULT_POINTS,
   defaultResolvedPoints,
+  resolveResultPoints,
   stageHasOvertimeOverrides,
   stageOverrideCount,
   stageOverrideKeys,
@@ -35,7 +36,7 @@ function stageSummary(value: ResultPoints, code: string): string {
   return keys.map((k) => `${FIELD_LABELS[k]} ${stage![k]}`).join(" · ");
 }
 
-/** Empty = Default. Placeholder shows the Default value for that field. */
+/** Empty = inherited value. Placeholder shows what empty resolves to. */
 function DiffField({
   label,
   fieldKey,
@@ -70,11 +71,11 @@ function DiffField({
 
 function StageOvertimePanel({
   stage,
-  defaults,
+  resolved,
   onPatch,
 }: {
   stage: StageResultPoints;
-  defaults: Record<ResultPointKey, number>;
+  resolved: Record<ResultPointKey, number>;
   onPatch: (patch: Partial<StageResultPoints>) => void;
 }) {
   const panelId = useId();
@@ -94,8 +95,8 @@ function StageOvertimePanel({
           <span className="block text-xs font-semibold text-ink">Extra time &amp; penalties</span>
           <Muted className="text-[0.7rem]">
             {hasOverrides
-              ? "Different from default"
-              : "Leave empty to use Default ET/PK above"}
+              ? "Different from stage win/loss"
+              : "Empty inherits this stage's win/loss, then Default"}
           </Muted>
         </span>
         <ChevronDownIcon
@@ -117,14 +118,14 @@ function StageOvertimePanel({
                   label="Win"
                   fieldKey="win_et"
                   stage={stage}
-                  placeholder={defaults.win_et}
+                  placeholder={resolved.win_et}
                   onPatch={onPatch}
                 />
                 <DiffField
                   label="Loss"
                   fieldKey="loss_et"
                   stage={stage}
-                  placeholder={defaults.loss_et}
+                  placeholder={resolved.loss_et}
                   onPatch={onPatch}
                 />
               </div>
@@ -138,21 +139,21 @@ function StageOvertimePanel({
                   label="Win"
                   fieldKey="win_pk"
                   stage={stage}
-                  placeholder={defaults.win_pk}
+                  placeholder={resolved.win_pk}
                   onPatch={onPatch}
                 />
                 <DiffField
                   label="Loss"
                   fieldKey="loss_pk"
                   stage={stage}
-                  placeholder={defaults.loss_pk}
+                  placeholder={resolved.loss_pk}
                   onPatch={onPatch}
                 />
               </div>
             </div>
           </div>
           <Muted className="mt-2 text-[0.7rem]">
-            Empty fields use the Default values (placeholders).
+            Empty fields inherit this stage's win/loss, then Default (placeholders).
           </Muted>
         </div>
       ) : null}
@@ -173,6 +174,7 @@ function StageCard({
 }) {
   const stage = value.by_stage[code] ?? EMPTY_STAGE_RESULT_POINTS;
   const defaults = defaultResolvedPoints(value);
+  const resolved = resolveResultPoints(value, code);
   const [expanded, setExpanded] = useState(() => stageOverrideKeys(stage).length === 0);
   const cardId = useId();
   const available = MATCH_STAGES.filter((s) => s.code === code || !usedCodes.has(s.code));
@@ -266,9 +268,10 @@ function StageCard({
             />
           </div>
           <Muted className="text-xs">
-            Only fill what should differ. Empty fields use Default (shown as placeholders).
+            Only fill what should differ. Empty win/draw/loss use Default; empty ET/PK
+            inherit this stage's win/loss, then Default (placeholders).
           </Muted>
-          <StageOvertimePanel stage={stage} defaults={defaults} onPatch={patchStage} />
+          <StageOvertimePanel stage={stage} resolved={resolved} onPatch={patchStage} />
         </div>
       ) : null}
     </li>
