@@ -87,6 +87,7 @@ def _league(*, status: str = "pre_draft", lid: int = 1) -> SimpleNamespace:
         config={"max_members": 4},
         name="Test",
         season_label="2026-27",
+        draft_scheduled_at=None,
     )
 
 
