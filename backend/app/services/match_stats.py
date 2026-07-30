@@ -500,7 +500,7 @@ def member_highlights(
     } if all_team_ids else {}
 
     period_defs: dict[tuple[int, str], Any] = {}
-    period_points: dict[tuple[int, str], float] = defaultdict(float)
+    primary_period_points: dict[tuple[int, str], float] = defaultdict(float)
     team_points: dict[int, float] = defaultdict(float)
     biggest_upset: dict[str, Any] | None = None
     upset_types = upset_types_for_league(league)
@@ -515,14 +515,27 @@ def member_highlights(
         by_key = {period.key: period for period in catalog}
         for period_key, period in by_key.items():
             period_defs[(group_i, period_key)] = period
+        # Best/worst periods must match period_kind (primary scoring pool type).
+        use_for_highlights = (
+            competition_type is None
+            or event_competition_type is None
+            or event_competition_type == competition_type
+        )
         for event in grouped_events:
             pts = float(event.points)
             team_points[event.team_id] += pts
             period_key = resolve_period_key(
-                event.stage, event.scheduled_matchweek, expanded=expanded
+                event.stage,
+                event.scheduled_matchweek,
+                expanded=expanded,
+                competition_type=event_competition_type,
             )
-            if period_key is not None and period_key in by_key:
-                period_points[(group_i, period_key)] += pts
+            if (
+                use_for_highlights
+                and period_key is not None
+                and period_key in by_key
+            ):
+                primary_period_points[(group_i, period_key)] += pts
             if event.event_type in upset_types:
                 meta = event.metadata_ or {}
                 gap = meta.get("gap")
@@ -575,8 +588,16 @@ def member_highlights(
             "points": points,
         }
 
-    best_period = max(period_points.items(), key=lambda x: x[1]) if period_points else None
-    worst_period = min(period_points.items(), key=lambda x: x[1]) if period_points else None
+    best_period = (
+        max(primary_period_points.items(), key=lambda x: x[1])
+        if primary_period_points
+        else None
+    )
+    worst_period = (
+        min(primary_period_points.items(), key=lambda x: x[1])
+        if primary_period_points
+        else None
+    )
     top_team_id = max(team_points.items(), key=lambda x: x[1])[0] if team_points else None
     top_club = None
     if top_team_id is not None and top_team_id in teams:

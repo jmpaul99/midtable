@@ -339,7 +339,32 @@ class FootballDataProvider:
                         team_name=team.get("name"),
                     )
                 )
-        rows.sort(key=lambda r: (r.position, r.external_team_id))
+        # Group-local positions are not a global order. When we merged multiple
+        # blocks (multi-group cups / no overall TOTAL), re-rank by table metrics.
+        if len(table_blocks) > 1:
+            rows.sort(
+                key=lambda r: (
+                    -r.points,
+                    -r.goal_difference,
+                    -r.goals_for,
+                    r.external_team_id,
+                )
+            )
+            rows = [
+                ProviderStandingRow(
+                    external_team_id=row.external_team_id,
+                    position=index,
+                    played=row.played,
+                    points=row.points,
+                    goals_for=row.goals_for,
+                    goals_against=row.goals_against,
+                    goal_difference=row.goal_difference,
+                    team_name=row.team_name,
+                )
+                for index, row in enumerate(rows, start=1)
+            ]
+        else:
+            rows.sort(key=lambda r: (r.position, r.external_team_id))
         return rows, rate
 
     @staticmethod

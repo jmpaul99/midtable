@@ -245,8 +245,34 @@ def test_league_catalog_merges_null_stage_into_regular_season():
     assert by_key["REGULAR_SEASON:1"]["points"] == 4.0
     assert by_key["REGULAR_SEASON:2"]["points"] == 5.0
     assert resolve_period_key(
-        None, 2, expanded=frozenset({"REGULAR_SEASON"})
+        None, 2, expanded=frozenset({"REGULAR_SEASON"}), competition_type="LEAGUE"
     ) == "REGULAR_SEASON:2"
+
+
+def test_league_single_matchday_null_stage_resolves_to_collapsed_key():
+    """Collapsed LEAGUE catalogs use key REGULAR_SEASON; null-stage events must match."""
+    events = [
+        SimpleNamespace(stage=None, scheduled_matchweek=1, points=3),
+        SimpleNamespace(stage="", scheduled_matchweek=1, points=2),
+    ]
+    catalog = build_period_catalog(
+        [(e.stage, e.scheduled_matchweek) for e in events],
+        competition_type="LEAGUE",
+    )
+    assert [p.key for p in catalog] == ["REGULAR_SEASON"]
+    expanded = expanded_stages(catalog)
+    assert "REGULAR_SEASON" not in expanded
+    assert (
+        resolve_period_key(
+            None, 1, expanded=expanded, competition_type="LEAGUE"
+        )
+        == "REGULAR_SEASON"
+    )
+
+    rows = points_by_period_from_events(events, competition_type="LEAGUE")
+    by_key = {row["period_key"]: row for row in rows}
+    assert set(by_key) == {"REGULAR_SEASON"}
+    assert by_key["REGULAR_SEASON"]["points"] == 5.0
 
 
 def test_points_by_period_from_events_wc():

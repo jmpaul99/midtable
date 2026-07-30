@@ -188,7 +188,16 @@ def bootstrap_season(
         db.flush()
 
         if pool.competition_code and pool.season_year:
-            teams, _ = provider.list_teams(pool.competition_code, int(pool.season_year))
+            teams, _ = _provider_call(
+                lambda: provider.list_teams(
+                    pool.competition_code, int(pool.season_year)
+                ),
+                context={
+                    "pool_key": pool.key,
+                    "competition_code": pool.competition_code,
+                    "season_year": pool.season_year,
+                },
+            )
             kind = team_kind_for_competition(pool.competition_code)
             for pt in teams:
                 team = db.scalars(

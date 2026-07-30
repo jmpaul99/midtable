@@ -368,7 +368,10 @@ def matchweek_breakdown(db: Session, league: League) -> list[dict[str, Any]]:
         buckets: dict[tuple[int, str], Decimal] = defaultdict(lambda: Decimal(0))
         for event in grouped_events:
             period_key = resolve_period_key(
-                event.stage, event.scheduled_matchweek, expanded=expanded
+                event.stage,
+                event.scheduled_matchweek,
+                expanded=expanded,
+                competition_type=competition_type,
             )
             if period_key is None or period_key not in by_key:
                 continue

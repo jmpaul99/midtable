@@ -169,7 +169,9 @@ def test_list_standings_merges_multi_group_total_blocks():
     }
     provider._get = MagicMock(return_value=(payload, RateLimitInfo()))  # type: ignore[method-assign]
     rows, _ = provider.list_standings("CL", 2024)
-    assert [r.external_team_id for r in rows] == ["1", "3", "2", "4"]
+    # Re-ranked by points/GD/GF, not group-local position (B1 15pts before A1 12pts).
+    assert [r.external_team_id for r in rows] == ["3", "1", "2", "4"]
+    assert [r.position for r in rows] == [1, 2, 3, 4]
     assert {r.external_team_id for r in rows} == {"1", "2", "3", "4"}
 
 
@@ -212,6 +214,9 @@ def test_list_standings_merges_non_total_blocks_when_total_missing():
     provider._get = MagicMock(return_value=(payload, RateLimitInfo()))  # type: ignore[method-assign]
     rows, _ = provider.list_standings("FAC", 2024)
     assert [r.external_team_id for r in rows] == ["10", "20"]
+    assert [r.position for r in rows] == [1, 2]
+    assert rows[0].points == 9
+    assert rows[1].points == 6
 
 
 def test_ensure_baselines_skips_previous_standings_when_cached():

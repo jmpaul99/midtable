@@ -297,8 +297,13 @@ def resolve_period_key(
     matchweek: int | None,
     *,
     expanded: frozenset[str],
+    competition_type: str | None = None,
 ) -> str | None:
     stage_key = (stage or "").strip()
+    # Mirror build_period_catalog: LEAGUE null/empty stage → REGULAR_SEASON so
+    # collapsed single-matchday catalogs (key REGULAR_SEASON) still match.
+    if competition_type == "LEAGUE" and not stage_key:
+        stage_key = "REGULAR_SEASON"
     if stage_key in expanded:
         if matchweek is None:
             # Expanded stages may still have null-matchweek events; bucket on stage.
@@ -340,6 +345,7 @@ def points_by_period_from_events(
             getattr(event, "stage", None),
             getattr(event, "scheduled_matchweek", None),
             expanded=expanded,
+            competition_type=competition_type,
         )
         if key is None or key not in totals:
             continue
