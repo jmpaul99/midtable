@@ -264,30 +264,12 @@ def test_list_standings_merges_non_total_blocks_when_total_missing():
     assert rows[1].points == 6
 
 
-def test_ensure_baselines_skips_previous_standings_when_cached():
+def test_ensure_baselines_skips_previous_standings_when_cached(monkeypatch):
     db = MagicMock()
     existing = SimpleNamespace(
         rows=[SimpleNamespace(team_id=1, played=38)],
         kickoff_at=datetime(2025, 5, 26, tzinfo=UTC),
     )
-    # oldest_snapshot returns existing; zeroed path needs resolve + _snapshot_at None + teams
-    call_count = {"n": 0}
-
-    def scalars_side_effect(stmt):  # noqa: ARG001
-        call_count["n"] += 1
-        result = MagicMock()
-        # First call inside oldest_snapshot_for_competition
-        if call_count["n"] == 1:
-            result.first.return_value = existing
-            result.all.return_value = [existing]
-        else:
-            result.first.return_value = SimpleNamespace(
-                id=10, rows=[], kickoff_at=datetime(2025, 8, 15, tzinfo=UTC)
-            )
-            result.all.return_value = []
-        return result
-
-    db.scalars.side_effect = scalars_side_effect
 
     provider = MagicMock()
     provider.list_standings = MagicMock(
@@ -304,33 +286,118 @@ def test_ensure_baselines_skips_previous_standings_when_cached():
         RateLimitInfo(),
     )
 
-    # Patch oldest to return existing with rows so previous fetch is skipped.
     from app.services import standings as standings_mod
 
-    original_oldest = standings_mod.oldest_snapshot_for_competition
-    original_snapshot_at = standings_mod._snapshot_at
-    original_teams = standings_mod._teams_for_competition_season
+    monkeypatch.setattr(
+        standings_mod,
+        "previous_final_snapshot_for_competition",
+        lambda *a, **k: existing,
+    )
+    monkeypatch.setattr(
+        standings_mod, "_snapshot_at", lambda *a, **k: SimpleNamespace(id=1)
+    )
+    monkeypatch.setattr(
+        standings_mod, "_teams_for_competition_season", lambda *a, **k: []
+    )
 
-    standings_mod.oldest_snapshot_for_competition = lambda *a, **k: existing  # type: ignore[assignment]
-    standings_mod._snapshot_at = lambda *a, **k: SimpleNamespace(id=1)  # type: ignore[assignment]
-    standings_mod._teams_for_competition_season = lambda *a, **k: []  # type: ignore[assignment]
-    try:
-        out = ensure_competition_season_table_baselines(
-            db,
-            provider,
-            provider_key="football-data.org",
-            competition_code="PL",
-            season_year=2025,
-        )
-        assert out["created_previous_final"] is False
-        provider.list_standings.assert_not_called()
-    finally:
-        standings_mod.oldest_snapshot_for_competition = original_oldest  # type: ignore[assignment]
-        standings_mod._snapshot_at = original_snapshot_at  # type: ignore[assignment]
-        standings_mod._teams_for_competition_season = original_teams  # type: ignore[assignment]
+    out = ensure_competition_season_table_baselines(
+        db,
+        provider,
+        provider_key="football-data.org",
+        competition_code="PL",
+        season_year=2025,
+    )
+    assert out["created_previous_final"] is False
+    provider.list_standings.assert_not_called()
 
 
-def test_ensure_baselines_reraises_rate_limited_standings():
+def test_ensure_baselines_fetches_previous_when_only_midseason_exists(monkeypatch):
+    """Live match snapshots must not block fetching a true previous-final baseline."""
+    db = MagicMock()
+    created: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        "app.services.standings.previous_final_snapshot_for_competition",
+        lambda *a, **k: None,
+    )
+    monkeypatch.setattr(
+        "app.services.standings.oldest_snapshot_for_competition",
+        lambda *a, **k: SimpleNamespace(
+            rows=[SimpleNamespace(team_id=1, played=3)],
+            kickoff_at=datetime(2025, 9, 1, tzinfo=UTC),
+        ),
+    )
+    monkeypatch.setattr(
+        "app.services.standings._snapshot_at", lambda *a, **k: None
+    )
+    monkeypatch.setattr(
+        "app.services.standings._teams_for_competition_season",
+        lambda *a, **k: [SimpleNamespace(id=10, name="Arsenal")],
+    )
+
+    def fake_upsert(*_a, **kwargs):
+        created.setdefault("calls", []).append(kwargs)
+        return SimpleNamespace(id=1, rows=kwargs["rows"])
+
+    monkeypatch.setattr(
+        "app.services.standings._upsert_snapshot_with_rows", fake_upsert
+    )
+    monkeypatch.setattr(
+        "app.services.standings._map_standing_rows_to_local",
+        lambda *_a, **_k: [(10, 1, 38, 84, 88, 30, 58)],
+    )
+
+    provider = MagicMock()
+    provider.resolve_competition_season.side_effect = [
+        (
+            CompetitionSeasonInfo(
+                code="PL",
+                season_year=2024,
+                start_date=datetime(2024, 8, 16, tzinfo=UTC),
+                end_date=datetime(2025, 5, 25, tzinfo=UTC),
+                available=True,
+            ),
+            RateLimitInfo(),
+        ),
+        (
+            CompetitionSeasonInfo(
+                code="PL",
+                season_year=2025,
+                start_date=datetime(2025, 8, 15, tzinfo=UTC),
+                end_date=datetime(2026, 5, 24, tzinfo=UTC),
+                available=True,
+            ),
+            RateLimitInfo(),
+        ),
+    ]
+    provider.list_standings.return_value = (
+        [
+            ProviderStandingRow(
+                external_team_id="57",
+                position=1,
+                played=38,
+                points=84,
+                goals_for=88,
+                goals_against=30,
+                goal_difference=58,
+                team_name="Arsenal",
+            )
+        ],
+        RateLimitInfo(),
+    )
+
+    out = ensure_competition_season_table_baselines(
+        db,
+        provider,
+        provider_key="football-data.org",
+        competition_code="PL",
+        season_year=2025,
+    )
+    assert out["created_previous_final"] is True
+    provider.list_standings.assert_called_once_with("PL", 2024)
+
+
+def test_ensure_baselines_reraises_rate_limited_standings(monkeypatch):
     db = MagicMock()
     provider = MagicMock()
     provider.resolve_competition_season.return_value = (
@@ -349,30 +416,24 @@ def test_ensure_baselines_reraises_rate_limited_standings():
         rate_limited=True,
     )
 
-    from app.services import standings as standings_mod
-
-    original_oldest = standings_mod.oldest_snapshot_for_competition
-    standings_mod.oldest_snapshot_for_competition = lambda *a, **k: None  # type: ignore[assignment]
-    try:
-        with pytest.raises(FootballDataError) as exc_info:
-            ensure_competition_season_table_baselines(
-                db,
-                provider,
-                provider_key="football-data.org",
-                competition_code="PL",
-                season_year=2026,
-            )
-        assert exc_info.value.rate_limited is True
-    finally:
-        standings_mod.oldest_snapshot_for_competition = original_oldest  # type: ignore[assignment]
+    monkeypatch.setattr(
+        "app.services.standings.previous_final_snapshot_for_competition",
+        lambda *a, **k: None,
+    )
+    with pytest.raises(FootballDataError) as exc_info:
+        ensure_competition_season_table_baselines(
+            db,
+            provider,
+            provider_key="football-data.org",
+            competition_code="PL",
+            season_year=2026,
+        )
+    assert exc_info.value.rate_limited is True
 
 
 def test_ensure_baselines_fetches_previous_when_missing(monkeypatch):
     db = MagicMock()
     created: dict[str, object] = {}
-
-    def fake_oldest(*_a, **_k):
-        return None
 
     def fake_snapshot_at(*_a, **_k):
         return None
@@ -430,7 +491,9 @@ def test_ensure_baselines_fetches_previous_when_missing(monkeypatch):
 
     from app.services import standings as standings_mod
 
-    monkeypatch.setattr(standings_mod, "oldest_snapshot_for_competition", fake_oldest)
+    monkeypatch.setattr(
+        standings_mod, "previous_final_snapshot_for_competition", lambda *a, **k: None
+    )
     monkeypatch.setattr(standings_mod, "_snapshot_at", fake_snapshot_at)
     monkeypatch.setattr(standings_mod, "_upsert_snapshot_with_rows", fake_upsert)
     monkeypatch.setattr(standings_mod, "_teams_for_competition_season", fake_teams)

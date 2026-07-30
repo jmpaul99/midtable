@@ -457,15 +457,16 @@ def ensure_competition_season_table_baselines(
     created_zeroed = False
     code = competition_code.upper()
 
-    oldest = oldest_snapshot_for_competition(
-        db,
-        provider=provider_key,
-        competition_code=code,
-        season_year=season_year,
-    )
-    oldest_rows = list(oldest.rows) if oldest is not None else []
-    has_previous_final = bool(oldest_rows) and any(
-        int(r.played or 0) > 0 for r in oldest_rows
+    # Use the same previous-final detector draft autopick uses. A mid-season
+    # kickoff snapshot with played > 0 must not count as a cached baseline.
+    has_previous_final = (
+        previous_final_snapshot_for_competition(
+            db,
+            provider=provider_key,
+            competition_code=code,
+            season_year=season_year,
+        )
+        is not None
     )
     if not has_previous_final:
         previous_year = int(season_year) - 1
