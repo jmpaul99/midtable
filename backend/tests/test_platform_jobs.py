@@ -99,12 +99,36 @@ def test_fail_stale_running_platform_jobs():
     stale = _job(status="running")
     stale.started_at = datetime.now(UTC) - timedelta(hours=3)
     db = MagicMock()
-    db.scalars.return_value.all.return_value = [stale]
+    # First query: stale running; second: stale pending (none).
+    running_out = MagicMock()
+    running_out.all.return_value = [stale]
+    pending_out = MagicMock()
+    pending_out.all.return_value = []
+    db.scalars.side_effect = [running_out, pending_out]
 
     count = fail_stale_running_platform_jobs(db, now=datetime.now(UTC))
     assert count == 1
     assert stale.status == "failed"
     assert "Timed out" in (stale.error or "")
+    assert stale.finished_at is not None
+    db.commit.assert_called()
+
+
+def test_fail_stale_pending_platform_jobs():
+    stale = _job(status="pending")
+    stale.created_at = datetime.now(UTC) - timedelta(hours=1)
+    db = MagicMock()
+    running_out = MagicMock()
+    running_out.all.return_value = []
+    pending_out = MagicMock()
+    pending_out.all.return_value = [stale]
+    db.scalars.side_effect = [running_out, pending_out]
+
+    count = fail_stale_running_platform_jobs(db, now=datetime.now(UTC))
+    assert count == 1
+    assert stale.status == "failed"
+    assert "waiting to start" in (stale.error or "")
+    assert stale.started_at is not None
     assert stale.finished_at is not None
     db.commit.assert_called()
 
@@ -118,8 +142,12 @@ def test_enqueue_reclaims_stale_running_job(monkeypatch):
     def scalars(_stmt):
         out = MagicMock()
         calls["n"] += 1
+        # fail_stale: running query, then pending query; then active check
         if calls["n"] == 1:
             out.all.return_value = [stale]
+            return out
+        if calls["n"] == 2:
+            out.all.return_value = []
             return out
         out.first.return_value = None
         out.all.return_value = []

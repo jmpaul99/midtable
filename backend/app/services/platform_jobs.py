@@ -24,6 +24,8 @@ JobSource = Literal["admin", "cron"]
 ACTIVE_STATUSES = ("pending", "running")
 # Teams+FIFA sync can take a while under rate limits; past this, assume the worker died.
 _STALE_RUNNING_AFTER = timedelta(hours=2)
+# Pending jobs should be claimed within seconds; anything older never got a worker.
+_STALE_PENDING_AFTER = timedelta(minutes=30)
 
 
 class ActivePlatformJobConflict(Exception):
@@ -39,29 +41,49 @@ def fail_stale_running_platform_jobs(
     *,
     now: datetime | None = None,
     max_age: timedelta = _STALE_RUNNING_AFTER,
+    pending_max_age: timedelta = _STALE_PENDING_AFTER,
 ) -> int:
-    """Mark abandoned ``running`` jobs failed so new syncs can enqueue."""
-    cutoff = (now or datetime.now(UTC)) - max_age
+    """Mark abandoned ``pending``/``running`` jobs failed so new syncs can enqueue."""
+    now_dt = now or datetime.now(UTC)
+    running_cutoff = now_dt - max_age
+    pending_cutoff = now_dt - pending_max_age
     stale = list(
         db.scalars(
             select(PlatformJob).where(
                 PlatformJob.status == "running",
                 PlatformJob.started_at.is_not(None),
-                PlatformJob.started_at < cutoff,
+                PlatformJob.started_at < running_cutoff,
+            )
+        ).all()
+    )
+    stale.extend(
+        db.scalars(
+            select(PlatformJob).where(
+                PlatformJob.status == "pending",
+                PlatformJob.created_at < pending_cutoff,
             )
         ).all()
     )
     if not stale:
         return 0
-    finished = now or datetime.now(UTC)
     for job in stale:
+        prior_status = job.status
+        prior_started = job.started_at
         job.status = "failed"
-        job.error = "Timed out (worker did not finish)"
-        job.finished_at = finished
+        job.error = (
+            "Timed out waiting to start (worker never claimed job)"
+            if prior_status == "pending"
+            else "Timed out (worker did not finish)"
+        )
+        if job.started_at is None:
+            job.started_at = now_dt
+        job.finished_at = now_dt
         logger.warning(
-            "platform_job marked stale job_id=%s started_at=%s",
+            "platform_job marked stale job_id=%s prior_status=%s created_at=%s started_at=%s",
             job.public_id,
-            job.started_at,
+            prior_status,
+            job.created_at,
+            prior_started,
         )
     db.commit()
     return len(stale)
@@ -339,14 +361,28 @@ def trigger_platform_job_run(job_id: UUID) -> None:
                     job_id,
                     response.status_code,
                 )
-        except httpx.ConnectError:
+                if response.status_code >= 400:
+                    logger.warning(
+                        "platform_job self-invoke HTTP %s; running in-process job_id=%s",
+                        response.status_code,
+                        job_id,
+                    )
+                    run_platform_job_in_new_session(job_id)
+        except httpx.HTTPError:
+            # Connect/timeout/protocol failures leave the row pending unless we
+            # fall back; run_platform_job no-ops if another worker already claimed it.
             logger.warning(
                 "platform_job self-invoke unreachable; running in-process job_id=%s",
                 job_id,
+                exc_info=True,
             )
             run_platform_job_in_new_session(job_id)
         except Exception:  # noqa: BLE001
-            logger.exception("platform_job self-invoke error job_id=%s", job_id)
+            logger.exception(
+                "platform_job self-invoke error; running in-process job_id=%s",
+                job_id,
+            )
+            run_platform_job_in_new_session(job_id)
 
     threading.Thread(target=_run, daemon=True, name=f"platform-job-{job_id}").start()
 
