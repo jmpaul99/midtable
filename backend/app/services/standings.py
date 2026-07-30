@@ -198,6 +198,66 @@ def oldest_snapshot_for_competition(
     ).first()
 
 
+def _snapshots_for_competition(
+    db: Session,
+    *,
+    provider: str,
+    competition_code: str,
+    season_year: int,
+) -> list[StandingsSnapshot]:
+    return list(
+        db.scalars(
+            select(StandingsSnapshot)
+            .where(
+                StandingsSnapshot.provider == provider,
+                StandingsSnapshot.competition_code == competition_code,
+                StandingsSnapshot.season_year == season_year,
+            )
+            .order_by(StandingsSnapshot.kickoff_at.asc())
+        ).all()
+    )
+
+
+def previous_final_snapshot_for_competition(
+    db: Session,
+    *,
+    provider: str,
+    competition_code: str,
+    season_year: int,
+) -> StandingsSnapshot | None:
+    """Oldest snapshot with any played > 0 (previous-season final baseline)."""
+    for snap in _snapshots_for_competition(
+        db,
+        provider=provider,
+        competition_code=competition_code,
+        season_year=season_year,
+    ):
+        rows = list(snap.rows)
+        if rows and any(int(r.played or 0) > 0 for r in rows):
+            return snap
+    return None
+
+
+def zeroed_opener_snapshot_for_competition(
+    db: Session,
+    *,
+    provider: str,
+    competition_code: str,
+    season_year: int,
+) -> StandingsSnapshot | None:
+    """Season-opener snapshot where every row is still played == 0."""
+    for snap in _snapshots_for_competition(
+        db,
+        provider=provider,
+        competition_code=competition_code,
+        season_year=season_year,
+    ):
+        rows = list(snap.rows)
+        if rows and all(int(r.played or 0) == 0 for r in rows):
+            return snap
+    return None
+
+
 def _aware(dt: datetime) -> datetime:
     if dt.tzinfo is None:
         return dt.replace(tzinfo=UTC)

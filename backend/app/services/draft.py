@@ -36,7 +36,10 @@ from app.logging_config import log_id
 from app.services.ranking_catalog import freeze_catalog_for_league_lock, ranks_for_league
 from app.services.readiness import evaluate_readiness
 from app.services.scoring import RankedTeam, UpsetRules
-from app.services.standings import oldest_snapshot_for_competition
+from app.services.standings import (
+    previous_final_snapshot_for_competition,
+    zeroed_opener_snapshot_for_competition,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -266,15 +269,38 @@ def _available_candidates(
     return candidates
 
 
+@dataclass(frozen=True)
+class CompetitionTableState:
+    """Previous-final rows + zeroed-opener squad for one competition season."""
+
+    previous_rows: dict[int, StandingsSnapshotRow]
+    # None when the zeroed opener is missing; set difference is then unavailable.
+    opener_ids: frozenset[int] | None
+
+    @property
+    def departed_ids(self) -> frozenset[int]:
+        """In previous-final but not in zeroed opener (left the competition)."""
+        if self.opener_ids is None:
+            return frozenset()
+        return frozenset(self.previous_rows) - self.opener_ids
+
+    @property
+    def arrival_ids(self) -> frozenset[int]:
+        """In zeroed opener but not in previous-final (new to the competition)."""
+        if self.opener_ids is None:
+            return frozenset()
+        return self.opener_ids - frozenset(self.previous_rows)
+
+
 def _table_row_lookup(
     db: Session, pools: list[TeamPool]
-) -> dict[int, StandingsSnapshotRow]:
-    """Map team_id → row from each pool's oldest previous-final snapshot.
+) -> dict[str, CompetitionTableState]:
+    """Load previous-final + zeroed opener per competition for draft ordering.
 
-    Ignores zeroed openers (all played == 0) so draft-time autopick needs a real
-    previous-final table.
+    Promotion/relegation is inferred from set difference between those snapshots
+    (not from finishing positions alone), since playoffs/etc. vary by league.
     """
-    by_team: dict[int, StandingsSnapshotRow] = {}
+    by_comp: dict[str, CompetitionTableState] = {}
     seen_keys: set[tuple[str, str, int]] = set()
     for pool in pools:
         if not pool.competition_code or not pool.season_year:
@@ -287,20 +313,33 @@ def _table_row_lookup(
         if key in seen_keys:
             continue
         seen_keys.add(key)
-        snap = oldest_snapshot_for_competition(
+        prev = previous_final_snapshot_for_competition(
             db,
             provider=key[0],
             competition_code=key[1],
             season_year=key[2],
         )
-        if snap is None:
+        previous_rows: dict[int, StandingsSnapshotRow] = {}
+        if prev is not None:
+            previous_rows = {row.team_id: row for row in prev.rows}
+
+        opener = zeroed_opener_snapshot_for_competition(
+            db,
+            provider=key[0],
+            competition_code=key[1],
+            season_year=key[2],
+        )
+        opener_ids: frozenset[int] | None = None
+        if opener is not None:
+            opener_ids = frozenset(row.team_id for row in opener.rows)
+
+        if not previous_rows and opener_ids is None:
             continue
-        snap_rows = list(snap.rows)
-        if not snap_rows or not any(int(r.played or 0) > 0 for r in snap_rows):
-            continue
-        for row in snap_rows:
-            by_team[row.team_id] = row
-    return by_team
+        by_comp[key[1]] = CompetitionTableState(
+            previous_rows=previous_rows,
+            opener_ids=opener_ids,
+        )
+    return by_comp
 
 
 def sort_candidates_for_autopick(
@@ -313,6 +352,11 @@ def sort_candidates_for_autopick(
 
     When no ranking/table data is available, sorts alphabetically (stable UI for
     random autopick mode).
+
+    Table mode (per domestic tier, best first):
+    1. Relegated into the pool (left a better-tier competition's opener)
+    2. Stayers (in both previous-final and zeroed opener), by previous-final rank
+    3. New to the competition (in opener only / not in previous-final)
     """
     if not candidates:
         return [], "random"
@@ -331,29 +375,75 @@ def sort_candidates_for_autopick(
 
     if upset.rank_source == "league_table_at_kickoff":
         pools = list({p.id: p for _, p in candidates}.values())
-        rows = _table_row_lookup(db, pools)
-        if rows:
+        by_comp = _table_row_lookup(db, pools)
+        if any(s.previous_rows for s in by_comp.values()):
             tier_by_code = resolve_domestic_tiers(db)
 
             def table_key(item: tuple[Team, TeamPool]) -> tuple:
                 team, pool = item
-                row = rows.get(team.id)
-                ranked = row is not None
                 code = (pool.competition_code or "").upper()
                 tier = tier_by_code.get(code)
                 tier_key = 999 if tier is None else tier
-                if ranked:
-                    assert row is not None
+                name = (team.name or "").lower()
+                state = by_comp.get(code)
+                prev = (
+                    state.previous_rows.get(team.id) if state is not None else None
+                )
+                in_opener = (
+                    None
+                    if state is None or state.opener_ids is None
+                    else team.id in state.opener_ids
+                )
+
+                # Stayer: finished last season here and still in the new-year opener.
+                if prev is not None and in_opener is not False:
                     return (
                         0,
                         tier_key,
-                        row.rank,
-                        -int(row.points),
-                        -int(row.goal_difference),
-                        -int(row.goals_for),
-                        (team.name or "").lower(),
+                        1,
+                        int(prev.rank),
+                        -int(prev.points),
+                        -int(prev.goal_difference),
+                        -int(prev.goals_for),
+                        name,
                     )
-                return (1, 0, 0, 0, 0, 0, (team.name or "").lower())
+
+                # Relegated in: new to this competition, left a better-tier one.
+                best: StandingsSnapshotRow | None = None
+                best_other_tier: int | None = None
+                for other_code, other_state in by_comp.items():
+                    if other_code == code or team.id not in other_state.departed_ids:
+                        continue
+                    row = other_state.previous_rows.get(team.id)
+                    if row is None:
+                        continue
+                    other_tier = tier_by_code.get(other_code)
+                    if tier is None or other_tier is None or other_tier >= tier:
+                        continue
+                    if (
+                        best is None
+                        or other_tier < (best_other_tier or 999)
+                        or (
+                            other_tier == best_other_tier
+                            and int(row.rank) < int(best.rank)
+                        )
+                    ):
+                        best = row
+                        best_other_tier = other_tier
+                if best is not None:
+                    return (
+                        0,
+                        tier_key,
+                        0,
+                        int(best.rank),
+                        -int(best.points),
+                        -int(best.goal_difference),
+                        -int(best.goals_for),
+                        name,
+                    )
+
+                # Promoted / newly added to this competition.
+                return (0, tier_key, 2, 0, 0, 0, 0, name)
 
             return sorted(candidates, key=table_key), "table"
 

@@ -295,13 +295,27 @@ def _team(name: str, *, tid: int, code: str = "PL"):
     )
 
 
+def _table_state(previous: dict, opener_ids: set[int] | None):
+    from app.services.draft import CompetitionTableState
+
+    return CompetitionTableState(
+        previous_rows=previous,
+        opener_ids=None if opener_ids is None else frozenset(opener_ids),
+    )
+
+
 def test_select_autopick_table_prefers_rank_one(monkeypatch):
     arsenal, pool = _team("Arsenal", tid=1)
     burnley, _ = _team("Burnley", tid=2)
     candidates = [(burnley, pool), (arsenal, pool)]
     rows = {
-        1: SimpleNamespace(rank=1, points=84, goal_difference=58, goals_for=88),
-        2: SimpleNamespace(rank=17, points=35, goal_difference=-20, goals_for=40),
+        "PL": _table_state(
+            {
+                1: SimpleNamespace(rank=1, points=84, goal_difference=58, goals_for=88),
+                2: SimpleNamespace(rank=17, points=35, goal_difference=-20, goals_for=40),
+            },
+            {1, 2},
+        )
     }
     monkeypatch.setattr(
         "app.services.draft._available_candidates",
@@ -335,7 +349,12 @@ def test_select_autopick_unranked_alpha_last(monkeypatch):
     zteam, _ = _team("Zulu FC", tid=3)
     candidates = [(leeds, pool), (zteam, pool), (arsenal, pool)]
     rows = {
-        1: SimpleNamespace(rank=1, points=84, goal_difference=58, goals_for=88),
+        "PL": _table_state(
+            {
+                1: SimpleNamespace(rank=1, points=84, goal_difference=58, goals_for=88),
+            },
+            {1, 2, 3},  # leeds + zulu are new to PL
+        )
     }
     monkeypatch.setattr(
         "app.services.draft._available_candidates",
@@ -379,8 +398,18 @@ def test_select_autopick_tier_one_before_tier_two(monkeypatch):
     elc_1st, elc_pool = _team("Leicester", tid=2, code="ELC")
     candidates = [(elc_1st, elc_pool), (pl_20th, pl_pool)]
     rows = {
-        1: SimpleNamespace(rank=20, points=25, goal_difference=-30, goals_for=30),
-        2: SimpleNamespace(rank=1, points=90, goal_difference=40, goals_for=80),
+        "PL": _table_state(
+            {
+                1: SimpleNamespace(rank=20, points=25, goal_difference=-30, goals_for=30),
+            },
+            {1},
+        ),
+        "ELC": _table_state(
+            {
+                2: SimpleNamespace(rank=1, points=90, goal_difference=40, goals_for=80),
+            },
+            {2},
+        ),
     }
     monkeypatch.setattr(
         "app.services.draft._available_candidates",
@@ -410,8 +439,18 @@ def test_select_autopick_same_tier_interleaves_by_rank(monkeypatch):
     pd_1st, pd_pool = _team("Real Madrid", tid=2, code="PD")
     candidates = [(pl_2nd, pl_pool), (pd_1st, pd_pool)]
     rows = {
-        1: SimpleNamespace(rank=2, points=80, goal_difference=50, goals_for=70),
-        2: SimpleNamespace(rank=1, points=88, goal_difference=55, goals_for=75),
+        "PL": _table_state(
+            {
+                1: SimpleNamespace(rank=2, points=80, goal_difference=50, goals_for=70),
+            },
+            {1},
+        ),
+        "PD": _table_state(
+            {
+                2: SimpleNamespace(rank=1, points=88, goal_difference=55, goals_for=75),
+            },
+            {2},
+        ),
     }
     monkeypatch.setattr(
         "app.services.draft._available_candidates",
@@ -434,6 +473,128 @@ def test_select_autopick_same_tier_interleaves_by_rank(monkeypatch):
     )
     assert selection is not None
     assert selection.team is pd_1st
+
+
+def test_promoted_team_bottom_of_own_tier_before_lower_tier(monkeypatch):
+    """Opener-only PL teams (left ELC) sort after PL stayers, before ELC."""
+    wolves, pl_pool = _team("Wolves", tid=1, code="PL")
+    coventry, _ = _team("Coventry", tid=2, code="PL")
+    leicester, elc_pool = _team("Leicester", tid=3, code="ELC")
+    candidates = [(coventry, pl_pool), (leicester, elc_pool), (wolves, pl_pool)]
+    rows = {
+        "PL": _table_state(
+            {
+                1: SimpleNamespace(rank=20, points=25, goal_difference=-30, goals_for=30),
+            },
+            {1, 2},  # coventry arrived in PL opener
+        ),
+        "ELC": _table_state(
+            {
+                2: SimpleNamespace(rank=1, points=95, goal_difference=52, goals_for=80),
+                3: SimpleNamespace(rank=2, points=90, goal_difference=40, goals_for=75),
+            },
+            {3},  # coventry departed ELC; leicester stayed
+        ),
+    }
+    monkeypatch.setattr(
+        "app.services.draft._table_row_lookup",
+        lambda *_a, **_k: rows,
+    )
+    monkeypatch.setattr(
+        "app.services.draft.resolve_domestic_tiers",
+        lambda *_a, **_k: {"PL": 1, "ELC": 2},
+    )
+    from app.services.draft import sort_candidates_for_autopick
+
+    ordered, mode = sort_candidates_for_autopick(
+        MagicMock(),
+        league=SimpleNamespace(upset_rules={"rank_source": "league_table_at_kickoff"}),
+        candidates=candidates,
+    )
+    assert mode == "table"
+    assert [t.name for t, _ in ordered] == ["Wolves", "Coventry", "Leicester"]
+
+
+def test_relegated_team_top_of_lower_tier(monkeypatch):
+    """Teams that left PL opener and arrived in ELC sort above ELC stayers."""
+    burnley, elc_pool = _team("Burnley", tid=1, code="ELC")
+    wolves, _ = _team("Wolves", tid=2, code="ELC")
+    leicester, _ = _team("Leicester", tid=3, code="ELC")
+    candidates = [(leicester, elc_pool), (wolves, elc_pool), (burnley, elc_pool)]
+    rows = {
+        "PL": _table_state(
+            {
+                1: SimpleNamespace(rank=19, points=22, goal_difference=-40, goals_for=30),
+                2: SimpleNamespace(rank=20, points=20, goal_difference=-50, goals_for=25),
+            },
+            set(),  # both left PL
+        ),
+        "ELC": _table_state(
+            {
+                3: SimpleNamespace(rank=1, points=90, goal_difference=40, goals_for=80),
+            },
+            {1, 2, 3},  # burnley/wolves arrived in Championship
+        ),
+    }
+    monkeypatch.setattr(
+        "app.services.draft._table_row_lookup",
+        lambda *_a, **_k: rows,
+    )
+    monkeypatch.setattr(
+        "app.services.draft.resolve_domestic_tiers",
+        lambda *_a, **_k: {"PL": 1, "ELC": 2},
+    )
+    from app.services.draft import sort_candidates_for_autopick
+
+    ordered, mode = sort_candidates_for_autopick(
+        MagicMock(),
+        league=SimpleNamespace(upset_rules={"rank_source": "league_table_at_kickoff"}),
+        candidates=candidates,
+    )
+    assert mode == "table"
+    assert [t.name for t, _ in ordered] == ["Burnley", "Wolves", "Leicester"]
+
+
+def test_playoff_not_assumed_from_table_position(monkeypatch):
+    """Mid-table finisher who left via opener diff is still treated as departed."""
+    # Finished 6th in ELC but not in ELC opener (playoff promotion) → PL arrival.
+    sixth, pl_pool = _team("Playoff Winner", tid=1, code="PL")
+    champ, elc_pool = _team("Champ Runner", tid=2, code="ELC")
+    pl_stayer, _ = _team("Arsenal", tid=3, code="PL")
+    candidates = [(sixth, pl_pool), (champ, elc_pool), (pl_stayer, pl_pool)]
+    rows = {
+        "PL": _table_state(
+            {
+                3: SimpleNamespace(rank=1, points=85, goal_difference=40, goals_for=70),
+            },
+            {1, 3},
+        ),
+        "ELC": _table_state(
+            {
+                1: SimpleNamespace(rank=6, points=70, goal_difference=10, goals_for=60),
+                2: SimpleNamespace(rank=2, points=88, goal_difference=30, goals_for=70),
+            },
+            {2},  # #6 departed ELC despite not finishing top-2
+        ),
+    }
+    monkeypatch.setattr(
+        "app.services.draft._table_row_lookup",
+        lambda *_a, **_k: rows,
+    )
+    monkeypatch.setattr(
+        "app.services.draft.resolve_domestic_tiers",
+        lambda *_a, **_k: {"PL": 1, "ELC": 2},
+    )
+    from app.services.draft import sort_candidates_for_autopick
+
+    ordered, mode = sort_candidates_for_autopick(
+        MagicMock(),
+        league=SimpleNamespace(upset_rules={"rank_source": "league_table_at_kickoff"}),
+        candidates=candidates,
+    )
+    assert mode == "table"
+    # PL stayer, then promoted playoff winner, then ELC stayer
+    assert [t.name for t, _ in ordered] == ["Arsenal", "Playoff Winner", "Champ Runner"]
 
 
 def test_select_autopick_fixed_ranking(monkeypatch):
@@ -500,8 +661,13 @@ def test_sort_candidates_matches_autopick_pick(monkeypatch):
     burnley, _ = _team("Burnley", tid=2)
     candidates = [(burnley, pool), (arsenal, pool)]
     rows = {
-        1: SimpleNamespace(rank=1, points=84, goal_difference=58, goals_for=88),
-        2: SimpleNamespace(rank=17, points=35, goal_difference=-20, goals_for=40),
+        "PL": _table_state(
+            {
+                1: SimpleNamespace(rank=1, points=84, goal_difference=58, goals_for=88),
+                2: SimpleNamespace(rank=17, points=35, goal_difference=-20, goals_for=40),
+            },
+            {1, 2},
+        )
     }
     monkeypatch.setattr(
         "app.services.draft._table_row_lookup",
