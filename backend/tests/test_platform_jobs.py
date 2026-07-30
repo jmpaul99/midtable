@@ -157,6 +157,7 @@ def test_run_platform_job_success(monkeypatch):
             },
             "rankings": {"ok": True, "catalogs": {"men": {"entries": 10}}},
             "table_snapshots": {
+                "ok": True,
                 "created_previous_final": 1,
                 "created_zeroed_opener": 1,
             },
@@ -195,3 +196,39 @@ def test_run_platform_job_teams_failure(monkeypatch):
     out = run_platform_job(db, job_id, MagicMock(), MagicMock())
     assert out.status == "failed"
     assert out.error == "provider down"
+
+
+def test_global_sync_ok_requires_table_snapshots(monkeypatch):
+    from app.services.global_sync import sync_all_teams_and_rankings
+
+    monkeypatch.setattr(
+        "app.services.global_sync.upsert_teams_for_competitions",
+        lambda *_a, **_k: {
+            "ok": True,
+            "created": 1,
+            "updated": 0,
+            "competitions": [{"ok": True, "code": "PL", "season_year": 2025}],
+        },
+    )
+    monkeypatch.setattr(
+        "app.services.global_sync.ensure_table_baselines_for_competitions",
+        lambda *_a, **_k: {
+            "ok": False,
+            "competitions_ok": 0,
+            "competitions_failed": 1,
+            "created_previous_final": 0,
+            "created_zeroed_opener": 0,
+            "competitions": [{"code": "PL", "ok": False, "error": "429"}],
+        },
+    )
+    settings = MagicMock()
+    settings.parse_api_key = "   "  # skipped rankings
+    payload = sync_all_teams_and_rankings(
+        MagicMock(),
+        MagicMock(),
+        settings=settings,
+        season_year=2025,
+    )
+    assert payload["ok"] is False
+    assert payload["table_snapshots"]["ok"] is False
+    assert payload["rankings"].get("skipped") is True

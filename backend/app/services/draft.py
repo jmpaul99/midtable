@@ -294,13 +294,16 @@ class CompetitionTableState:
 
 def _table_row_lookup(
     db: Session, pools: list[TeamPool]
-) -> dict[str, CompetitionTableState]:
+) -> dict[tuple[str, int], CompetitionTableState]:
     """Load previous-final + zeroed opener per competition for draft ordering.
 
     Promotion/relegation is inferred from set difference between those snapshots
     (not from finishing positions alone), since playoffs/etc. vary by league.
+
+    Keys are ``(competition_code, season_year)`` so pools that share a code
+    across seasons do not overwrite each other.
     """
-    by_comp: dict[str, CompetitionTableState] = {}
+    by_comp: dict[tuple[str, int], CompetitionTableState] = {}
     seen_keys: set[tuple[str, str, int]] = set()
     for pool in pools:
         if not pool.competition_code or not pool.season_year:
@@ -335,7 +338,7 @@ def _table_row_lookup(
 
         if not previous_rows and opener_ids is None:
             continue
-        by_comp[key[1]] = CompetitionTableState(
+        by_comp[(key[1], key[2])] = CompetitionTableState(
             previous_rows=previous_rows,
             opener_ids=opener_ids,
         )
@@ -382,10 +385,11 @@ def sort_candidates_for_autopick(
             def table_key(item: tuple[Team, TeamPool]) -> tuple:
                 team, pool = item
                 code = (pool.competition_code or "").upper()
+                season = int(pool.season_year) if pool.season_year else 0
                 tier = tier_by_code.get(code)
                 tier_key = 999 if tier is None else tier
                 name = (team.name or "").lower()
-                state = by_comp.get(code)
+                state = by_comp.get((code, season))
                 prev = (
                     state.previous_rows.get(team.id) if state is not None else None
                 )
@@ -395,8 +399,9 @@ def sort_candidates_for_autopick(
                     else team.id in state.opener_ids
                 )
 
-                # Stayer: finished last season here and still in the new-year opener.
-                if prev is not None and in_opener is not False:
+                # Stayer: finished last season here and confirmed in the opener.
+                # Unknown opener (None) must not count as a stayer.
+                if prev is not None and in_opener is True:
                     return (
                         0,
                         tier_key,
@@ -411,8 +416,12 @@ def sort_candidates_for_autopick(
                 # Relegated in: new to this competition, left a better-tier one.
                 best: StandingsSnapshotRow | None = None
                 best_other_tier: int | None = None
-                for other_code, other_state in by_comp.items():
-                    if other_code == code or team.id not in other_state.departed_ids:
+                for (other_code, other_year), other_state in by_comp.items():
+                    if (
+                        other_year != season
+                        or other_code == code
+                        or team.id not in other_state.departed_ids
+                    ):
                         continue
                     row = other_state.previous_rows.get(team.id)
                     if row is None:
@@ -442,7 +451,7 @@ def sort_candidates_for_autopick(
                         name,
                     )
 
-                # Promoted / newly added to this competition.
+                # Promoted / newly added / opener unknown.
                 return (0, tier_key, 2, 0, 0, 0, 0, name)
 
             return sorted(candidates, key=table_key), "table"
@@ -486,8 +495,9 @@ def draft_order_by_team_pool(
 ) -> dict[tuple[int, int], int]:
     """Map (team_id, pool_id) → 0-based autopick display order for the league.
 
-    Order is stable for a given ranking/table snapshot; cached for the life of
-    the draft (cleared on open/reset), not on a short TTL.
+    Ranking/table order is stable for a given snapshot and is cached until
+    open/reset. Alphabetical (random-mode) fallbacks are never cached so a
+    later freeze or table baseline can still produce the real order.
     """
     cached = _draft_order_cache.get(league.id)
     if cached is not None:
@@ -507,12 +517,13 @@ def draft_order_by_team_pool(
         pool = pool_by_id.get(int(pool_id))
         if pool is not None:
             candidates.append((team, pool))
-    ordered, _ = sort_candidates_for_autopick(db, league=league, candidates=candidates)
+    ordered, mode = sort_candidates_for_autopick(db, league=league, candidates=candidates)
     result = {
         (team.id, pool.id): index
         for index, (team, pool) in enumerate(ordered)
     }
-    _draft_order_cache[league.id] = result
+    if mode != "random":
+        _draft_order_cache[league.id] = result
     return result
 
 

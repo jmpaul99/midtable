@@ -309,7 +309,7 @@ def test_select_autopick_table_prefers_rank_one(monkeypatch):
     burnley, _ = _team("Burnley", tid=2)
     candidates = [(burnley, pool), (arsenal, pool)]
     rows = {
-        "PL": _table_state(
+        ("PL", 2025): _table_state(
             {
                 1: SimpleNamespace(rank=1, points=84, goal_difference=58, goals_for=88),
                 2: SimpleNamespace(rank=17, points=35, goal_difference=-20, goals_for=40),
@@ -349,7 +349,7 @@ def test_select_autopick_unranked_alpha_last(monkeypatch):
     zteam, _ = _team("Zulu FC", tid=3)
     candidates = [(leeds, pool), (zteam, pool), (arsenal, pool)]
     rows = {
-        "PL": _table_state(
+        ("PL", 2025): _table_state(
             {
                 1: SimpleNamespace(rank=1, points=84, goal_difference=58, goals_for=88),
             },
@@ -398,13 +398,13 @@ def test_select_autopick_tier_one_before_tier_two(monkeypatch):
     elc_1st, elc_pool = _team("Leicester", tid=2, code="ELC")
     candidates = [(elc_1st, elc_pool), (pl_20th, pl_pool)]
     rows = {
-        "PL": _table_state(
+        ("PL", 2025): _table_state(
             {
                 1: SimpleNamespace(rank=20, points=25, goal_difference=-30, goals_for=30),
             },
             {1},
         ),
-        "ELC": _table_state(
+        ("ELC", 2025): _table_state(
             {
                 2: SimpleNamespace(rank=1, points=90, goal_difference=40, goals_for=80),
             },
@@ -439,13 +439,13 @@ def test_select_autopick_same_tier_interleaves_by_rank(monkeypatch):
     pd_1st, pd_pool = _team("Real Madrid", tid=2, code="PD")
     candidates = [(pl_2nd, pl_pool), (pd_1st, pd_pool)]
     rows = {
-        "PL": _table_state(
+        ("PL", 2025): _table_state(
             {
                 1: SimpleNamespace(rank=2, points=80, goal_difference=50, goals_for=70),
             },
             {1},
         ),
-        "PD": _table_state(
+        ("PD", 2025): _table_state(
             {
                 2: SimpleNamespace(rank=1, points=88, goal_difference=55, goals_for=75),
             },
@@ -482,13 +482,13 @@ def test_promoted_team_bottom_of_own_tier_before_lower_tier(monkeypatch):
     leicester, elc_pool = _team("Leicester", tid=3, code="ELC")
     candidates = [(coventry, pl_pool), (leicester, elc_pool), (wolves, pl_pool)]
     rows = {
-        "PL": _table_state(
+        ("PL", 2025): _table_state(
             {
                 1: SimpleNamespace(rank=20, points=25, goal_difference=-30, goals_for=30),
             },
             {1, 2},  # coventry arrived in PL opener
         ),
-        "ELC": _table_state(
+        ("ELC", 2025): _table_state(
             {
                 2: SimpleNamespace(rank=1, points=95, goal_difference=52, goals_for=80),
                 3: SimpleNamespace(rank=2, points=90, goal_difference=40, goals_for=75),
@@ -522,14 +522,14 @@ def test_relegated_team_top_of_lower_tier(monkeypatch):
     leicester, _ = _team("Leicester", tid=3, code="ELC")
     candidates = [(leicester, elc_pool), (wolves, elc_pool), (burnley, elc_pool)]
     rows = {
-        "PL": _table_state(
+        ("PL", 2025): _table_state(
             {
                 1: SimpleNamespace(rank=19, points=22, goal_difference=-40, goals_for=30),
                 2: SimpleNamespace(rank=20, points=20, goal_difference=-50, goals_for=25),
             },
             set(),  # both left PL
         ),
-        "ELC": _table_state(
+        ("ELC", 2025): _table_state(
             {
                 3: SimpleNamespace(rank=1, points=90, goal_difference=40, goals_for=80),
             },
@@ -563,13 +563,13 @@ def test_playoff_not_assumed_from_table_position(monkeypatch):
     pl_stayer, _ = _team("Arsenal", tid=3, code="PL")
     candidates = [(sixth, pl_pool), (champ, elc_pool), (pl_stayer, pl_pool)]
     rows = {
-        "PL": _table_state(
+        ("PL", 2025): _table_state(
             {
                 3: SimpleNamespace(rank=1, points=85, goal_difference=40, goals_for=70),
             },
             {1, 3},
         ),
-        "ELC": _table_state(
+        ("ELC", 2025): _table_state(
             {
                 1: SimpleNamespace(rank=6, points=70, goal_difference=10, goals_for=60),
                 2: SimpleNamespace(rank=2, points=88, goal_difference=30, goals_for=70),
@@ -661,7 +661,7 @@ def test_sort_candidates_matches_autopick_pick(monkeypatch):
     burnley, _ = _team("Burnley", tid=2)
     candidates = [(burnley, pool), (arsenal, pool)]
     rows = {
-        "PL": _table_state(
+        ("PL", 2025): _table_state(
             {
                 1: SimpleNamespace(rank=1, points=84, goal_difference=58, goals_for=88),
                 2: SimpleNamespace(rank=17, points=35, goal_difference=-20, goals_for=40),
@@ -690,3 +690,132 @@ def test_sort_candidates_matches_autopick_pick(monkeypatch):
     )
     assert mode == "table"
     assert [t.name for t, _ in ordered] == ["Arsenal", "Burnley"]
+
+
+def test_missing_opener_does_not_count_as_stayer(monkeypatch):
+    """Previous-final without opener must not treat teams as confirmed stayers."""
+    relegated, pl_pool = _team("Leeds", tid=1, code="PL")
+    stayer, _ = _team("Arsenal", tid=2, code="PL")
+    # Same previous-final ranks; without opener Leeds would wrongly beat Arsenal
+    # if unknown opener counted as stayer (Leeds finished higher historically).
+    candidates = [(relegated, pl_pool), (stayer, pl_pool)]
+    rows = {
+        ("PL", 2025): _table_state(
+            {
+                1: SimpleNamespace(rank=1, points=90, goal_difference=50, goals_for=80),
+                2: SimpleNamespace(rank=2, points=80, goal_difference=40, goals_for=70),
+            },
+            None,  # opener missing
+        ),
+    }
+    monkeypatch.setattr(
+        "app.services.draft._table_row_lookup",
+        lambda *_a, **_k: rows,
+    )
+    monkeypatch.setattr(
+        "app.services.draft.resolve_domestic_tiers",
+        lambda *_a, **_k: {"PL": 1},
+    )
+    from app.services.draft import sort_candidates_for_autopick
+
+    ordered, mode = sort_candidates_for_autopick(
+        MagicMock(),
+        league=SimpleNamespace(upset_rules={"rank_source": "league_table_at_kickoff"}),
+        candidates=candidates,
+    )
+    assert mode == "table"
+    # Both fall through to "new/unknown" bucket → alphabetical
+    assert [t.name for t, _ in ordered] == ["Arsenal", "Leeds"]
+
+
+def test_table_lookup_keys_by_season_year(monkeypatch):
+    """Pools sharing a code across seasons must not overwrite table state."""
+    old_champ, old_pool = _team("Old Champ", tid=1, code="PL")
+    old_pool.season_year = 2024
+    new_champ, new_pool = _team("New Champ", tid=2, code="PL")
+    new_pool.season_year = 2025
+    candidates = [(old_champ, old_pool), (new_champ, new_pool)]
+
+    def fake_lookup(_db, pools):
+        from app.services.draft import CompetitionTableState
+
+        out = {}
+        for pool in pools:
+            code = (pool.competition_code or "").upper()
+            year = int(pool.season_year)
+            if year == 2024:
+                out[(code, year)] = CompetitionTableState(
+                    previous_rows={
+                        1: SimpleNamespace(
+                            rank=1, points=90, goal_difference=50, goals_for=80
+                        ),
+                    },
+                    opener_ids=frozenset({1}),
+                )
+            else:
+                out[(code, year)] = CompetitionTableState(
+                    previous_rows={
+                        2: SimpleNamespace(
+                            rank=1, points=88, goal_difference=45, goals_for=75
+                        ),
+                    },
+                    opener_ids=frozenset({2}),
+                )
+        return out
+
+    monkeypatch.setattr("app.services.draft._table_row_lookup", fake_lookup)
+    monkeypatch.setattr(
+        "app.services.draft.resolve_domestic_tiers",
+        lambda *_a, **_k: {"PL": 1},
+    )
+    from app.services.draft import sort_candidates_for_autopick
+
+    ordered, mode = sort_candidates_for_autopick(
+        MagicMock(),
+        league=SimpleNamespace(upset_rules={"rank_source": "league_table_at_kickoff"}),
+        candidates=candidates,
+    )
+    assert mode == "table"
+    # Both are rank-1 stayers in their own season; higher points first.
+    assert [t.name for t, _ in ordered] == ["Old Champ", "New Champ"]
+
+
+def test_draft_order_cache_skips_random_fallback(monkeypatch):
+    from app.services import draft as draft_svc
+
+    draft_svc.invalidate_draft_order_cache()
+    arsenal, pool = _team("Arsenal", tid=1)
+    burnley, _ = _team("Burnley", tid=2)
+    league = SimpleNamespace(
+        id=42,
+        upset_rules={"rank_source": "league_table_at_kickoff"},
+    )
+    db = MagicMock()
+    db.scalars.return_value.all.return_value = [pool]
+    db.execute.return_value.all.return_value = [
+        (arsenal, pool.id),
+        (burnley, pool.id),
+    ]
+
+    monkeypatch.setattr(
+        "app.services.draft.sort_candidates_for_autopick",
+        lambda *_a, **_k: (
+            [(arsenal, pool), (burnley, pool)],
+            "random",
+        ),
+    )
+    first = draft_svc.draft_order_by_team_pool(db, league=league)
+    assert first[(arsenal.id, pool.id)] == 0
+    assert league.id not in draft_svc._draft_order_cache
+
+    monkeypatch.setattr(
+        "app.services.draft.sort_candidates_for_autopick",
+        lambda *_a, **_k: (
+            [(burnley, pool), (arsenal, pool)],
+            "table",
+        ),
+    )
+    second = draft_svc.draft_order_by_team_pool(db, league=league)
+    assert second[(burnley.id, pool.id)] == 0
+    assert league.id in draft_svc._draft_order_cache
+    draft_svc.invalidate_draft_order_cache(league.id)

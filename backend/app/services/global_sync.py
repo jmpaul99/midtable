@@ -275,7 +275,8 @@ def sync_all_teams_and_rankings(
 
     payload = {
         "ok": bool(teams_summary.get("ok"))
-        and bool(rankings_summary.get("ok") or rankings_summary.get("skipped")),
+        and bool(rankings_summary.get("ok") or rankings_summary.get("skipped"))
+        and bool(snapshots_summary.get("ok")),
         "season_year": year,
         "teams": teams_summary,
         "rankings": rankings_summary,
