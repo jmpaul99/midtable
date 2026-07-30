@@ -132,6 +132,18 @@ def normalize_competition_code(code: str | None) -> str | None:
     return trimmed or None
 
 
+def default_competition_type_for_code(code: str | None) -> str | None:
+    """Best-effort competition type from curated catalog (no provider call).
+
+    Domestic leagues (tier set) → ``LEAGUE``; other curated codes → ``CUP``.
+    Unknown codes return ``None``.
+    """
+    normalized = normalize_competition_code(code)
+    if normalized is None or normalized not in _CURATED_DOMESTIC_TIER_BY_CODE:
+        return None
+    return "LEAGUE" if _CURATED_DOMESTIC_TIER_BY_CODE[normalized] is not None else "CUP"
+
+
 def is_allowed_competition_code(code: str | None) -> bool:
     normalized = normalize_competition_code(code)
     if normalized is None:

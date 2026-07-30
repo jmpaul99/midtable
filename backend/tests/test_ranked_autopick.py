@@ -689,6 +689,64 @@ def test_relegated_team_top_of_lower_tier(monkeypatch):
     assert [t.name for t, _ in ordered] == ["Burnley", "Wolves", "Leicester"]
 
 
+def test_table_autopick_loads_all_league_pools_for_relegation(monkeypatch):
+    """Higher-tier snapshots must load even when candidates are only lower-tier."""
+    burnley, elc_pool = _team("Burnley", tid=1, code="ELC")
+    elc_pool.id = 2
+    elc_pool.season_year = 2025
+    leicester, _ = _team("Leicester", tid=3, code="ELC")
+    pl_pool = SimpleNamespace(
+        id=1,
+        competition_code="PL",
+        season_year=2025,
+        provider="football-data.org",
+    )
+    seen_codes: list[str] = []
+
+    def capture_lookup(_db, pools):
+        seen_codes[:] = sorted(
+            {(p.competition_code or "").upper() for p in pools if p.competition_code}
+        )
+        return {
+            ("PL", 2025): _table_state(
+                {
+                    1: SimpleNamespace(
+                        rank=19, points=22, goal_difference=-40, goals_for=30
+                    ),
+                },
+                set(),
+            ),
+            ("ELC", 2025): _table_state(
+                {
+                    3: SimpleNamespace(
+                        rank=1, points=90, goal_difference=40, goals_for=80
+                    ),
+                },
+                {1, 3},
+            ),
+        }
+
+    monkeypatch.setattr("app.services.draft._table_row_lookup", capture_lookup)
+    monkeypatch.setattr(
+        "app.services.draft.resolve_domestic_tiers",
+        lambda *_a, **_k: {"PL": 1, "ELC": 2},
+    )
+    db = MagicMock()
+    db.scalars.return_value.all.return_value = [pl_pool, elc_pool]
+    from app.services.draft import sort_candidates_for_autopick
+
+    ordered, mode = sort_candidates_for_autopick(
+        db,
+        league=SimpleNamespace(
+            id=9, upset_rules={"rank_source": "league_table_at_kickoff"}
+        ),
+        candidates=[(leicester, elc_pool), (burnley, elc_pool)],
+    )
+    assert mode == "table"
+    assert seen_codes == ["ELC", "PL"]
+    assert [t.name for t, _ in ordered] == ["Burnley", "Leicester"]
+
+
 def test_playoff_not_assumed_from_table_position(monkeypatch):
     """Mid-table finisher who left via opener diff is still treated as departed."""
     # Finished 6th in ELC but not in ELC opener (playoff promotion) → PL arrival.

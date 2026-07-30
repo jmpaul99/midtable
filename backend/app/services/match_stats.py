@@ -52,8 +52,14 @@ ResultLetter = Literal["W", "D", "L"]
 
 
 def upset_types_for_league(league: League | None) -> frozenset[str]:
-    """Event-type keys that count as upsets for this league's thresholds."""
+    """Event-type keys that count as upsets for this league's thresholds.
+
+    Returns an empty set when upsets are explicitly disabled so analytics and
+    member/team views stay aligned with scoring (which skips new upset events).
+    """
     rules = (getattr(league, "upset_rules", None) if league is not None else None) or {}
+    if rules.get("enabled") is False:
+        return frozenset()
     keys = {
         str(item.get("key"))
         for item in (rules.get("thresholds") or [])

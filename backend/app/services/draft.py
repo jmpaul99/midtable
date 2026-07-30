@@ -377,8 +377,18 @@ def sort_candidates_for_autopick(
             return sorted(candidates, key=fixed_key), "ranking"
 
     if upset.rank_source == "league_table_at_kickoff":
-        pools = list({p.id: p for _, p in candidates}.values())
-        by_comp = _table_row_lookup(db, pools)
+        # Load every league pool so higher-tier departures are visible even when
+        # the current pick's open slots are only in a lower tier.
+        pools_for_lookup = list({p.id: p for _, p in candidates}.values())
+        league_id = getattr(league, "id", None)
+        if league_id is not None:
+            fetched = db.scalars(
+                select(TeamPool).where(TeamPool.league_id == league_id)
+            ).all()
+            # Real sessions return a list; unconfigured mocks may not — keep candidates.
+            if isinstance(fetched, (list, tuple)) and fetched:
+                pools_for_lookup = list(fetched)
+        by_comp = _table_row_lookup(db, pools_for_lookup)
         if any(s.previous_rows for s in by_comp.values()):
             tier_by_code = resolve_domestic_tiers(db)
 

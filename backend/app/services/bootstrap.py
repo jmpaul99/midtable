@@ -22,7 +22,12 @@ from app.models import (
 )
 from app.providers.base import FootballProvider
 from app.providers.football_data import FootballDataError
-from app.services.competitions import should_apply_team_kind, team_kind_for_competition
+from app.services.competitions import (
+    default_competition_type_for_code,
+    should_apply_team_kind,
+    team_kind_for_competition,
+)
+from app.services.period_labels import normalize_competition_type
 from app.services.draft_schedule import validate_draft_scheduled_at
 from app.services.errors import (
     ConflictError,
@@ -303,6 +308,11 @@ def attach_template_structure(
     """Clone pools, bonus types, and draft state from a template without provider calls."""
     for index, definition in enumerate(template.pool_definitions or []):
         key = definition["key"]
+        competition_code = definition.get("competition_code")
+        raw_type = definition.get("competition_type")
+        competition_type = normalize_competition_type(
+            str(raw_type) if raw_type is not None else None
+        ) or default_competition_type_for_code(competition_code)
         db.add(
             TeamPool(
                 league_id=league.id,
@@ -315,8 +325,9 @@ def attach_template_structure(
                     "tie_break_order", ["points", "gd", "gf", "name"]
                 ),
                 provider=definition.get("provider", "football-data.org"),
-                competition_code=definition.get("competition_code"),
+                competition_code=competition_code,
                 season_year=definition.get("season_year"),
+                competition_type=competition_type,
             )
         )
     for index, bonus in enumerate(template.bonus_types or []):

@@ -7,12 +7,14 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 from app.services.match_stats import (
+    DEFAULT_UPSET_TYPES,
     form_from_results,
     goals_from_results,
     points_by_stage_by_team,
     points_by_stage_from_events,
     scheduled_games_for_team,
     team_results_from_matches,
+    upset_types_for_league,
     venue_split,
     wdl_from_results,
 )
@@ -124,3 +126,27 @@ def test_points_by_stage_aggregates_and_skips_blank():
         "LAST_16": 3.0,
     }
     assert len(points_by_stage_from_events([events[5]])) == 1
+
+
+def test_upset_types_for_league_respects_disabled():
+    assert upset_types_for_league(SimpleNamespace(upset_rules={"enabled": False})) == frozenset()
+    assert upset_types_for_league(
+        SimpleNamespace(
+            upset_rules={
+                "enabled": False,
+                "thresholds": [{"key": "minor_upset"}],
+            }
+        )
+    ) == frozenset()
+
+
+def test_upset_types_for_league_uses_thresholds_when_enabled():
+    assert upset_types_for_league(
+        SimpleNamespace(
+            upset_rules={
+                "enabled": True,
+                "thresholds": [{"key": "minor_upset"}, {"key": "major_upset"}],
+            }
+        )
+    ) == frozenset({"minor_upset", "major_upset"})
+    assert upset_types_for_league(SimpleNamespace(upset_rules={})) == DEFAULT_UPSET_TYPES
