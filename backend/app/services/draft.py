@@ -1060,8 +1060,11 @@ def try_auto_pick_if_expired(db: Session, league: League) -> str:
 def enforce_league_draft_timers(db: Session, league: League) -> dict[str, int | bool]:
     """Auto-open if scheduled and catch up expired pick clocks for one league."""
     opened = try_auto_open_if_scheduled(db, league)
+    frozen = False
+    if league.status == "drafting":
+        frozen = ensure_draft_ranking_freeze(db, league)
     auto_picks = 0
-    changed = bool(opened)
+    changed = bool(opened or frozen)
     for _ in range(50):
         result = try_auto_pick_if_expired(db, league)
         if result == "noop":
@@ -1072,7 +1075,12 @@ def enforce_league_draft_timers(db: Session, league: League) -> dict[str, int | 
             continue
         # completed or deferred — stop the catch-up loop
         break
-    return {"opened": opened, "auto_picks": auto_picks, "changed": changed}
+    return {
+        "opened": opened,
+        "frozen": frozen,
+        "auto_picks": auto_picks,
+        "changed": changed,
+    }
 
 
 def run_draft_maintenance(db: Session) -> dict:

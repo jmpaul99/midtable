@@ -28,6 +28,34 @@ def test_domestic_tier_catalog():
     assert domestic_tier_for_competition(None) is None
 
 
+def test_draft_timer_freezes_rankings_before_autopick(monkeypatch):
+    from app.services import draft as draft_mod
+
+    calls: list[str] = []
+    league = SimpleNamespace(status="drafting")
+
+    monkeypatch.setattr(
+        draft_mod, "try_auto_open_if_scheduled", lambda db, item: False
+    )
+
+    def freeze(db, item):  # noqa: ARG001
+        calls.append("freeze")
+        return True
+
+    def auto_pick(db, item):  # noqa: ARG001
+        calls.append("autopick")
+        return "noop"
+
+    monkeypatch.setattr(draft_mod, "ensure_draft_ranking_freeze", freeze)
+    monkeypatch.setattr(draft_mod, "try_auto_pick_if_expired", auto_pick)
+
+    outcome = draft_mod.enforce_league_draft_timers(MagicMock(), league)
+
+    assert calls == ["freeze", "autopick"]
+    assert outcome["frozen"] is True
+    assert outcome["changed"] is True
+
+
 def test_list_standings_prefers_total_null_group():
     provider = FootballDataProvider(api_token="test", client=MagicMock())
     payload = {

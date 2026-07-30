@@ -544,7 +544,9 @@ def score_changed_matches(
         pool_by_match[m.id] = pool
         all_inputs.append(match_to_input(m, pool_id=pool.id))
     by_id = {m.id: m for m in all_matches}
-    fixed_ranks = ranks_for_league(db, league, upset_rules)
+    fixed_ranks = ranks_for_league(
+        db, league, upset_rules, allow_live_catalog=True
+    )
 
     scored = 0
     cascaded = 0

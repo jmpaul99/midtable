@@ -95,6 +95,25 @@ def test_pl_style_catalog_uses_matchweek_labels():
     assert "Regular season" not in catalog[0].label
 
 
+def test_league_catalog_merges_null_stage_into_regular_season():
+    events = [
+        SimpleNamespace(stage="REGULAR_SEASON", scheduled_matchweek=1, points=3),
+        SimpleNamespace(stage=None, scheduled_matchweek=1, points=1),
+        SimpleNamespace(stage="", scheduled_matchweek=2, points=2),
+        SimpleNamespace(stage="REGULAR_SEASON", scheduled_matchweek=2, points=3),
+    ]
+
+    rows = points_by_period_from_events(events, competition_type="LEAGUE")
+    by_key = {row["period_key"]: row for row in rows}
+
+    assert set(by_key) == {"REGULAR_SEASON:1", "REGULAR_SEASON:2"}
+    assert by_key["REGULAR_SEASON:1"]["points"] == 4.0
+    assert by_key["REGULAR_SEASON:2"]["points"] == 5.0
+    assert resolve_period_key(
+        None, 2, expanded=frozenset({"REGULAR_SEASON"})
+    ) == "REGULAR_SEASON:2"
+
+
 def test_points_by_period_from_events_wc():
     events = [
         SimpleNamespace(stage="GROUP_STAGE", scheduled_matchweek=1, points=3),

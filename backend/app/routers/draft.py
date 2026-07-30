@@ -30,7 +30,6 @@ from app.schemas.leagues import DraftOrderUpdate, MemberResponse, PreassignReque
 from app.services.draft import (
     find_idempotent_pick,
     enforce_league_draft_timers,
-    ensure_draft_ranking_freeze,
     make_pick,
     member_pool_filled,
     open_draft,
@@ -163,11 +162,7 @@ def get_draft_state(
 ) -> DraftStateResponse:
     league, _ = membership
     outcome = enforce_league_draft_timers(db, league)
-    # Mid-draft leagues opened before freeze-at-open still need a one-time snap.
-    snapped = False
-    if league.status == "drafting":
-        snapped = ensure_draft_ranking_freeze(db, league)
-    if outcome.get("changed") or outcome["opened"] or outcome["auto_picks"] or snapped:
+    if outcome.get("changed") or outcome["opened"] or outcome["auto_picks"]:
         db.commit()
         db.refresh(league)
     return _build_draft_state(db, league)

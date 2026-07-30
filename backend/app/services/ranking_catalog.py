@@ -782,11 +782,14 @@ def ranks_for_league(
     db: Session,
     league: League,
     upset_rules: UpsetRules,
+    *,
+    allow_live_catalog: bool = False,
 ) -> dict[int, RankedTeam] | None:
-    """Resolve fixed ranks from stored freeze / TeamRanking rows only.
+    """Resolve fixed ranks from stored freeze / TeamRanking rows.
 
     Admin catalog matching + overrides are applied when a freeze is created
     (draft open / ranking lock). Draft polls must not re-run live fuzzy match.
+    Scoring may opt into live catalog resolution before a freeze exists.
     """
     if upset_rules.rank_source != "fixed_ranking_at_event_start":
         return None
@@ -829,8 +832,15 @@ def ranks_for_league(
             select(TeamRanking).where(TeamRanking.ranking_list_id == ranking_list.id)
         ).all():
             team_ranks[row.team_id] = row.rank
-    else:
-        return None
+
+    if (
+        freeze_id is None
+        and not team_ranks
+        and allow_live_catalog
+        and catalog is not None
+        and (ranking_list is None or ranking_list.source != "manual")
+    ):
+        team_ranks = resolve_catalog_team_ranks(db, catalog, sample_league=league)
 
     if not team_ranks:
         return None

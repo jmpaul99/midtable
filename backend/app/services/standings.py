@@ -225,15 +225,32 @@ def previous_final_snapshot_for_competition(
     competition_code: str,
     season_year: int,
 ) -> StandingsSnapshot | None:
-    """Oldest snapshot with any played > 0 (previous-season final baseline)."""
-    for snap in _snapshots_for_competition(
+    """Oldest played snapshot strictly before the zeroed season opener."""
+    snapshots = _snapshots_for_competition(
         db,
         provider=provider,
         competition_code=competition_code,
         season_year=season_year,
-    ):
+    )
+    opener = next(
+        (
+            snap
+            for snap in snapshots
+            if snap.rows and all(int(row.played or 0) == 0 for row in snap.rows)
+        ),
+        None,
+    )
+    if opener is None:
+        return None
+
+    opener_kickoff = _aware(opener.kickoff_at)
+    for snap in snapshots:
         rows = list(snap.rows)
-        if rows and any(int(r.played or 0) > 0 for r in rows):
+        if (
+            _aware(snap.kickoff_at) < opener_kickoff
+            and rows
+            and any(int(r.played or 0) > 0 for r in rows)
+        ):
             return snap
     return None
 

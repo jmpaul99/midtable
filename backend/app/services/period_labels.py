@@ -165,6 +165,8 @@ def build_period_catalog(
     by_stage: dict[str, set[int]] = {}
     for raw_stage, mw in items:
         stage = (raw_stage or "").strip()
+        if competition_type == "LEAGUE" and not stage:
+            stage = "REGULAR_SEASON"
         by_stage.setdefault(stage, set())
         if mw is not None:
             by_stage[stage].add(int(mw))
@@ -245,8 +247,11 @@ def resolve_period_key(
         return f"{stage_key}:{int(matchweek)}"
     if stage_key:
         return stage_key
-    if matchweek is not None and "" in expanded:
-        return f":{int(matchweek)}"
+    if matchweek is not None:
+        if "REGULAR_SEASON" in expanded:
+            return f"REGULAR_SEASON:{int(matchweek)}"
+        if "" in expanded:
+            return f":{int(matchweek)}"
     if matchweek is not None and not expanded and not stage_key:
         return f":{int(matchweek)}"
     return None
