@@ -1,6 +1,7 @@
 from app.models.entities import (
     BonusType,
     CompetitionTemplate,
+    CompetitionTier,
     DraftIdempotencyKey,
     DraftPick,
     DraftState,
@@ -11,6 +12,7 @@ from app.models.entities import (
     LeagueMember,
     ManualBonus,
     Match,
+    PlatformJob,
     PoolTeam,
     Profile,
     RankingCatalog,
@@ -32,6 +34,7 @@ from app.models.entities import (
 __all__ = [
     "BonusType",
     "CompetitionTemplate",
+    "CompetitionTier",
     "DraftIdempotencyKey",
     "DraftPick",
     "DraftState",
@@ -41,6 +44,7 @@ __all__ = [
     "LeagueJob",
     "LeagueMember",
     "ManualBonus",
+    "PlatformJob",
     "Match",
     "PoolTeam",
     "Profile",

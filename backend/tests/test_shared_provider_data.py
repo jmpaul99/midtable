@@ -106,7 +106,7 @@ def test_ranks_for_league_uses_freeze_when_locked():
             out.first.return_value = ranking_list
             return out
         if "ranking_catalog" in sql:
-            out.first.return_value = SimpleNamespace(id=1, key="fifa_men")
+            out.first.return_value = SimpleNamespace(id=1, key="fifa_men", as_of=None)
             return out
         if "ranking_freeze_entr" in sql or "rankingfreezeentry" in sql:
             out.all.return_value = freeze_rows
@@ -120,6 +120,55 @@ def test_ranks_for_league_uses_freeze_when_locked():
     assert ranked is not None
     assert ranked[1].rank == 3
     assert ranked[2].rank == 7
+
+
+def test_ranks_for_league_uses_shared_freeze_without_league_lock():
+    """Unlocked lists still read the catalog freeze — never live fuzzy match."""
+    league = SimpleNamespace(id=1)
+    rules = UpsetRules.from_config(
+        {
+            "enabled": True,
+            "rank_source": "fixed_ranking_at_event_start",
+            "ranking_list_key": "fifa_men",
+            "eligibility": {"min_played": 0},
+            "thresholds": [],
+        }
+    )
+    ranking_list = SimpleNamespace(
+        id=10,
+        key="fifa_men",
+        locked=False,
+        freeze_id=None,
+        source="parse_fifa",
+    )
+    catalog = SimpleNamespace(id=1, key="fifa_men", as_of=date(2026, 1, 1))
+    shared_freeze = SimpleNamespace(id=9, catalog_id=1, as_of=date(2026, 1, 1))
+    freeze_rows = [SimpleNamespace(team_id=1, rank=2)]
+    db = MagicMock()
+
+    def scalars(stmt):
+        sql = str(stmt).lower()
+        out = MagicMock()
+        if "ranking_list" in sql:
+            out.first.return_value = ranking_list
+            return out
+        if "ranking_catalog" in sql and "freeze" not in sql:
+            out.first.return_value = catalog
+            return out
+        if "ranking_freeze" in sql and "entr" not in sql:
+            out.first.return_value = shared_freeze
+            return out
+        if "ranking_freeze_entr" in sql or "rankingfreezeentry" in sql:
+            out.all.return_value = freeze_rows
+            return out
+        out.first.return_value = None
+        out.all.return_value = []
+        return out
+
+    db.scalars.side_effect = scalars
+    ranked = ranks_for_league(db, league, rules)
+    assert ranked is not None
+    assert ranked[1].rank == 2
 
 
 def test_ensure_or_create_ranking_freeze_reuses_existing(monkeypatch):

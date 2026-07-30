@@ -92,8 +92,9 @@ export function DraftTimingFields({
             <LabelRow>
               Seconds per pick
               <FieldHelp label="Seconds per pick">
-                How long each manager has on the clock. When time runs out, a random available club
-                is auto-picked. Leave blank for no timer.
+                How long each manager has on the clock. When time runs out, the highest-ranked
+                available club is auto-picked (fixed ranking list or competition table order,
+                including higher domestic tiers before lower ones). Leave blank for no timer.
               </FieldHelp>
             </LabelRow>
             <Input

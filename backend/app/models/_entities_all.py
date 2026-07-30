@@ -544,3 +544,38 @@ class LeagueJob(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class PlatformJob(Base):
+    __tablename__ = "platform_jobs"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    public_id: Mapped[UUID] = _public_id_column()
+    kind: Mapped[str] = mapped_column(Text)  # teams_and_rankings | fifa_rankings
+    source: Mapped[str] = mapped_column(Text)  # admin | cron
+    status: Mapped[str] = mapped_column(Text)  # pending | running | succeeded | failed
+    created_by_profile_id: Mapped[int | None] = mapped_column(
+        ForeignKey("profiles.id", ondelete="SET NULL")
+    )
+    params: Mapped[dict | None] = mapped_column(JSONB)
+    error: Mapped[str | None] = mapped_column(Text)
+    summary: Mapped[dict | None] = mapped_column(JSONB)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class CompetitionTier(Base):
+    """Platform-admin domestic ladder tier per competition code."""
+
+    __tablename__ = "competition_tiers"
+    __table_args__ = (
+        CheckConstraint(
+            "domestic_tier IS NULL OR domestic_tier >= 1",
+            name="competition_tiers_domestic_tier_check",
+        ),
+    )
+    competition_code: Mapped[str] = mapped_column(Text, primary_key=True)
+    domestic_tier: Mapped[int | None] = mapped_column(Integer)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )

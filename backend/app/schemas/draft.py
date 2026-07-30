@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -23,6 +24,14 @@ class DraftPickResponse(IdSchema):
     crest_url: str | None = None
 
 
+class AutopickPreviewResponse(BaseModel):
+    mode: Literal["ranking", "table", "random"]
+    team_id: UUID | None = None
+    team_name: str | None = None
+    crest_url: str | None = None
+    pool_id: UUID | None = None
+
+
 class DraftStateResponse(BaseModel):
     id: UUID
     status: str
@@ -35,4 +44,5 @@ class DraftStateResponse(BaseModel):
     pick_deadline_at: datetime | None = None
     pick_timer_seconds: int | None = None
     draft_scheduled_at: datetime | None = None
+    autopick_preview: AutopickPreviewResponse | None = None
     picks: list[DraftPickResponse] = Field(default_factory=list)

@@ -20,11 +20,17 @@ from app.models import (
     TeamPool,
 )
 from app.routers.league_mappers import _member_response
-from app.schemas.draft import DraftPickRequest, DraftPickResponse, DraftStateResponse
+from app.schemas.draft import (
+    AutopickPreviewResponse,
+    DraftPickRequest,
+    DraftPickResponse,
+    DraftStateResponse,
+)
 from app.schemas.leagues import DraftOrderUpdate, MemberResponse, PreassignRequest, RosterPatchRequest
 from app.services.draft import (
     find_idempotent_pick,
     enforce_league_draft_timers,
+    ensure_draft_ranking_freeze,
     make_pick,
     member_pool_filled,
     open_draft,
@@ -32,6 +38,7 @@ from app.services.draft import (
     peek_on_clock_member,
     reassign_roster_entry,
     reset_draft,
+    select_autopick_team,
     undo_last_pick,
 )
 from app.services.errors import DomainError
@@ -52,18 +59,17 @@ def _build_draft_state(db: Session, league: League) -> DraftStateResponse:
     )
     on_clock_id = None
     current_round = 1
+    on_clock_member = None
+    pools = list(db.scalars(select(TeamPool).where(TeamPool.league_id == league.id)).all())
     if state.status == "open" and members:
         try:
             ordered = ordered_members(members)
-            pools = list(
-                db.scalars(select(TeamPool).where(TeamPool.league_id == league.id)).all()
-            )
             peeked = peek_on_clock_member(
                 db, league=league, state=state, ordered=ordered, pools=pools
             )
             if peeked is not None:
-                member, current_round = peeked
-                on_clock_id = member.public_id
+                on_clock_member, current_round = peeked
+                on_clock_id = on_clock_member.public_id
         except DomainError as exc:
             logger.warning(
                 "draft on-clock unresolved league_id=%s status=%s pick=%s detail=%s",
@@ -85,7 +91,7 @@ def _build_draft_state(db: Session, league: League) -> DraftStateResponse:
         for t in db.scalars(select(Team).where(Team.id.in_(team_ids))).all()
     } if team_ids else {}
     pool_ids = {p.pool_id for p in picks}
-    pools = {
+    pools_by_id = {
         p.id: p
         for p in db.scalars(select(TeamPool).where(TeamPool.id.in_(pool_ids))).all()
     } if pool_ids else {}
@@ -93,7 +99,7 @@ def _build_draft_state(db: Session, league: League) -> DraftStateResponse:
     for pick in picks:
         member = member_by_id.get(pick.member_id)
         team = teams.get(pick.team_id)
-        pool = pools.get(pick.pool_id)
+        pool = pools_by_id.get(pick.pool_id)
         pick_rows.append(
             DraftPickResponse(
                 id=pick.public_id,
@@ -109,6 +115,31 @@ def _build_draft_state(db: Session, league: League) -> DraftStateResponse:
     status = state.status
     # FE historically used "running" for open drafts
     api_status = "running" if status == "open" else status
+
+    autopick_preview: AutopickPreviewResponse | None = None
+    timer_on = (
+        league.pick_timer_seconds is not None and int(league.pick_timer_seconds) > 0
+    )
+    if status == "open" and timer_on and on_clock_member is not None:
+        selection = select_autopick_team(
+            db,
+            league=league,
+            member=on_clock_member,
+            pools=pools,
+            for_preview=True,
+        )
+        if selection is not None:
+            if selection.mode == "random" or selection.team is None:
+                autopick_preview = AutopickPreviewResponse(mode="random")
+            else:
+                autopick_preview = AutopickPreviewResponse(
+                    mode=selection.mode,
+                    team_id=selection.team.public_id,
+                    team_name=selection.team.name,
+                    crest_url=selection.team.crest_url,
+                    pool_id=selection.pool.public_id if selection.pool else None,
+                )
+
     return DraftStateResponse(
         id=state.public_id,
         status=api_status,
@@ -121,9 +152,9 @@ def _build_draft_state(db: Session, league: League) -> DraftStateResponse:
         pick_deadline_at=state.pick_deadline_at,
         pick_timer_seconds=league.pick_timer_seconds,
         draft_scheduled_at=league.draft_scheduled_at,
+        autopick_preview=autopick_preview,
         picks=pick_rows,
     )
-
 
 @router.get("/leagues/{league_id}/draft", response_model=DraftStateResponse)
 def get_draft_state(
@@ -132,7 +163,11 @@ def get_draft_state(
 ) -> DraftStateResponse:
     league, _ = membership
     outcome = enforce_league_draft_timers(db, league)
-    if outcome.get("changed") or outcome["opened"] or outcome["auto_picks"]:
+    # Mid-draft leagues opened before freeze-at-open still need a one-time snap.
+    snapped = False
+    if league.status == "drafting":
+        snapped = ensure_draft_ranking_freeze(db, league)
+    if outcome.get("changed") or outcome["opened"] or outcome["auto_picks"] or snapped:
         db.commit()
         db.refresh(league)
     return _build_draft_state(db, league)

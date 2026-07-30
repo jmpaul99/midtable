@@ -11,6 +11,7 @@ import {
 import { createPortal } from "react-dom";
 import { cn } from "@/lib/cn";
 import { formatCountdownDuration } from "@/lib/format";
+import type { AutopickPreview } from "@/lib/types";
 import { ChevronDownIcon, ChevronUpIcon } from "@/components/ui/icons";
 
 /**
@@ -27,10 +28,12 @@ export const DRAFT_PICK_SHEET_COLLAPSED_PAD = "pb-[4.5rem] lg:pb-0";
 export function DraftPickSheet({
   yourTurn,
   deadlineAt,
+  autopickPreview = null,
   children,
 }: {
   yourTurn: boolean;
   deadlineAt?: string | null;
+  autopickPreview?: AutopickPreview | null;
   children: ReactNode;
 }) {
   const [mounted, setMounted] = useState(false);
@@ -125,11 +128,19 @@ export function DraftPickSheet({
         : formatCountdownDuration(remainingMs);
   const urgent = remainingMs != null && remainingMs < 15_000;
 
+  const autopickBit =
+    yourTurn && deadlineAt && autopickPreview
+      ? autopickPreview.mode === "random" || !autopickPreview.team_name
+        ? "Autopick a random club"
+        : `Autopick ${autopickPreview.team_name}`
+      : null;
   const label = yourTurn
     ? timerLabel
       ? remainingMs != null && remainingMs <= 0
         ? "Time’s up — auto-picking…"
-        : `You’re on the clock · ${timerLabel} — open to pick`
+        : autopickBit
+          ? `You’re on the clock · ${timerLabel} · ${autopickBit}`
+          : `You’re on the clock · ${timerLabel} — open to pick`
       : "You’re on the clock — open to make your pick"
     : "Available teams";
 

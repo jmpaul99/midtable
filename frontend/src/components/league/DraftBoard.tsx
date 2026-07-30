@@ -97,7 +97,14 @@ export function DraftBoard({
     return teams
       .filter((t) => t.available)
       .filter((t) => !poolFilter || t.pool_id === poolFilter)
-      .sort((a, b) => a.name.localeCompare(b.name));
+      .sort((a, b) => {
+        const ao = a.draft_order;
+        const bo = b.draft_order;
+        if (ao != null && bo != null && ao !== bo) return ao - bo;
+        if (ao != null && bo == null) return -1;
+        if (ao == null && bo != null) return 1;
+        return a.name.localeCompare(b.name);
+      });
   }, [teams, poolFilter]);
 
   const availableTeams = useMemo(() => {
@@ -119,11 +126,25 @@ export function DraftBoard({
       });
   }, [league.id]);
 
+  const applyPicksToTeams = useCallback((draft: DraftState) => {
+    const draftedIds = new Set(draft.picks.map((p) => p.team_id));
+    setTeams((prev) => {
+      if (!prev.length) return prev;
+      let changed = false;
+      const next = prev.map((t) => {
+        const drafted = draftedIds.has(t.id);
+        if (t.available === !drafted && t.drafted === drafted) return t;
+        changed = true;
+        return { ...t, available: !drafted, drafted };
+      });
+      return changed ? next : prev;
+    });
+  }, []);
+
   const applyDraft = useCallback(
     (draft: DraftState, opts?: { forceTeams?: boolean }) => {
       const prev = syncMetaRef.current;
-      const teamsChanged =
-        opts?.forceTeams === true ||
+      const picksChanged =
         draft.version !== prev.version ||
         draft.status !== prev.status ||
         draft.picks.length !== prev.pickCount;
@@ -138,9 +159,15 @@ export function DraftBoard({
       if (draft.league_status && draft.league_status !== leagueStatusRef.current) {
         onLeagueChangeRef.current?.();
       }
-      if (teamsChanged) refreshTeams();
+      // Full pool refetch only on first load / explicit refresh. Pick updates just
+      // flip availability from the draft payload (draft_order is stable).
+      if (opts?.forceTeams === true) {
+        refreshTeams();
+      } else if (picksChanged) {
+        applyPicksToTeams(draft);
+      }
     },
-    [refreshTeams],
+    [refreshTeams, applyPicksToTeams],
   );
 
   const refreshDraft = useCallback(
@@ -333,6 +360,7 @@ export function DraftBoard({
         crestByTeamId={crestByTeamId}
         yourTurn={myTurn}
         deadlineAt={state.pick_deadline_at}
+        autopickPreview={state.autopick_preview}
       />
     );
   }
@@ -680,6 +708,7 @@ export function DraftBoard({
                 <DraftPickSheet
                   yourTurn={myTurn}
                   deadlineAt={state.pick_deadline_at}
+                  autopickPreview={state.autopick_preview}
                 >
                   {renderAvailablePickPanel("sheet")}
                 </DraftPickSheet>

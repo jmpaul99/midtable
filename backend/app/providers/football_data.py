@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from datetime import UTC, datetime, timedelta
 from email.utils import parsedate_to_datetime
 from typing import Any
@@ -12,6 +13,7 @@ import httpx
 from app.providers.base import (
     CompetitionSeasonInfo,
     ProviderMatch,
+    ProviderStandingRow,
     ProviderTeam,
     RateLimitInfo,
 )
@@ -20,6 +22,8 @@ from app.services.period_labels import normalize_competition_type
 logger = logging.getLogger(__name__)
 
 _KNOWN_TYPES = frozenset({"LEAGUE", "LEAGUE_CUP", "CUP", "PLAYOFFS"})
+# Free-tier budget is ~10 req/min; admin syncs walk many competitions.
+_MAX_RATE_LIMIT_RETRIES = 12
 
 
 class FootballDataError(RuntimeError):
@@ -33,6 +37,64 @@ class FootballDataError(RuntimeError):
         super().__init__(message)
         self.rate_limit = rate_limit or RateLimitInfo()
         self.rate_limited = rate_limited
+
+
+def rate_limit_wait_seconds(
+    rate: RateLimitInfo,
+    *,
+    hit_limit: bool = False,
+    low_budget_threshold: int = 2,
+    default_hit_limit_wait: int = 60,
+    default_low_budget_wait: int = 8,
+) -> int | None:
+    """Seconds to sleep before the next call, using response header info.
+
+    Prefers ``Retry-After``, then ``X-RequestCounter-Reset``, then defaults.
+    Returns ``None`` when no wait is needed.
+    """
+
+    def from_reset() -> int | None:
+        if rate.request_counter_reset is None:
+            return None
+        secs = (rate.request_counter_reset - datetime.now(UTC)).total_seconds()
+        return max(1, int(secs) + 1)
+
+    if hit_limit:
+        if rate.retry_after_seconds is not None:
+            return max(1, int(rate.retry_after_seconds))
+        reset_wait = from_reset()
+        if reset_wait is not None:
+            return reset_wait
+        return default_hit_limit_wait
+
+    if (
+        rate.requests_available_minute is not None
+        and rate.requests_available_minute <= low_budget_threshold
+    ):
+        if rate.retry_after_seconds is not None:
+            return max(1, int(rate.retry_after_seconds))
+        reset_wait = from_reset()
+        if reset_wait is not None:
+            return reset_wait
+        return default_low_budget_wait
+    return None
+
+
+def respect_rate_limit(rate: RateLimitInfo, *, hit_limit: bool = False) -> None:
+    """Block until football-data.org rate budget should allow another request."""
+    wait = rate_limit_wait_seconds(rate, hit_limit=hit_limit)
+    if wait is None:
+        return
+    logger.info(
+        "football-data.org waiting for rate budget wait_s=%s hit_limit=%s "
+        "available_minute=%s reset=%s retry_after=%s",
+        wait,
+        hit_limit,
+        rate.requests_available_minute,
+        rate.request_counter_reset,
+        rate.retry_after_seconds,
+    )
+    time.sleep(wait)
 
 
 class FootballDataProvider:
@@ -87,45 +149,69 @@ class FootballDataProvider:
         )
 
     def _get(self, path: str, params: dict[str, Any] | None = None) -> tuple[Any, RateLimitInfo]:
-        try:
-            response = self._client.get(path, params=params)
-        except httpx.HTTPError as exc:
-            logger.error("football-data.org request failed path=%s error=%s", path, exc)
-            raise FootballDataError(f"football-data.org request failed: {exc}") from exc
-        rate = self.parse_rate_limit_headers(response.headers)
-        if response.status_code == 429:
-            logger.warning(
-                "football-data.org rate limited path=%s retry_after=%s available_minute=%s",
-                path,
-                rate.retry_after_seconds,
-                rate.requests_available_minute,
-            )
-            raise FootballDataError(
-                f"rate limit exceeded; retry after {rate.retry_after_seconds or 'unknown'}s",
-                rate,
-                rate_limited=True,
-            )
-        try:
-            response.raise_for_status()
-        except httpx.HTTPStatusError as exc:
-            logger.error(
-                "football-data.org HTTP error path=%s status=%s",
-                path,
-                response.status_code,
-            )
-            raise FootballDataError(
-                f"football-data.org returned {response.status_code}", rate
-            ) from exc
-        if (
-            rate.requests_available_minute is not None
-            and rate.requests_available_minute <= 2
-        ):
-            logger.warning(
-                "football-data.org low rate budget path=%s available_minute=%s",
-                path,
-                rate.requests_available_minute,
-            )
-        return response.json(), rate
+        last_rate = RateLimitInfo()
+        for attempt in range(1, _MAX_RATE_LIMIT_RETRIES + 1):
+            try:
+                response = self._client.get(path, params=params)
+            except httpx.HTTPError as exc:
+                logger.error(
+                    "football-data.org request failed path=%s error=%s", path, exc
+                )
+                raise FootballDataError(
+                    f"football-data.org request failed: {exc}"
+                ) from exc
+            rate = self.parse_rate_limit_headers(response.headers)
+            last_rate = rate
+            if response.status_code == 429:
+                if attempt >= _MAX_RATE_LIMIT_RETRIES:
+                    raise FootballDataError(
+                        f"rate limit exceeded; retry after "
+                        f"{rate.retry_after_seconds or 'unknown'}s",
+                        rate,
+                        rate_limited=True,
+                    )
+                wait = rate_limit_wait_seconds(rate, hit_limit=True) or 60
+                logger.warning(
+                    "football-data.org rate limited path=%s wait_s=%s attempt=%s/%s "
+                    "retry_after=%s available_minute=%s reset=%s",
+                    path,
+                    wait,
+                    attempt,
+                    _MAX_RATE_LIMIT_RETRIES,
+                    rate.retry_after_seconds,
+                    rate.requests_available_minute,
+                    rate.request_counter_reset,
+                )
+                time.sleep(wait)
+                continue
+            try:
+                response.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                logger.error(
+                    "football-data.org HTTP error path=%s status=%s",
+                    path,
+                    response.status_code,
+                )
+                raise FootballDataError(
+                    f"football-data.org returned {response.status_code}", rate
+                ) from exc
+            if (
+                rate.requests_available_minute is not None
+                and rate.requests_available_minute <= 2
+            ):
+                logger.warning(
+                    "football-data.org low rate budget path=%s available_minute=%s "
+                    "reset=%s",
+                    path,
+                    rate.requests_available_minute,
+                    rate.request_counter_reset,
+                )
+            return response.json(), rate
+        raise FootballDataError(
+            "rate limit exceeded; retries exhausted",
+            last_rate,
+            rate_limited=True,
+        )
 
     def list_teams(
         self, competition_code: str, season_year: int
@@ -190,6 +276,58 @@ class FootballDataProvider:
                 len(matches),
             )
         return matches, rate
+
+    def list_standings(
+        self, competition_code: str, season_year: int
+    ) -> tuple[list[ProviderStandingRow], RateLimitInfo]:
+        payload, rate = self._get(
+            f"/competitions/{competition_code}/standings", {"season": season_year}
+        )
+        blocks = [
+            block
+            for block in (payload.get("standings") or [])
+            if isinstance(block, dict) and str(block.get("type") or "").upper() == "TOTAL"
+        ]
+        if not blocks:
+            blocks = [
+                block
+                for block in (payload.get("standings") or [])
+                if isinstance(block, dict)
+            ]
+        chosen = blocks[0] if blocks else {}
+        # Prefer overall / null-group TOTAL table when multiple TOTAL blocks exist.
+        for block in blocks:
+            if block.get("group") in (None, ""):
+                chosen = block
+                break
+        rows: list[ProviderStandingRow] = []
+        for item in chosen.get("table") or []:
+            if not isinstance(item, dict):
+                continue
+            team = item.get("team") or {}
+            team_id = team.get("id")
+            if team_id is None:
+                continue
+            played = int(item.get("playedGames") or 0)
+            goals_for = int(item.get("goalsFor") or 0)
+            goals_against = int(item.get("goalsAgainst") or 0)
+            gd = item.get("goalDifference")
+            if gd is None:
+                gd = goals_for - goals_against
+            rows.append(
+                ProviderStandingRow(
+                    external_team_id=str(team_id),
+                    position=int(item.get("position") or 0),
+                    played=played,
+                    points=int(item.get("points") or 0),
+                    goals_for=goals_for,
+                    goals_against=goals_against,
+                    goal_difference=int(gd),
+                    team_name=team.get("name"),
+                )
+            )
+        rows.sort(key=lambda r: r.position)
+        return rows, rate
 
     @staticmethod
     def _parse_provider_date(value: str | None) -> datetime | None:
@@ -258,6 +396,10 @@ class FootballDataProvider:
         try:
             payload, rate = self._get(f"/competitions/{competition_code}")
         except FootballDataError as exc:
+            # Rate limits are transient; callers wait/retry. Other errors mean
+            # the season is unavailable for this code/year.
+            if exc.rate_limited:
+                raise
             return (
                 CompetitionSeasonInfo(
                     code=competition_code,
@@ -307,6 +449,8 @@ class FootballDataProvider:
         try:
             payload, rate = self._get(f"/competitions/{competition_code}")
         except FootballDataError as exc:
+            if exc.rate_limited:
+                raise
             return (
                 CompetitionSeasonInfo(
                     code=competition_code,

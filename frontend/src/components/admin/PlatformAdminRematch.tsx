@@ -305,7 +305,7 @@ export function PlatformAdminRematch({
     <Card>
       <Stack>
         <div>
-          <h2>Platform admin rematch</h2>
+          <h2>FIFA ranking rematch</h2>
           <Muted className="mt-1">
             Review FIFA ranking → football-data.org mappings for national teams. Unmatched means a
             synced national-competition team has no FIFA link — FIFA countries outside the

@@ -46,6 +46,18 @@ class CompetitionSeasonInfo:
     competition_type: str | None = None
 
 
+@dataclass(frozen=True)
+class ProviderStandingRow:
+    external_team_id: str
+    position: int
+    played: int
+    points: int
+    goals_for: int
+    goals_against: int
+    goal_difference: int
+    team_name: str | None = None
+
+
 class FootballProvider(Protocol):
     def list_teams(self, competition_code: str, season_year: int) -> tuple[list[ProviderTeam], RateLimitInfo]:
         ...
@@ -53,6 +65,11 @@ class FootballProvider(Protocol):
     def list_matches(
         self, competition_code: str, season_year: int
     ) -> tuple[list[ProviderMatch], RateLimitInfo]:
+        ...
+
+    def list_standings(
+        self, competition_code: str, season_year: int
+    ) -> tuple[list[ProviderStandingRow], RateLimitInfo]:
         ...
 
     def resolve_competition_season(

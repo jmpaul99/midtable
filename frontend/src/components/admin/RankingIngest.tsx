@@ -70,9 +70,9 @@ export function RankingIngest({ leagueId }: { leagueId: UUID }) {
 
         {isAdmin && (
           <Muted className="text-sm">
-            Rematch unmatched national teams on the{" "}
+            Rematch unmatched national teams and edit competition tiers on the{" "}
             <Link href="/admin/rankings" className="font-bold text-brand hover:underline">
-              ranking rematch
+              rankings & tiers
             </Link>{" "}
             page.
           </Muted>

@@ -43,6 +43,7 @@ from app.services.match_queries import (
     pool_lookup_for_league,
     scoring_pools_for_league,
 )
+from app.services.draft import draft_order_by_team_pool
 from app.services.members import member_label
 from app.services.period_labels import points_by_period_from_events, scoring_competition_type
 from app.services.roster_owners import (
@@ -87,8 +88,8 @@ def list_pool_teams(
         select(Team)
         .join(PoolTeam, PoolTeam.team_id == Team.id)
         .where(PoolTeam.pool_id == pool.id)
-        .order_by(Team.name)
     ).all()
+    order_map = draft_order_by_team_pool(db, league=league)
     roster = {
         r.team_id: r
         for r in db.scalars(
@@ -129,8 +130,15 @@ def list_pool_teams(
                 drafted=entry is not None,
                 available=entry is None,
                 current_owner=owner,
+                draft_order=order_map.get((team.id, pool.id)),
             )
         )
+    out.sort(
+        key=lambda row: (
+            row.draft_order if row.draft_order is not None else 10**9,
+            row.name.lower(),
+        )
+    )
     return out
 
 

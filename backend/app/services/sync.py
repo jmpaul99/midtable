@@ -249,6 +249,24 @@ def sync_competition_fixtures(
         status.in_progress = False
         status.in_progress_since = None
         db.flush()
+        try:
+            from app.services.standings import ensure_competition_season_table_baselines
+
+            ensure_competition_season_table_baselines(
+                db,
+                provider,
+                provider_key=provider_key,
+                competition_code=competition_code,
+                season_year=season_year,
+            )
+            db.flush()
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "sync_competition table baselines failed competition=%s/%s",
+                competition_code,
+                season_year,
+                exc_info=True,
+            )
         logger.info(
             "sync_competition ok competition=%s/%s created=%s updated=%s changed=%s "
             "skipped_missing_teams=%s",

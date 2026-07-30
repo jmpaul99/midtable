@@ -60,8 +60,12 @@ export function LeagueShell({
   const abortRef = useRef<AbortController | null>(null);
   const draftListenersRef = useRef(new Set<DraftInvalidateListener>());
   const draftSyncGenRef = useRef(0);
+  const draftSyncInflightRef = useRef(false);
+  const draftSyncQueuedRef = useRef(false);
+  const draftDeadlineTimerRef = useRef<number | null>(null);
   const leagueStatusRef = useRef<string | undefined>(undefined);
   const memberIdRef = useRef<string | null | undefined>(undefined);
+  const syncDraftRef = useRef<() => void>(() => {});
 
   const load = useCallback(() => {
     abortRef.current?.abort();
@@ -105,9 +109,38 @@ export function LeagueShell({
     };
   }, []);
 
+  const clearDeadlineTimer = useCallback(() => {
+    if (draftDeadlineTimerRef.current != null) {
+      window.clearTimeout(draftDeadlineTimerRef.current);
+      draftDeadlineTimerRef.current = null;
+    }
+  }, []);
+
+  const scheduleDeadlineSync = useCallback((deadlineAt: string | null | undefined) => {
+    clearDeadlineTimer();
+    if (!deadlineAt) return;
+    const ms = new Date(deadlineAt).getTime() - Date.now();
+    // Already expired: do not reschedule (avoids a tight loop). The timer set while
+    // the deadline was still in the future fires once at expiry.
+    if (ms <= 0) return;
+    // Ignore absurd future deadlines (misconfigured clocks) — poll covers those.
+    if (ms > 30 * 60_000) return;
+    draftDeadlineTimerRef.current = window.setTimeout(() => {
+      draftDeadlineTimerRef.current = null;
+      syncDraftRef.current();
+    }, ms + 75);
+  }, [clearDeadlineTimer]);
+
   const syncDraft = useCallback(() => {
     if (!leaguePublicId) return;
     if (document.visibilityState === "hidden") return;
+    // Coalesce overlapping polls: one in-flight GET, queue at most one follow-up.
+    // Without this, 5s polls during slow/contended autopick pile up on the server.
+    if (draftSyncInflightRef.current) {
+      draftSyncQueuedRef.current = true;
+      return;
+    }
+    draftSyncInflightRef.current = true;
     const gen = ++draftSyncGenRef.current;
     const expectedMemberId = memberIdRef.current;
     const expectedStatus = leagueStatusRef.current;
@@ -121,26 +154,41 @@ export function LeagueShell({
         if (draft.league_status && expectedStatus && draft.league_status !== expectedStatus) {
           reload();
         }
+        scheduleDeadlineSync(running ? draft.pick_deadline_at : null);
         draftListenersRef.current.forEach((listener) => listener(draft));
       })
       .catch((e) => {
         if (gen !== draftSyncGenRef.current) return;
         if ((e as Error)?.name === "AbortError") return;
+      })
+      .finally(() => {
+        if (gen !== draftSyncGenRef.current) return;
+        draftSyncInflightRef.current = false;
+        if (draftSyncQueuedRef.current) {
+          draftSyncQueuedRef.current = false;
+          syncDraftRef.current();
+        }
       });
-  }, [leaguePublicId, reload]);
+  }, [leaguePublicId, reload, scheduleDeadlineSync]);
+
+  syncDraftRef.current = syncDraft;
 
   useEffect(() => {
     if (!liveSyncEnabled) {
       setOnTheClock(false);
       setDraftStatePublicId(null);
+      clearDeadlineTimer();
     }
-  }, [liveSyncEnabled]);
+  }, [liveSyncEnabled, clearDeadlineTimer]);
 
   useEffect(() => {
     return () => {
       draftSyncGenRef.current += 1;
+      draftSyncInflightRef.current = false;
+      draftSyncQueuedRef.current = false;
+      clearDeadlineTimer();
     };
-  }, [leaguePublicId]);
+  }, [leaguePublicId, clearDeadlineTimer]);
 
   useDraftLiveSync({
     leagueId: leaguePublicId,

@@ -9,6 +9,8 @@ export type DraftRealtimeStatus = "connecting" | "subscribed" | "error" | "close
 const POLL_MS_SUBSCRIBED = 5000;
 const POLL_MS_FALLBACK = 2000;
 const INVALIDATE_DEBOUNCE_MS = 150;
+const RECONNECT_BASE_MS = 1000;
+const RECONNECT_MAX_MS = 30000;
 
 /**
  * Live draft sync: Supabase Realtime as the primary invalidate signal,
@@ -48,6 +50,8 @@ export function useDraftLiveSync({
     let channel: RealtimeChannel | null = null;
     let debounceTimer: number | null = null;
     let pollTimer: number | null = null;
+    let reconnectTimer: number | null = null;
+    let reconnectAttempt = 0;
 
     const fire = () => {
       if (cancelled) return;
@@ -71,6 +75,13 @@ export function useDraftLiveSync({
       }
     };
 
+    const clearReconnect = () => {
+      if (reconnectTimer != null) {
+        window.clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+      }
+    };
+
     const startPoll = () => {
       clearPoll();
       const ms =
@@ -84,10 +95,20 @@ export function useDraftLiveSync({
     };
 
     const canSubscribeRealtime = Boolean(draftStatePublicId);
-    setRealtimeStatus(canSubscribeRealtime ? "connecting" : "closed");
-    realtimeStatusRef.current = canSubscribeRealtime ? "connecting" : "closed";
 
-    if (canSubscribeRealtime && draftStatePublicId) {
+    const tearDownChannel = () => {
+      if (channel) {
+        void supabase().removeChannel(channel);
+        channel = null;
+      }
+    };
+
+    const subscribeRealtime = () => {
+      if (cancelled || !draftStatePublicId) return;
+      tearDownChannel();
+      setRealtimeStatus("connecting");
+      realtimeStatusRef.current = "connecting";
+
       try {
         channel = supabase()
           .channel(`draft:${leagueId}`)
@@ -104,6 +125,7 @@ export function useDraftLiveSync({
           .subscribe((status: string) => {
             if (cancelled) return;
             if (status === "SUBSCRIBED") {
+              reconnectAttempt = 0;
               setRealtimeStatus("subscribed");
               realtimeStatusRef.current = "subscribed";
               startPoll();
@@ -111,18 +133,44 @@ export function useDraftLiveSync({
               setRealtimeStatus("error");
               realtimeStatusRef.current = "error";
               startPoll();
+              scheduleReconnect();
             } else if (status === "CLOSED") {
               setRealtimeStatus("closed");
               realtimeStatusRef.current = "closed";
               startPoll();
+              scheduleReconnect();
             }
           });
       } catch {
         if (!cancelled) {
           setRealtimeStatus("error");
           realtimeStatusRef.current = "error";
+          startPoll();
+          scheduleReconnect();
         }
       }
+    };
+
+    const scheduleReconnect = () => {
+      if (cancelled || !canSubscribeRealtime) return;
+      clearReconnect();
+      const delay = Math.min(
+        RECONNECT_MAX_MS,
+        RECONNECT_BASE_MS * 2 ** Math.min(reconnectAttempt, 5),
+      );
+      reconnectAttempt += 1;
+      reconnectTimer = window.setTimeout(() => {
+        reconnectTimer = null;
+        if (cancelled) return;
+        subscribeRealtime();
+      }, delay);
+    };
+
+    if (canSubscribeRealtime) {
+      subscribeRealtime();
+    } else {
+      setRealtimeStatus("closed");
+      realtimeStatusRef.current = "closed";
     }
 
     startPoll();
@@ -139,9 +187,8 @@ export function useDraftLiveSync({
       document.removeEventListener("visibilitychange", onVisibility);
       if (debounceTimer != null) window.clearTimeout(debounceTimer);
       clearPoll();
-      if (channel) {
-        void supabase().removeChannel(channel);
-      }
+      clearReconnect();
+      tearDownChannel();
       setRealtimeStatus("closed");
       realtimeStatusRef.current = "closed";
     };

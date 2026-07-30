@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { DraftPick, League, Manager } from "@/lib/types";
+import type { AutopickPreview, DraftPick, League, Manager } from "@/lib/types";
 import { managerLabel } from "@/lib/types";
 import {
   buildBoardCells,
@@ -42,6 +42,7 @@ export function DraftRoundBoard({
   crestByTeamId,
   yourTurn = false,
   deadlineAt = null,
+  autopickPreview = null,
 }: {
   league: League;
   picks: DraftPick[];
@@ -51,6 +52,7 @@ export function DraftRoundBoard({
   crestByTeamId: Map<string, string | null>;
   yourTurn?: boolean;
   deadlineAt?: string | null;
+  autopickPreview?: AutopickPreview | null;
 }) {
   const yourMemberId = league.current_member_id;
   const ordered = useMemo(() => orderedDraftMembers(league), [league]);
@@ -131,6 +133,7 @@ export function DraftRoundBoard({
               currentPickNumber={currentPickNumber}
               currentRound={currentRound}
               deadlineAt={deadlineAt}
+              autopickPreview={autopickPreview}
             />
           )}
         </div>
@@ -284,6 +287,7 @@ function OnClockStatus({
   currentPickNumber,
   currentRound,
   deadlineAt,
+  autopickPreview = null,
 }: {
   leagueId: string;
   onClockMember: Manager | null;
@@ -291,6 +295,7 @@ function OnClockStatus({
   currentPickNumber: number;
   currentRound: number;
   deadlineAt?: string | null;
+  autopickPreview?: AutopickPreview | null;
 }) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -310,37 +315,58 @@ function OnClockStatus({
       ? managerLabel(onClockMember)
       : "—";
 
+  const autopickLabel =
+    showTimer && autopickPreview
+      ? autopickPreview.mode === "random" || !autopickPreview.team_name
+        ? "If time runs out: a random available club"
+        : `If time runs out: ${autopickPreview.team_name}`
+      : null;
+
   return (
     <div
       className={cn(
-        "flex min-w-0 shrink-0 flex-wrap items-baseline gap-x-2 gap-y-0.5 rounded-xl border px-3 py-2",
+        "flex min-w-0 shrink-0 flex-col gap-0.5 rounded-xl border px-3 py-2",
         yourTurn
           ? "border-brand/40 bg-[color-mix(in_srgb,var(--color-brand)_10%,var(--color-surface))]"
           : "border-line bg-surface-2",
       )}
       aria-live="polite"
     >
-      <span className="min-w-0 truncate text-sm font-bold text-ink">
-        {onClockMember && !yourTurn ? (
-          <ManagerLink leagueId={leagueId} managerId={onClockMember.id}>
-            {who}
-          </ManagerLink>
-        ) : (
-          who
-        )}
-      </span>
-      <Muted className="text-xs font-semibold tabular-nums">
-        Rd {currentRound} · Pick {currentPickNumber}
-      </Muted>
-      {showTimer ? (
-        <span
-          className={cn(
-            "font-mono text-base font-extrabold tabular-nums tracking-tight",
-            urgent ? "text-danger" : "text-brand",
+      <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5">
+        <span className="min-w-0 truncate text-sm font-bold text-ink">
+          {onClockMember && !yourTurn ? (
+            <ManagerLink leagueId={leagueId} managerId={onClockMember.id}>
+              {who}
+            </ManagerLink>
+          ) : (
+            who
           )}
-        >
-          {expired ? "0:00" : formatCountdownDuration(remaining!)}
         </span>
+        <Muted className="text-xs font-semibold tabular-nums">
+          Rd {currentRound} · Pick {currentPickNumber}
+        </Muted>
+        {showTimer ? (
+          <span
+            className={cn(
+              "font-mono text-base font-extrabold tabular-nums tracking-tight",
+              urgent ? "text-danger" : "text-brand",
+            )}
+          >
+            {expired ? "0:00" : formatCountdownDuration(remaining!)}
+          </span>
+        ) : null}
+      </div>
+      {autopickLabel ? (
+        <Muted className="flex min-w-0 items-center gap-1.5 text-xs">
+          {autopickPreview?.crest_url || autopickPreview?.team_name ? (
+            <TeamCrest
+              name={autopickPreview.team_name}
+              crestUrl={autopickPreview.crest_url}
+              size="sm"
+            />
+          ) : null}
+          <span className="min-w-0 truncate">{autopickLabel}</span>
+        </Muted>
       ) : null}
     </div>
   );

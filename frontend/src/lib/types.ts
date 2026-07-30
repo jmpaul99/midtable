@@ -225,6 +225,8 @@ export interface PoolTeam {
   drafted: boolean;
   current_owner: { member_id: UUID; display_name: string; acquired_via: string } | null;
   available: boolean;
+  /** 0 = highest autopick priority; comparable across competitions. */
+  draft_order?: number | null;
 }
 
 export interface DraftPick {
@@ -236,6 +238,14 @@ export interface DraftPick {
   team_name?: string;
   crest_url?: string | null;
   pool_id?: UUID;
+}
+
+export interface AutopickPreview {
+  mode: "ranking" | "table" | "random";
+  team_id?: UUID | null;
+  team_name?: string | null;
+  crest_url?: string | null;
+  pool_id?: UUID | null;
 }
 
 export interface DraftState {
@@ -251,6 +261,7 @@ export interface DraftState {
   pick_deadline_at?: string | null;
   pick_timer_seconds?: number | null;
   draft_scheduled_at?: string | null;
+  autopick_preview?: AutopickPreview | null;
 }
 
 export interface RosterRow {
@@ -382,6 +393,24 @@ export interface LeagueJob {
 export interface LatestLeagueJobs {
   manual: LeagueJob | null;
   cron: LeagueJob | null;
+}
+
+export interface PlatformJob {
+  id: UUID;
+  kind: "teams_and_rankings" | "fifa_rankings" | string;
+  source: "admin" | "cron" | string;
+  status: "pending" | "running" | "succeeded" | "failed" | string;
+  error: string | null;
+  summary: Record<string, unknown> | null;
+  params: Record<string, unknown> | null;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+}
+
+export interface LatestPlatformJobs {
+  manual: PlatformJob | null;
+  cron: PlatformJob | null;
 }
 
 export interface ReadinessCheck {

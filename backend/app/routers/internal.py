@@ -12,8 +12,12 @@ from app.deps import get_football_provider, require_cron_secret
 from app.models import League
 from app.providers.fifa_rankings import FifaRankingsError, ParseFifaRankingsProvider
 from app.providers.football_data import FootballDataProvider
-from app.services.ranking_catalog import sync_fifa_catalogs
 from app.services.draft import run_draft_maintenance
+from app.services.platform_jobs import (
+    json_safe_fifa_summary,
+    record_cron_platform_result,
+)
+from app.services.ranking_catalog import sync_fifa_catalogs
 from app.services.sync import sync_all_active_competitions_then_score
 
 logger = logging.getLogger(__name__)
@@ -85,6 +89,22 @@ def sync_fifa_rankings(
             payload = sync_fifa_catalogs(db, fifa_provider)
     except (FifaRankingsError, ValueError) as exc:
         logger.exception("sync-fifa-rankings failed")
+        record_cron_platform_result(
+            db,
+            kind="fifa_rankings",
+            ok=False,
+            error=str(exc),
+        )
+        db.commit()
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+    summary = json_safe_fifa_summary(payload)
+    record_cron_platform_result(
+        db,
+        kind="fifa_rankings",
+        ok=bool(payload.get("ok")),
+        summary=summary,
+        error=None if payload.get("ok") else str(payload.get("error") or "FIFA sync failed"),
+    )
+    db.commit()
     logger.info("sync-fifa-rankings finished ok=%s", payload.get("ok"))
     return payload

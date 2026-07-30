@@ -336,6 +336,8 @@ class PoolTeamResponse(IdSchema):
     drafted: bool = False
     available: bool = True
     current_owner: MatchOwnerInfo | None = None
+    # 0 = highest autopick priority; comparable across competitions in the league.
+    draft_order: int | None = None
 
 
 class RosterRowResponse(BaseModel):
