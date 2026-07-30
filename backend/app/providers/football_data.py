@@ -312,10 +312,15 @@ class FootballDataProvider:
                 gd = item.get("goalDifference")
                 if gd is None:
                     gd = goals_for - goals_against
+                raw_position = item.get("position")
+                try:
+                    position = int(raw_position) if raw_position is not None else 0
+                except (TypeError, ValueError):
+                    position = 0
                 rows.append(
                     ProviderStandingRow(
                         external_team_id=external_id,
-                        position=int(item.get("position") or 0),
+                        position=position,
                         played=played,
                         points=int(item.get("points") or 0),
                         goals_for=goals_for,
@@ -324,33 +329,42 @@ class FootballDataProvider:
                         team_name=team.get("name"),
                     )
                 )
-        # Group-local positions are not a global order. When we merged multiple
-        # blocks (multi-group cups / no overall TOTAL), re-rank by table metrics.
-        if len(table_blocks) > 1:
-            rows.sort(
-                key=lambda r: (
-                    -r.points,
-                    -r.goal_difference,
-                    -r.goals_for,
-                    r.external_team_id,
-                )
-            )
-            rows = [
-                ProviderStandingRow(
-                    external_team_id=row.external_team_id,
-                    position=index,
-                    played=row.played,
-                    points=row.points,
-                    goals_for=row.goals_for,
-                    goals_against=row.goals_against,
-                    goal_difference=row.goal_difference,
-                    team_name=row.team_name,
-                )
-                for index, row in enumerate(rows, start=1)
-            ]
+        # Re-rank when we merged multiple blocks (group-local positions) or when
+        # any row lacks a valid position (>= 1), so missing/zero ranks cannot
+        # sort ahead of real table places for draft snapshots / autopick.
+        needs_rerank = len(table_blocks) > 1 or any(r.position < 1 for r in rows)
+        if needs_rerank:
+            rows = self._rerank_standing_rows(rows)
         else:
             rows.sort(key=lambda r: (r.position, r.external_team_id))
         return rows, rate
+
+    @staticmethod
+    def _rerank_standing_rows(
+        rows: list[ProviderStandingRow],
+    ) -> list[ProviderStandingRow]:
+        ordered = sorted(
+            rows,
+            key=lambda r: (
+                -r.points,
+                -r.goal_difference,
+                -r.goals_for,
+                r.external_team_id,
+            ),
+        )
+        return [
+            ProviderStandingRow(
+                external_team_id=row.external_team_id,
+                position=index,
+                played=row.played,
+                points=row.points,
+                goals_for=row.goals_for,
+                goals_against=row.goals_against,
+                goal_difference=row.goal_difference,
+                team_name=row.team_name,
+            )
+            for index, row in enumerate(ordered, start=1)
+        ]
 
     @staticmethod
     def _parse_provider_date(value: str | None) -> datetime | None:

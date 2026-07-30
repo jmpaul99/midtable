@@ -113,6 +113,51 @@ def test_list_standings_prefers_total_null_group():
     assert rows[0].position == 1
 
 
+def test_list_standings_reranks_when_position_missing():
+    """Missing/zero positions must not sort ahead of real table ranks."""
+    provider = FootballDataProvider(api_token="test", client=MagicMock())
+    payload = {
+        "standings": [
+            {
+                "type": "TOTAL",
+                "group": None,
+                "table": [
+                    {
+                        "team": {"id": 1, "name": "No Pos"},
+                        "playedGames": 10,
+                        "points": 10,
+                        "goalsFor": 8,
+                        "goalsAgainst": 5,
+                        "goalDifference": 3,
+                    },
+                    {
+                        "position": 1,
+                        "team": {"id": 2, "name": "Leader"},
+                        "playedGames": 10,
+                        "points": 25,
+                        "goalsFor": 20,
+                        "goalsAgainst": 5,
+                        "goalDifference": 15,
+                    },
+                    {
+                        "position": 0,
+                        "team": {"id": 3, "name": "Zero Pos"},
+                        "playedGames": 10,
+                        "points": 18,
+                        "goalsFor": 12,
+                        "goalsAgainst": 8,
+                        "goalDifference": 4,
+                    },
+                ],
+            }
+        ]
+    }
+    provider._get = MagicMock(return_value=(payload, RateLimitInfo()))  # type: ignore[method-assign]
+    rows, _ = provider.list_standings("PL", 2024)
+    assert [r.external_team_id for r in rows] == ["2", "3", "1"]
+    assert [r.position for r in rows] == [1, 2, 3]
+
+
 def test_list_standings_merges_multi_group_total_blocks():
     provider = FootballDataProvider(api_token="test", client=MagicMock())
     payload = {
