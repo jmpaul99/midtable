@@ -731,6 +731,7 @@ export interface MatchweekRow {
   period_key?: string | null;
   label?: string | null;
   stage?: string | null;
+  competition_code?: string | null;
   points: number;
 }
 

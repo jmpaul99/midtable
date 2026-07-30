@@ -504,7 +504,7 @@ def member_highlights(
     team_points: dict[int, float] = defaultdict(float)
     biggest_upset: dict[str, Any] | None = None
     upset_types = upset_types_for_league(league)
-    for group_i, (event_competition_type, grouped_events) in enumerate(
+    for group_i, (_competition_code, event_competition_type, grouped_events) in enumerate(
         events_by_competition_type(events, matches_by_id, pools)
     ):
         catalog = build_period_catalog(

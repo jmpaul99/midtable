@@ -152,11 +152,11 @@ def events_by_competition_type(
     events: Sequence[Any],
     matches_by_id: dict[Any, Any],
     pools: Sequence[Any],
-) -> list[tuple[str | None, list[Any]]]:
+) -> list[tuple[str | None, str | None, list[Any]]]:
     """Group events by match competition code in stable pool order.
 
-    Returns ``(competition_type, events)`` per competition so two pools that share
-    a type (e.g. two cups) keep separate period catalogs.
+    Returns ``(competition_code, competition_type, events)`` per competition so two
+    pools that share a type (e.g. two cups) keep separate period catalogs.
     """
     ordered_pools = sorted(
         pools,
@@ -187,7 +187,7 @@ def events_by_competition_type(
         if code not in code_order:
             code_order.append(code)
     return [
-        (type_by_code.get(code) if code else None, grouped[code])
+        (code, type_by_code.get(code) if code else None, grouped[code])
         for code in code_order
         if code in grouped
     ]

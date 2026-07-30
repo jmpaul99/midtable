@@ -83,10 +83,13 @@ def test_events_use_period_labels_for_their_match_competition_type():
             [(event.stage, event.scheduled_matchweek) for event in grouped_events],
             competition_type=competition_type,
         )
-        for competition_type, grouped_events in grouped
+        for _code, competition_type, grouped_events in grouped
     }
 
-    assert [competition_type for competition_type, _ in grouped] == ["LEAGUE", "CUP"]
+    assert [(code, competition_type) for code, competition_type, _ in grouped] == [
+        ("PL", "LEAGUE"),
+        ("CL", "CUP"),
+    ]
     assert [(p.key, p.label) for p in catalogs["LEAGUE"]] == [
         ("REGULAR_SEASON:1", "MW1"),
         ("REGULAR_SEASON:2", "MW2"),
@@ -127,15 +130,18 @@ def test_same_type_pools_keep_separate_period_catalogs():
     ]
 
     grouped = events_by_competition_type(events, matches, pools)
-    assert [ctype for ctype, _ in grouped] == ["CUP", "CUP"]
-    assert [len(evs) for _, evs in grouped] == [2, 3]
+    assert [(code, ctype) for code, ctype, _ in grouped] == [
+        ("FAC", "CUP"),
+        ("ELC", "CUP"),
+    ]
+    assert [len(evs) for _, _, evs in grouped] == [2, 3]
 
     catalogs = [
         build_period_catalog(
             [(event.stage, event.scheduled_matchweek) for event in grouped_events],
             competition_type=competition_type,
         )
-        for competition_type, grouped_events in grouped
+        for _code, competition_type, grouped_events in grouped
     ]
     assert [p.key for p in catalogs[0]] == ["QUARTER_FINALS", "LAST_16"]
     assert [p.key for p in catalogs[1]] == [

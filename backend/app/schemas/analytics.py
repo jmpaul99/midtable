@@ -58,6 +58,7 @@ class MatchweekStatRow(BaseModel):
     period_key: str | None = None
     label: str | None = None
     stage: str | None = None
+    competition_code: str | None = None
     points: float
 
 

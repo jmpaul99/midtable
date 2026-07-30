@@ -346,7 +346,17 @@ def matchweek_breakdown(db: Session, league: League) -> list[dict[str, Any]]:
     )
 
     rows = []
-    for competition_type, grouped_events in events_by_competition_type(
+    multi_competition = (
+        len(
+            {
+                str(getattr(m, "competition_code", "") or "").upper()
+                for m in matches_by_id.values()
+                if getattr(m, "competition_code", None)
+            }
+        )
+        > 1
+    )
+    for competition_code, competition_type, grouped_events in events_by_competition_type(
         events, matches_by_id, pools
     ):
         catalog = build_period_catalog(
@@ -376,14 +386,23 @@ def matchweek_breakdown(db: Session, league: League) -> list[dict[str, Any]]:
                 continue
             profile = db.get(Profile, member.profile_id)
             period = by_key[period_key]
+            # Namespace by competition so multi-pool leagues don't collide on
+            # shared stage keys (e.g. FINAL / REGULAR_SEASON:3) in the chart.
+            scoped_key = (
+                f"{competition_code}:{period.key}" if competition_code else period.key
+            )
+            label = period.label
+            if multi_competition and competition_code:
+                label = f"{competition_code} · {period.label}"
             rows.append(
                 {
                     "member_id": str(member.public_id),
                     "display_name": member_label(member, profile),
-                    "period_key": period.key,
-                    "label": period.label,
+                    "period_key": scoped_key,
+                    "label": label,
                     "stage": period.stage,
                     "scheduled_matchweek": period.scheduled_matchweek,
+                    "competition_code": competition_code,
                     "points": float(pts),
                 }
             )
