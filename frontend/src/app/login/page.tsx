@@ -10,7 +10,11 @@ import { Button } from "@/components/ui/Button";
 import { LogInIcon, SendIcon, UserPlusIcon, SpinnerIcon } from "@/components/ui/icons";
 import { Card, Eyebrow, Muted, Stack } from "@/components/ui/Card";
 import { Input, Label } from "@/components/ui/Field";
-import { TurnstileWidget, resetTurnstile } from "@/components/TurnstileWidget";
+import {
+  TURNSTILE_ENABLED,
+  TurnstileWidget,
+  resetTurnstile,
+} from "@/components/TurnstileWidget";
 import { useToast } from "@/components/ui/ToastProvider";
 
 export default function LoginPage() {
@@ -98,7 +102,7 @@ function LoginForm() {
     setBusy(true);
     setValidation("");
     try {
-      if (!turnstileToken) {
+      if (TURNSTILE_ENABLED && !turnstileToken) {
         setValidation("Please complete the verification challenge.");
         return;
       }
@@ -108,7 +112,7 @@ function LoginForm() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           email: normalized,
-          turnstile_token: turnstileToken,
+          ...(turnstileToken ? { turnstile_token: turnstileToken } : {}),
         }),
         cache: "no-store",
       });
@@ -345,12 +349,18 @@ function LoginForm() {
                   onChange={(e) => setEmail(e.target.value)}
                 />
               </Label>
-              <TurnstileWidget
-                action="email-status"
-                onToken={setTurnstileToken}
-                onWidgetId={setTurnstileWidgetId}
-              />
-              <Button type="submit" full disabled={busy || !turnstileToken}>
+              {TURNSTILE_ENABLED && (
+                <TurnstileWidget
+                  action="email-status"
+                  onToken={setTurnstileToken}
+                  onWidgetId={setTurnstileWidgetId}
+                />
+              )}
+              <Button
+                type="submit"
+                full
+                disabled={busy || (TURNSTILE_ENABLED && !turnstileToken)}
+              >
                 {busy ? <SpinnerIcon /> : <LogInIcon />}
                 {busy ? "Please wait…" : "Continue"}
               </Button>

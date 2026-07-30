@@ -59,7 +59,7 @@ def email_status(
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> EmailStatusResponse:
-    """Return whether an auth account exists (BFF-only; requires Turnstile)."""
+    """Return whether an auth account exists (BFF-only; Turnstile outside development)."""
     verify_turnstile_token(
         token=body.turnstile_token,
         settings=settings,

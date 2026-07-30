@@ -131,7 +131,7 @@ export function LeagueBottomNav({ items }: { items: NavItem[] }) {
               href={item.href}
               ref={active ? activeRef : undefined}
               className={cn(
-                "snap-start inline-flex min-h-12 shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-xl px-3 py-1.5 text-sm font-bold transition",
+                "snap-start flex min-h-12 min-w-max flex-1 shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-xl px-3 py-1.5 text-sm font-bold transition",
                 item.emphasized && "bg-brand text-on-brand shadow-sm",
                 !item.emphasized && active && "bg-brand/10 text-brand",
                 !item.emphasized && !active && "text-muted",

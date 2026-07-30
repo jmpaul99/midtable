@@ -71,10 +71,16 @@ export function UpsetRulesEditor({
     const current = value.thresholds[index];
     if (!current) return;
     const patch: Partial<UpsetThreshold> = { name };
-    const hadName = Boolean((current.name ?? "").trim());
     const key = (current.key ?? "").trim();
+    const prevName = (current.name ?? "").trim();
+    const prevSlug = prevName ? slugifyKey(prevName) : "";
     const placeholderKey = !key || /^upset(_\d+)?$/.test(key);
-    if (!hadName && name.trim() && placeholderKey) {
+    // Keep regenerating while the key is still auto-derived from the name (including
+    // first keystrokes like "M" → "m"), so we don't lock in a one-letter key.
+    const stillAuto =
+      placeholderKey ||
+      (Boolean(prevSlug) && (key === prevSlug || key.startsWith(`${prevSlug}_`)));
+    if (stillAuto && name.trim()) {
       const keys = value.thresholds.map((t) => t.key);
       patch.key = uniqueKey(slugifyKey(name) || "upset", keys, index, "upset");
     }

@@ -2,6 +2,7 @@
 
 import type { ReactNode } from "react";
 import { MidtableLogo } from "@/components/MidtableLogo";
+import { humanizeKey } from "@/components/settings/types";
 import { cn } from "@/lib/cn";
 import { IconButton } from "./IconButton";
 import { RefreshIcon } from "./icons";
@@ -45,16 +46,24 @@ export function Empty({ title, children }: { title: string; children?: ReactNode
 }
 
 export function Status({ value }: { value: string }) {
-  const good = ["active", "ready", "succeeded", "complete", "completed", "locked", "running", "ok"].includes(
-    value.toLowerCase(),
-  );
+  const normalized = value.toLowerCase();
+  const live = normalized === "drafting";
+  const good =
+    live ||
+    ["active", "ready", "succeeded", "complete", "completed", "locked", "running", "ok"].includes(
+      normalized,
+    );
   return (
     <span className="inline-flex items-center gap-1.5 rounded-full border border-line bg-surface px-2.5 py-1 text-xs font-bold capitalize text-ink">
       <i
-        className={cn("size-2 rounded-full", good ? "bg-brand" : "bg-warning")}
+        className={cn(
+          "size-2 rounded-full",
+          good ? "bg-brand" : "bg-warning",
+          live && "animate-pulse",
+        )}
         aria-hidden
       />
-      {value.replaceAll("_", " ")}
+      {humanizeKey(value)}
     </span>
   );
 }

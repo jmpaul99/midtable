@@ -46,10 +46,15 @@ export async function POST(request: NextRequest) {
   const turnstileToken = String(
     (body as { turnstile_token?: unknown }).turnstile_token ?? "",
   ).trim();
+  const turnstileRequired = process.env.NODE_ENV !== "development";
 
-  if (!email || !turnstileToken) {
+  if (!email || (turnstileRequired && !turnstileToken)) {
     return NextResponse.json(
-      { detail: "email and turnstile_token are required" },
+      {
+        detail: turnstileRequired
+          ? "email and turnstile_token are required"
+          : "email is required",
+      },
       { status: 400 },
     );
   }
@@ -61,7 +66,10 @@ export async function POST(request: NextRequest) {
       "X-Internal-Secret": secret,
       ...(ip !== "unknown" ? { "X-Forwarded-For": ip } : {}),
     },
-    body: JSON.stringify({ email, turnstile_token: turnstileToken }),
+    body: JSON.stringify({
+      email,
+      turnstile_token: turnstileToken || "dev-bypass",
+    }),
     cache: "no-store",
   });
 

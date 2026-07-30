@@ -64,9 +64,11 @@ function currentPickTimerSeconds(league: League): number | null {
 export function DraftAdminPanel({
   league,
   onLeagueChange,
+  draftVersion,
 }: {
   league: League;
   onLeagueChange?: () => void;
+  draftVersion?: number;
 }) {
   const { toast } = useToast();
   const [draftOrder, setDraftOrder] = useState<UUID[]>(() =>
@@ -390,6 +392,7 @@ export function DraftAdminPanel({
         />
         <RosterCorrectionsSection
           league={league}
+          draftVersion={draftVersion}
           onChanged={() => {
             onLeagueChange?.();
             loadPoolTeams();

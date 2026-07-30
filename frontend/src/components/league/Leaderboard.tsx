@@ -2,13 +2,14 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { formatNumber } from "@/lib/api";
+import { formatNumber, formatPeriodRange, scoringCompetitionType } from "@/lib/format";
 import type { League, PhaseMetadata, Standing, StandingsResponse } from "@/lib/types";
 import { managerLabel } from "@/lib/types";
 import { Empty, ErrorState, Loading } from "@/components/ui/State";
 import { Button } from "@/components/ui/Button";
 import { Card, Eyebrow, Muted, RankBadge, Stack } from "@/components/ui/Card";
 import { cn } from "@/lib/cn";
+import { humanizeKey } from "@/components/settings/types";
 import { matchStageLabel } from "@/lib/matchStages";
 import { useApiQuery } from "@/lib/useApiQuery";
 import { managerHref } from "./ManagerLink";
@@ -21,9 +22,12 @@ function uniquePhases(league: League) {
   );
 }
 
-function formatMatchweekRange(range: number[] | null | undefined): string | null {
+function formatMatchweekRange(
+  range: number[] | null | undefined,
+  competitionType: string | null,
+): string | null {
   if (!range || range.length < 2) return null;
-  return `Matchweeks ${range[0]}–${range[1]}`;
+  return formatPeriodRange(range[0], range[1], competitionType);
 }
 
 function formatStages(stages: string[] | null | undefined): string | null {
@@ -45,6 +49,7 @@ function phaseScopeParts(
   phaseKey: string,
   meta?: PhaseMetadata,
 ): string[] {
+  const competitionType = scoringCompetitionType(league.pools);
   const isSeason = phaseKey === SEASON_KEY;
   const selected = isSeason ? undefined : league.phases.find((p) => p.key === phaseKey);
   const source = meta ?? selected;
@@ -54,8 +59,10 @@ function phaseScopeParts(
     parts.push("Overall");
   } else {
     const scope =
-      formatMatchweekRange(source?.matchweek_range ?? selected?.matchweek_range) ||
-      formatStages(source?.stage_in ?? selected?.stage_in);
+      formatMatchweekRange(
+        source?.matchweek_range ?? selected?.matchweek_range,
+        competitionType,
+      ) || formatStages(source?.stage_in ?? selected?.stage_in);
     if (scope) parts.push(scope);
   }
 
@@ -65,10 +72,18 @@ function phaseScopeParts(
       ? meta.include_bonus_types
       : phaseBonusTypes(league, phaseKey);
   if (bonuses.length) {
-    parts.push(`Bonuses: ${bonuses.join(", ")}`);
+    parts.push(`Bonuses: ${bonuses.map((k) => humanizeKey(k)).join(", ")}`);
   }
 
   return parts;
+}
+
+function phaseTitle(league: League, phaseKey: string, metaName?: string | null): string {
+  if (metaName?.trim()) return metaName.trim();
+  if (phaseKey === SEASON_KEY) return "Season";
+  const fromMeta = league.phases.find((p) => p.key === phaseKey)?.name?.trim();
+  if (fromMeta) return fromMeta;
+  return humanizeKey(phaseKey);
 }
 
 function phaseProgressParts(meta?: PhaseMetadata): string[] {
@@ -120,7 +135,7 @@ export function Leaderboard({ league }: { league: League }) {
       <Stack>
         <div>
           <Eyebrow>Leaderboard</Eyebrow>
-          <h2>{result?.phase.name || (phase === SEASON_KEY ? "Season" : phase)}</h2>
+          <h2>{phaseTitle(league, phase, result?.phase.name)}</h2>
           {infoParts.length > 0 && (
             <Muted className="mt-1">{infoParts.join(" · ")}</Muted>
           )}
@@ -148,7 +163,7 @@ export function Leaderboard({ league }: { league: League }) {
                   className="shrink-0"
                   title={tip}
                 >
-                  {p.name}
+                  {(p.name || "").trim() || humanizeKey(p.key)}
                 </Button>
               );
             })}

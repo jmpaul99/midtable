@@ -5,15 +5,8 @@ import { managerLabel } from "@/lib/types";
 import { formatDateTimeWithZone } from "@/lib/format";
 import { Card, RankBadge, Stack } from "@/components/ui/Card";
 import { cn } from "@/lib/cn";
-import { ReviewBlock } from "@/components/settings";
+import { ReviewBlock, humanizeKey } from "@/components/settings";
 import { ManagerLink } from "./ManagerLink";
-
-function humanizeKey(key: string): string {
-  return key
-    .split("_")
-    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-    .join(" ");
-}
 
 function preassignLabel(mode: string, count?: number): string {
   const n = count != null && Number.isFinite(count) ? Math.floor(count) : null;

@@ -188,6 +188,7 @@ class TeamPool(Base):
     provider: Mapped[str] = mapped_column(Text, default="football-data.org")
     competition_code: Mapped[str | None] = mapped_column(Text)
     season_year: Mapped[int | None] = mapped_column(Integer)
+    competition_type: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 

@@ -1,5 +1,6 @@
 "use client";
 
+import { humanizeKey } from "@/components/settings/types";
 import { Select } from "@/components/ui/Field";
 
 type PoolOption = {
@@ -7,6 +8,13 @@ type PoolOption = {
   label?: string | null;
   key?: string | null;
 };
+
+function poolOptionLabel(p: PoolOption): string {
+  const label = (p.label || "").trim();
+  if (label) return label;
+  if (p.key) return humanizeKey(p.key);
+  return p.id;
+}
 
 /** Competition/pool filter; empty string means all competitions. */
 export function PoolFilterSelect({
@@ -40,7 +48,7 @@ export function PoolFilterSelect({
       <option value="">{allLabel}</option>
       {pools.map((p) => (
         <option key={p.id} value={p.id}>
-          {p.label || p.key || p.id}
+          {poolOptionLabel(p)}
         </option>
       ))}
     </Select>

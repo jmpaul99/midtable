@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useId, useState } from "react";
 import { formatDate, formatNumber } from "@/lib/format";
+import { humanizeKey } from "@/components/settings/types";
 import type { BonusAward, UUID } from "@/lib/types";
 import { Card, Eyebrow, Muted, Stack } from "@/components/ui/Card";
 import { TeamCrest } from "./TeamCrest";
@@ -106,7 +107,7 @@ export function BonusAwardsPanel({
                         <div className="flex items-start justify-between gap-2">
                           <div className="min-w-0">
                             <strong className="block truncate text-sm sm:text-base">
-                              {b.bonus_type_label || b.bonus_type}
+                              {b.bonus_type_label || humanizeKey(b.bonus_type)}
                             </strong>
                             {showTeam && isManager && (
                               <Muted className="mt-0.5 truncate text-xs sm:text-sm">

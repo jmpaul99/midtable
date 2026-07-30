@@ -11,7 +11,7 @@ import {
   RowItem,
   RowList,
 } from "./chrome";
-import type { TiebreakRung } from "./types";
+import { humanizeKey, type TiebreakRung } from "./types";
 
 type Option = { id: string; label: string; group: string };
 
@@ -28,12 +28,6 @@ const DEFAULT_EVENTS = [
   { value: "major_upset_draw", label: "Major upset draw" },
 ];
 
-function humanize(key: string): string {
-  return key
-    .split("_")
-    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-    .join(" ");
-}
 
 function rungToCriterionId(r: TiebreakRung): string {
   if (r.metric === "total_points") return "total_points";
@@ -170,7 +164,7 @@ function labelForCriterion(
           : metric === "bonus_points"
             ? "points"
             : metric;
-  if (keys.length) return `${keys.map(humanize).join(" + ")} (${kind})`;
+  if (keys.length) return `${keys.map(humanizeKey).join(" + ")} (${kind})`;
   return id;
 }
 
@@ -324,7 +318,7 @@ export function eventOptionsFromUpsetKeys(
     const name = typeof item === "string" ? "" : item.name?.trim();
     extras.push({
       value: key,
-      label: name && name !== key ? name : humanize(key),
+      label: name && name !== key ? name : humanizeKey(key),
     });
   }
   return [...base, ...extras];

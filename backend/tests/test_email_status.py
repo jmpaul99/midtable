@@ -63,9 +63,19 @@ def test_email_status_rejects_invalid_email():
         EmailStatusRequest(email="not-an-email", turnstile_token="tok")
 
 
-def test_email_status_requires_turnstile_token():
-    with pytest.raises(ValidationError):
-        EmailStatusRequest(email="a@b.com", turnstile_token="")
+def test_email_status_allows_empty_turnstile_token():
+    body = EmailStatusRequest(email="a@b.com", turnstile_token="")
+    assert body.turnstile_token == ""
+
+
+def test_verify_turnstile_skips_in_development():
+    from app.services.turnstile import verify_turnstile_token
+
+    verify_turnstile_token(
+        token="",
+        settings=_settings(app_env="development"),
+        expected_action="email-status",
+    )
 
 
 @patch("app.services.turnstile.httpx.Client")
@@ -86,7 +96,19 @@ def test_verify_turnstile_rejects_bad_action(mock_client_cls: MagicMock):
     with pytest.raises(HTTPException) as exc:
         verify_turnstile_token(
             token="tok",
-            settings=_settings(),
+            settings=_settings(app_env="production"),
+            expected_action="email-status",
+        )
+    assert exc.value.status_code == 403
+
+
+def test_verify_turnstile_rejects_empty_token_outside_development():
+    from app.services.turnstile import verify_turnstile_token
+
+    with pytest.raises(HTTPException) as exc:
+        verify_turnstile_token(
+            token="",
+            settings=_settings(app_env="production"),
             expected_action="email-status",
         )
     assert exc.value.status_code == 403

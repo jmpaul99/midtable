@@ -2,6 +2,7 @@
 
 import { FormEvent, useMemo, useRef, useState } from "react";
 import { formatNumber } from "@/lib/format";
+import { humanizeKey } from "@/components/settings/types";
 import type { Bonus, BonusTarget, League, Manager, MatchLogRow, PoolTeam, UUID } from "@/lib/types";
 import { managerLabel } from "@/lib/types";
 import { Empty, StatusBanner } from "@/components/ui/State";
@@ -394,7 +395,8 @@ export function BonusesSection({
             <ul className="divide-y divide-line overflow-hidden rounded-xl border border-line">
               {bonuses.map((b) => {
                 const typeLabel =
-                  sortedTypes.find((t) => t.key === b.bonus_type)?.label || b.bonus_type;
+                  sortedTypes.find((t) => t.key === b.bonus_type)?.label ||
+                  humanizeKey(b.bonus_type);
                 const targetLabel =
                   b.target === "manager"
                     ? "Manager"

@@ -16,14 +16,20 @@ import { RequireAuth } from "@/lib/auth";
 import { api, errorMessage } from "@/lib/api";
 import type { DraftState, League } from "@/lib/types";
 import { normalizeLeague } from "@/lib/types";
+import { useDraftLiveSync } from "@/lib/useDraftLiveSync";
 import { LeagueNav } from "@/components/Nav";
 import { ErrorState, Loading, Status } from "@/components/ui/State";
 import { Eyebrow, Row, Stack } from "@/components/ui/Card";
+import { DraftStartCountdown } from "./DraftStartCountdown";
+
+export type DraftInvalidateListener = (draft: DraftState) => void;
 
 export type LeagueContextValue = {
   league: League;
   reload: () => void;
   isCommissioner: boolean;
+  /** Single league-scoped draft live-sync; DraftBoard should subscribe instead of polling. */
+  subscribeDraftInvalidate: (listener: DraftInvalidateListener) => () => void;
 };
 
 const LeagueContext = createContext<LeagueContextValue | null>(null);
@@ -50,7 +56,12 @@ export function LeagueShell({
   const [league, setLeague] = useState<League>();
   const [error, setError] = useState("");
   const [onTheClock, setOnTheClock] = useState(false);
+  const [draftStatePublicId, setDraftStatePublicId] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const draftListenersRef = useRef(new Set<DraftInvalidateListener>());
+  const draftSyncGenRef = useRef(0);
+  const leagueStatusRef = useRef<string | undefined>(undefined);
+  const memberIdRef = useRef<string | null | undefined>(undefined);
 
   const load = useCallback(() => {
     abortRef.current?.abort();
@@ -79,43 +90,73 @@ export function LeagueShell({
     return load();
   }, [load]);
 
-  // Poll draft clock while drafting so the Draft nav can highlight on your turn.
-  useEffect(() => {
-    if (!league || league.status !== "drafting" || !league.current_member_id) {
-      setOnTheClock(false);
-      return;
-    }
+  leagueStatusRef.current = league?.status;
+  memberIdRef.current = league?.current_member_id;
 
-    let cancelled = false;
-    const memberId = league.current_member_id;
+  const liveSyncEnabled =
+    Boolean(league) &&
+    (league?.status === "pre_draft" || league?.status === "drafting");
+  const leaguePublicId = league?.id;
 
-    const check = (signal?: AbortSignal) => {
-      if (document.visibilityState === "hidden") return;
-      api<DraftState>(`/leagues/${league.id}/draft`, { signal })
-        .then((draft) => {
-          if (cancelled) return;
-          const onClock = draft.current_member_id || draft.on_clock_member_id || null;
-          const running = ["running", "open"].includes(draft.status);
-          setOnTheClock(Boolean(running && onClock === memberId));
-        })
-        .catch((e) => {
-          if (cancelled || (e as Error)?.name === "AbortError") return;
-        });
-    };
-
-    const controller = new AbortController();
-    check(controller.signal);
-    const id = window.setInterval(() => check(), 2500);
+  const subscribeDraftInvalidate = useCallback((listener: DraftInvalidateListener) => {
+    draftListenersRef.current.add(listener);
     return () => {
-      cancelled = true;
-      controller.abort();
-      window.clearInterval(id);
+      draftListenersRef.current.delete(listener);
     };
-  }, [league?.id, league?.status, league?.current_member_id]);
+  }, []);
+
+  const syncDraft = useCallback(() => {
+    if (!leaguePublicId) return;
+    if (document.visibilityState === "hidden") return;
+    const gen = ++draftSyncGenRef.current;
+    const expectedMemberId = memberIdRef.current;
+    const expectedStatus = leagueStatusRef.current;
+    api<DraftState>(`/leagues/${leaguePublicId}/draft`)
+      .then((draft) => {
+        if (gen !== draftSyncGenRef.current) return;
+        setDraftStatePublicId(draft.id);
+        const onClock = draft.current_member_id || draft.on_clock_member_id || null;
+        const running = ["running", "open"].includes(draft.status);
+        setOnTheClock(Boolean(running && expectedMemberId && onClock === expectedMemberId));
+        if (draft.league_status && expectedStatus && draft.league_status !== expectedStatus) {
+          reload();
+        }
+        draftListenersRef.current.forEach((listener) => listener(draft));
+      })
+      .catch((e) => {
+        if (gen !== draftSyncGenRef.current) return;
+        if ((e as Error)?.name === "AbortError") return;
+      });
+  }, [leaguePublicId, reload]);
+
+  useEffect(() => {
+    if (!liveSyncEnabled) {
+      setOnTheClock(false);
+      setDraftStatePublicId(null);
+    }
+  }, [liveSyncEnabled]);
+
+  useEffect(() => {
+    return () => {
+      draftSyncGenRef.current += 1;
+    };
+  }, [leaguePublicId]);
+
+  useDraftLiveSync({
+    leagueId: leaguePublicId,
+    draftStatePublicId,
+    enabled: liveSyncEnabled,
+    onInvalidate: syncDraft,
+  });
 
   const isCommissioner = league?.role === "owner" || league?.role === "commissioner";
   const pathname = usePathname();
   const onSettingsPage = pathname?.includes(`/leagues/${leagueId}/settings`) ?? false;
+  const draftScheduledAt =
+    league?.draft_scheduled_at ??
+    (typeof league?.settings?.draft_scheduled_at === "string"
+      ? league.settings.draft_scheduled_at
+      : null);
 
   const value = useMemo(
     () =>
@@ -124,9 +165,10 @@ export function LeagueShell({
             league,
             reload,
             isCommissioner: Boolean(isCommissioner),
+            subscribeDraftInvalidate,
           }
         : null,
-    [league, reload, isCommissioner],
+    [league, reload, isCommissioner, subscribeDraftInvalidate],
   );
 
   return (
@@ -161,6 +203,9 @@ export function LeagueShell({
                 </Link>
               )}
             </header>
+            {value.league.status === "pre_draft" && draftScheduledAt ? (
+              <DraftStartCountdown scheduledAt={draftScheduledAt} />
+            ) : null}
             <LeagueNav
               leagueId={value.league.id}
               role={value.league.role}

@@ -41,6 +41,7 @@ class PoolResponse(IdSchema):
     provider: str
     competition_code: str | None = None
     season_year: int | None = None
+    competition_type: str | None = None
     tie_break_order: list[Any] = Field(default_factory=list)
 
 
@@ -325,6 +326,7 @@ class MatchOwnerInfo(BaseModel):
     display_name: str | None = None
     team_name: str | None = None
     acquired_via: str | None = None
+    draft_pick_number: int | None = None
 
 
 class PoolTeamResponse(IdSchema):

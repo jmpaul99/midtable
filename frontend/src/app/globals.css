@@ -159,3 +159,27 @@
     transform: translateY(0);
   }
 }
+
+@keyframes draft-on-clock-pulse {
+  0%,
+  100% {
+    border-color: color-mix(in srgb, var(--color-brand) 55%, var(--color-line));
+    box-shadow:
+      0 0 0 1px color-mix(in srgb, var(--color-brand) 35%, transparent),
+      var(--shadow-soft);
+  }
+  50% {
+    border-color: var(--color-brand);
+    box-shadow:
+      0 0 0 3px color-mix(in srgb, var(--color-brand) 45%, transparent),
+      0 0 18px color-mix(in srgb, var(--color-brand) 28%, transparent),
+      var(--shadow-soft);
+  }
+}
+
+@layer utilities {
+  .draft-on-clock-pulse {
+    border-color: var(--color-brand);
+    animation: draft-on-clock-pulse 1.6s ease-in-out infinite;
+  }
+}

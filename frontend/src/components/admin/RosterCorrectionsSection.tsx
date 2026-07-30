@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, errorMessage, json } from "@/lib/api";
+import { humanizeKey } from "@/components/settings/types";
 import type { League, RosterRow, UUID } from "@/lib/types";
 import { managerLabel } from "@/lib/types";
 import { Button } from "@/components/ui/Button";
@@ -14,21 +15,31 @@ import { useToast } from "@/components/ui/ToastProvider";
 
 type HealthInfo = { dev_tools_enabled?: boolean };
 
+const PAGE_SIZE = 4;
+
 const RESET_DRAFT_WARNING =
   "Reset draft? This clears all picks and draft rosters, returns the league to pre-draft, and keeps draft order and preassigns. Scoring data is not cleared.";
+
+function pickSortKey(row: RosterRow): number {
+  return row.draft_pick_number ?? Number.NEGATIVE_INFINITY;
+}
 
 export function RosterCorrectionsSection({
   league,
   onChanged,
+  /** Bumps when draft picks change so this panel stays aligned with the board. */
+  draftVersion,
 }: {
   league: League;
   onChanged?: () => void;
+  draftVersion?: number;
 }) {
   const [rows, setRows] = useState<RosterRow[]>([]);
   const [loadError, setLoadError] = useState("");
   const [devTools, setDevTools] = useState(false);
   const [resetBusy, setResetBusy] = useState(false);
   const [resetConfirmOpen, setResetConfirmOpen] = useState(false);
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const [pendingReassign, setPendingReassign] = useState<{
     entryId: UUID;
     memberId: UUID;
@@ -46,7 +57,11 @@ export function RosterCorrectionsSection({
 
   useEffect(() => {
     load();
-  }, [load]);
+  }, [load, draftVersion]);
+
+  useEffect(() => {
+    setVisibleCount(PAGE_SIZE);
+  }, [league.id, draftVersion]);
 
   useEffect(() => {
     api<HealthInfo>("/health")
@@ -112,11 +127,17 @@ export function RosterCorrectionsSection({
     }
   }
 
-  const filled = rows.filter((r) => r.id && r.team_id);
-  const lastPick = filled
-    .filter((r) => r.draft_pick_number != null)
-    .sort((a, b) => (b.draft_pick_number ?? 0) - (a.draft_pick_number ?? 0))[0];
+  const filled = useMemo(
+    () =>
+      rows
+        .filter((r) => r.id && r.team_id)
+        .sort((a, b) => pickSortKey(b) - pickSortKey(a)),
+    [rows],
+  );
+  const lastPick = filled.find((r) => r.draft_pick_number != null);
   const canUndo = Boolean(lastPick);
+  const visible = filled.slice(0, visibleCount);
+  const hasMore = visibleCount < filled.length;
 
   return (
     <Card>
@@ -151,7 +172,7 @@ export function RosterCorrectionsSection({
           )}
         </div>
         <Stack gap="sm">
-          {filled.map((r) => (
+          {visible.map((r) => (
             <div
               className="flex flex-col gap-3 rounded-xl border border-line bg-surface-2/50 p-3"
               key={r.id}
@@ -159,7 +180,9 @@ export function RosterCorrectionsSection({
               <div>
                 <strong>{r.team_name}</strong>
                 <Muted>
-                  {r.display_name} · {r.pool_name} · {r.acquired_via}
+                  {r.draft_pick_number != null ? `Pick #${r.draft_pick_number} · ` : ""}
+                  {r.display_name} · {r.pool_name}
+                  {r.acquired_via ? ` · ${humanizeKey(r.acquired_via)}` : ""}
                 </Muted>
               </div>
               <Label>
@@ -179,6 +202,18 @@ export function RosterCorrectionsSection({
               </Label>
             </div>
           ))}
+          {hasMore && (
+            <div className="flex justify-start">
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={() => setVisibleCount((n) => n + PAGE_SIZE)}
+              >
+                Show more
+              </Button>
+            </div>
+          )}
         </Stack>
 
         <ConfirmDialog

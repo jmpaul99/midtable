@@ -29,6 +29,13 @@ from app.services.match_queries import (
     matches_for_pool,
 )
 from app.services.members import member_label
+from app.services.period_labels import (
+    build_period_catalog,
+    expanded_stages,
+    period_kind,
+    resolve_period_key,
+    scoring_competition_type,
+)
 from app.services.scoring import Result, build_standings_before_kickoff, result_for
 from app.services.standings import (
     DEFAULT_TIEBREAKS,
@@ -37,8 +44,21 @@ from app.services.standings import (
 )
 
 FINISHED = FINISHED_STATUSES
-UPSET_TYPES = frozenset({"minor_upset", "major_upset", "major_upset_draw"})
+# Fallback when a league has no threshold keys configured yet.
+DEFAULT_UPSET_TYPES = frozenset({"minor_upset", "major_upset", "major_upset_draw"})
+UPSET_TYPES = DEFAULT_UPSET_TYPES
 ResultLetter = Literal["W", "D", "L"]
+
+
+def upset_types_for_league(league: League | None) -> frozenset[str]:
+    """Event-type keys that count as upsets for this league's thresholds."""
+    rules = (getattr(league, "upset_rules", None) if league is not None else None) or {}
+    keys = {
+        str(item.get("key"))
+        for item in (rules.get("thresholds") or [])
+        if isinstance(item, dict) and item.get("key")
+    }
+    return frozenset(keys) if keys else DEFAULT_UPSET_TYPES
 
 
 def points_by_match_team(events: Iterable[Any]) -> dict[tuple[int, int], float]:
@@ -65,8 +85,12 @@ def aggregate_event_points(
     return event_points, event_counts, total
 
 
-def sum_upset_points(event_points: dict[str, float]) -> float:
-    return float(sum(event_points.get(t, 0.0) for t in UPSET_TYPES))
+def sum_upset_points(
+    event_points: dict[str, float],
+    upset_types: frozenset[str] | None = None,
+) -> float:
+    types = upset_types if upset_types is not None else DEFAULT_UPSET_TYPES
+    return float(sum(event_points.get(t, 0.0) for t in types))
 
 
 @dataclass(frozen=True)
@@ -438,9 +462,15 @@ def member_highlights(
         "worst_matchweek": None,
         "biggest_upset": None,
         "top_club": None,
+        "period_kind": None,
     }
     if not team_ids:
         return empty
+
+    pools = list(db.scalars(select(TeamPool).where(TeamPool.league_id == league.id)).all())
+    competition_type = scoring_competition_type(pools)
+    kind = period_kind(competition_type)
+    empty["period_kind"] = kind
 
     events = list(
         db.scalars(
@@ -468,15 +498,25 @@ def member_highlights(
         t.id: t for t in db.scalars(select(Team).where(Team.id.in_(all_team_ids))).all()
     } if all_team_ids else {}
 
-    mw_points: dict[int, float] = defaultdict(float)
+    catalog = build_period_catalog(
+        [(e.stage, e.scheduled_matchweek) for e in events],
+        competition_type=competition_type,
+    )
+    expanded = expanded_stages(catalog)
+    by_key = {p.key: p for p in catalog}
+    period_points: dict[str, float] = defaultdict(float)
     team_points: dict[int, float] = defaultdict(float)
     biggest_upset: dict[str, Any] | None = None
+    upset_types = upset_types_for_league(league)
     for event in events:
         pts = float(event.points)
         team_points[event.team_id] += pts
-        if event.scheduled_matchweek is not None:
-            mw_points[event.scheduled_matchweek] += pts
-        if event.event_type in UPSET_TYPES:
+        period_key = resolve_period_key(
+            event.stage, event.scheduled_matchweek, expanded=expanded
+        )
+        if period_key is not None and period_key in by_key:
+            period_points[period_key] += pts
+        if event.event_type in upset_types:
             meta = event.metadata_ or {}
             gap = meta.get("gap")
             candidate = {
@@ -508,8 +548,18 @@ def member_highlights(
                 elif gap == prev_gap and pts > float(biggest_upset.get("points") or 0):
                     biggest_upset = candidate
 
-    best_mw = max(mw_points.items(), key=lambda x: x[1]) if mw_points else None
-    worst_mw = min(mw_points.items(), key=lambda x: x[1]) if mw_points else None
+    def period_payload(key: str, points: float) -> dict[str, Any]:
+        period = by_key[key]
+        return {
+            "period_key": period.key,
+            "label": period.label,
+            "stage": period.stage,
+            "scheduled_matchweek": period.scheduled_matchweek,
+            "points": points,
+        }
+
+    best_period = max(period_points.items(), key=lambda x: x[1]) if period_points else None
+    worst_period = min(period_points.items(), key=lambda x: x[1]) if period_points else None
     top_team_id = max(team_points.items(), key=lambda x: x[1])[0] if team_points else None
     top_club = None
     if top_team_id is not None and top_team_id in teams:
@@ -523,13 +573,14 @@ def member_highlights(
         "member_id": str(member.public_id),
         "display_name": member_label(member, profile),
         "best_matchweek": (
-            {"scheduled_matchweek": best_mw[0], "points": best_mw[1]} if best_mw else None
+            period_payload(best_period[0], best_period[1]) if best_period else None
         ),
         "worst_matchweek": (
-            {"scheduled_matchweek": worst_mw[0], "points": worst_mw[1]} if worst_mw else None
+            period_payload(worst_period[0], worst_period[1]) if worst_period else None
         ),
         "biggest_upset": biggest_upset,
         "top_club": top_club,
+        "period_kind": kind,
     }
 
 

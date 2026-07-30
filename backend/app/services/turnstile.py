@@ -24,6 +24,9 @@ def verify_turnstile_token(
     remote_ip: str | None = None,
 ) -> None:
     """Raise 403 unless siteverify succeeds with expected action and hostname."""
+    if settings.is_development:
+        return
+
     secret = settings.turnstile_secret.strip()
     hostnames = settings.turnstile_hostname_set
     if (

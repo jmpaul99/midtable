@@ -9,6 +9,7 @@ import {
   findAvailableCompetition,
 } from "@/lib/availableCompetitions";
 import { cn } from "@/lib/cn";
+import { randomUUID } from "@/lib/randomUUID";
 import {
   normalizeRosterClubOrder,
   type RosterClubOrder,
@@ -23,6 +24,7 @@ import {
   RowItem,
   RowList,
 } from "./chrome";
+import { humanizeKey } from "./types";
 
 export type LeaguePoolEdit = {
   /** Persisted public id, or a client-only temp id for unsaved rows. */
@@ -41,7 +43,7 @@ export type LeaguePoolEdit = {
 
 function blankPool(sortOrder: number): LeaguePoolEdit {
   return {
-    id: `temp-${crypto.randomUUID()}`,
+    id: `temp-${randomUUID()}`,
     isNew: true,
     key: "",
     label: "",
@@ -236,7 +238,7 @@ export function LeaguePoolsEditor({
                           />
                         ) : (
                           <Input
-                            value={displayName || p.key}
+                            value={displayName || humanizeKey(p.key)}
                             disabled
                             readOnly
                             className="min-h-10 rounded-lg px-2.5 py-2 text-sm"

@@ -24,6 +24,7 @@ import {
   BonusTypesListEditor,
   eventOptionsFromUpsetKeys,
   formatPhaseFilter,
+  humanizeKey,
   LeaguePoolsEditor,
   normalizeBonusTypes,
   normalizePhases,
@@ -40,6 +41,7 @@ import {
   serializeUpsetRules,
   TiebreaksEditor,
   UpsetRulesEditor,
+  upsetThresholdLabel,
   type BonusTypeDef,
   type LeaderboardPhase,
   type LeaguePoolEdit,
@@ -49,6 +51,9 @@ import {
   type TiebreakRung,
   type UpsetRules,
 } from "@/components/settings";
+import { competitionDisplayLabel } from "@/lib/availableCompetitions";
+import { matchStageLabel } from "@/lib/matchStages";
+import { scoringEventLabel } from "@/lib/scoringLabels";
 
 const DEFAULT_TIE_BREAK_ORDER = ["points", "gd", "gf", "name"];
 
@@ -229,7 +234,10 @@ function toWrite(form: FormState, includeStaffFlags: boolean): TemplateWrite {
     roster_slots: form.pool_definitions.map((p) => ({
       pool_key: p.key,
       count: p.slot_count,
-      label: p.label || p.key,
+      label:
+        (p.label || "").trim() ||
+        competitionDisplayLabel(p.competition_code, undefined) ||
+        humanizeKey(p.key),
     })) as unknown as Json[],
     roster_club_order: form.roster_club_order,
     ...(includeStaffFlags
@@ -247,21 +255,23 @@ function StepTip({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
-function humanizeKey(key: string): string {
-  return key
-    .split("_")
-    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-    .join(" ");
+function displayName(label: string | null | undefined, key: string): string {
+  const trimmed = (label || "").trim();
+  return trimmed || humanizeKey(key);
 }
 
-function formatTiebreak(r: TiebreakRung): string {
+function formatTiebreak(
+  r: TiebreakRung,
+  bonusLabel: (key: string) => string,
+): string {
   const dir = r.direction === "asc" ? "low → high" : "high → low";
-  let label = humanizeKey(r.metric);
+  let label =
+    r.metric === "total_points" ? "Total points" : humanizeKey(r.metric);
   if (r.event_types.length) {
-    label += ` (${r.event_types.map(humanizeKey).join(", ")})`;
+    label += ` (${r.event_types.map((k) => scoringEventLabel(k)).join(", ")})`;
   }
   if (r.bonus_type_keys.length) {
-    label += ` (${r.bonus_type_keys.map(humanizeKey).join(", ")})`;
+    label += ` (${r.bonus_type_keys.map(bonusLabel).join(", ")})`;
   }
   return `${label} · ${dir}`;
 }
@@ -292,6 +302,17 @@ function TemplateSettingsSummary({ form }: { form: FormState }) {
     form.result_points.loss_et != null ||
     form.result_points.win_pk != null ||
     form.result_points.loss_pk != null;
+  const bonusLabelByKey = new Map(
+    form.bonus_types.map((b) => [b.key, displayName(b.label, b.key)]),
+  );
+  const phaseLabelByKey = new Map(
+    form.leaderboard_phases.map((p) => [p.key, displayName(p.label, p.key)]),
+  );
+  const bonusLabel = (key: string) => bonusLabelByKey.get(key) || humanizeKey(key);
+  const phaseLabel = (key: string) =>
+    !key || key === "season" || key === "total" || key === "season_total"
+      ? "Overall"
+      : phaseLabelByKey.get(key) || humanizeKey(key);
 
   return (
     <div className="flex flex-col gap-3 text-sm">
@@ -339,10 +360,15 @@ function TemplateSettingsSummary({ form }: { form: FormState }) {
           <ul className="space-y-2">
             {form.pool_definitions.map((p) => (
               <li key={p.key} className="border-t border-line/60 pt-2 first:border-0 first:pt-0">
-                <div>{p.label || p.key}</div>
+                <div>
+                  {displayName(
+                    p.label || competitionDisplayLabel(p.competition_code, undefined),
+                    p.key,
+                  )}
+                </div>
                 <div className="text-muted">
                   {[
-                    p.competition_code || null,
+                    competitionDisplayLabel(p.competition_code, undefined) || null,
                     p.season_year ? String(p.season_year) : null,
                     `${p.slot_count} slot${p.slot_count === 1 ? "" : "s"}`,
                     p.scores_match_results ? "scores results" : "no result scoring",
@@ -376,7 +402,7 @@ function TemplateSettingsSummary({ form }: { form: FormState }) {
             </div>
             {stages.map(([stage, pts]) => (
               <div key={stage} className="border-t border-line/60 pt-2">
-                <div>{humanizeKey(stage)}</div>
+                <div>{matchStageLabel(stage)}</div>
                 <div className="text-muted">
                   {[
                     pts.win != null ? `W ${pts.win}` : null,
@@ -420,9 +446,9 @@ function TemplateSettingsSummary({ form }: { form: FormState }) {
               <ul className="mt-1 space-y-1.5">
                 {form.upset_rules.thresholds.map((t) => (
                   <li key={t.key} className="border-t border-line/60 pt-1.5 first:border-0 first:pt-0">
-                    <div>{t.name && t.name !== t.key ? t.name : humanizeKey(t.key)}</div>
+                    <div>{upsetThresholdLabel(t)}</div>
                     <div className="text-muted">
-                      {humanizeKey(t.result)}
+                      {scoringEventLabel(t.result)}
                       {" · gap "}
                       {t.max_gap == null ? `${t.min_gap}+` : `${t.min_gap}–${t.max_gap}`}
                       {" · "}
@@ -445,11 +471,11 @@ function TemplateSettingsSummary({ form }: { form: FormState }) {
           <ul className="space-y-2">
             {form.leaderboard_phases.map((p) => (
               <li key={p.key} className="border-t border-line/60 pt-2 first:border-0 first:pt-0">
-                <div>{p.label || p.key}</div>
+                <div>{displayName(p.label, p.key)}</div>
                 <div className="text-muted">{formatPhaseFilter(p.match_filter)}</div>
                 {p.include_bonus_types.length > 0 && (
                   <div className="text-muted">
-                    Bonuses: {p.include_bonus_types.map(humanizeKey).join(", ")}
+                    Bonuses: {p.include_bonus_types.map(bonusLabel).join(", ")}
                   </div>
                 )}
               </li>
@@ -465,7 +491,7 @@ function TemplateSettingsSummary({ form }: { form: FormState }) {
           <ul className="space-y-1.5">
             {form.bonus_types.map((b) => (
               <li key={b.key}>
-                {b.label || b.key}
+                {displayName(b.label, b.key)}
                 <span className="text-muted">
                   {" · "}
                   {b.default_points} pts default
@@ -482,7 +508,7 @@ function TemplateSettingsSummary({ form }: { form: FormState }) {
         ) : (
           <ol className="list-decimal space-y-1 pl-5">
             {form.leaderboard_tiebreaks.map((t, i) => (
-              <li key={`${t.metric}-${i}`}>{formatTiebreak(t)}</li>
+              <li key={`${t.metric}-${i}`}>{formatTiebreak(t, bonusLabel)}</li>
             ))}
           </ol>
         )}
@@ -502,7 +528,7 @@ function TemplateSettingsSummary({ form }: { form: FormState }) {
                 {p.label || `#${p.position}`}
                 <span className="text-muted">
                   {" · "}
-                  {p.phase ? humanizeKey(p.phase) : "overall"}
+                  {phaseLabel(p.phase)}
                   {" · place "}
                   {p.position}
                   {" · "}
@@ -1122,8 +1148,8 @@ export function TemplateEditor({
                 <p className="mb-1 font-semibold text-ink">Match filter</p>
                 <ul className="list-disc space-y-1 pl-4">
                   <li>
-                    <strong className="text-ink">Matchweek range</strong> — include fixtures in a
-                    week range.
+                    <strong className="text-ink">Matchweek / round range</strong> — include fixtures in a
+                    numeric period window (matchweeks for leagues, rounds for cups).
                   </li>
                   <li>
                     <strong className="text-ink">Stages</strong> — include specific competition
@@ -1136,7 +1162,7 @@ export function TemplateEditor({
                 onChange={(leaderboard_phases) => setForm((f) => ({ ...f, leaderboard_phases }))}
                 bonusTypeOptions={form.bonus_types.map((b) => ({
                   value: b.key,
-                  label: b.label || b.key,
+                  label: displayName(b.label, b.key),
                 }))}
               />
             </>
@@ -1157,7 +1183,7 @@ export function TemplateEditor({
                 )}
                 bonusTypeOptions={form.bonus_types.map((b) => ({
                   value: b.key,
-                  label: b.label || b.key,
+                  label: displayName(b.label, b.key),
                 }))}
               />
             </>
@@ -1210,7 +1236,7 @@ export function TemplateEditor({
                 onChange={(payouts) => setForm((f) => ({ ...f, payouts }))}
                 phaseOptions={form.leaderboard_phases.map((p) => ({
                   value: p.key,
-                  label: p.label || p.key,
+                  label: displayName(p.label, p.key),
                 }))}
               />
             </div>

@@ -91,6 +91,7 @@ export interface Pool {
   provider: string;
   competition_code: string | null;
   season_year: number | null;
+  competition_type?: string | null;
 }
 
 export interface PhaseMetadata {
@@ -403,6 +404,39 @@ export interface MatchOwnerInfo {
   display_name: string | null;
   team_name?: string | null;
   acquired_via?: string;
+  draft_pick_number?: number | null;
+}
+
+/** GET /leagues/{id}/matches/{matchId}/events */
+export interface MatchEventRow {
+  id: UUID;
+  team_id: UUID | null;
+  team_name?: string | null;
+  event_type: string;
+  points: number;
+  metadata?: Record<string, Json> | null;
+}
+
+export interface MatchEventsResponse {
+  match_id: UUID;
+  kickoff_at: string;
+  status: string;
+  scheduled_matchweek: number | null;
+  duration?: string | null;
+  stage?: string | null;
+  pool_label?: string | null;
+  home_team_id: UUID;
+  away_team_id: UUID;
+  home_team_name: string;
+  away_team_name: string;
+  home_goals: number | null;
+  away_goals: number | null;
+  home_points?: number | null;
+  away_points?: number | null;
+  home_owner?: MatchOwnerInfo | null;
+  away_owner?: MatchOwnerInfo | null;
+  snapshot_id?: UUID | null;
+  events: MatchEventRow[];
 }
 
 export interface MatchLogRow {
@@ -499,6 +533,7 @@ export interface TeamDetail {
     display_name: string | null;
     team_name?: string | null;
     acquired_via: string;
+    draft_pick_number?: number | null;
   } | null;
   stats: {
     total_points: number;
@@ -513,6 +548,13 @@ export interface TeamDetail {
     event_counts_by_type?: Record<string, number>;
     bonus_points_by_type?: Record<string, number>;
     points_by_stage?: Record<string, number>;
+    points_by_period?: Array<{
+      period_key: string;
+      label: string;
+      stage: string | null;
+      scheduled_matchweek: number | null;
+      points: number;
+    }>;
     goals_for?: number;
     goals_against?: number;
     goal_difference?: number;
@@ -585,8 +627,21 @@ export interface ManagerDetail {
 export interface ManagerHighlights {
   member_id: UUID;
   display_name: string;
-  best_matchweek: { scheduled_matchweek: number; points: number } | null;
-  worst_matchweek: { scheduled_matchweek: number; points: number } | null;
+  best_matchweek: {
+    scheduled_matchweek?: number | null;
+    period_key?: string | null;
+    label?: string | null;
+    stage?: string | null;
+    points: number;
+  } | null;
+  worst_matchweek: {
+    scheduled_matchweek?: number | null;
+    period_key?: string | null;
+    label?: string | null;
+    stage?: string | null;
+    points: number;
+  } | null;
+  period_kind?: "matchweek" | "round" | null;
   biggest_upset: {
     event_type: string;
     points: number;
@@ -641,7 +696,18 @@ export interface PpgRow {
 export interface MatchweekRow {
   member_id: UUID;
   display_name: string;
-  scheduled_matchweek: number;
+  scheduled_matchweek: number | null;
+  period_key?: string | null;
+  label?: string | null;
+  stage?: string | null;
+  points: number;
+}
+
+export interface PeriodPointsRow {
+  period_key: string;
+  label: string;
+  stage: string | null;
+  scheduled_matchweek: number | null;
   points: number;
 }
 

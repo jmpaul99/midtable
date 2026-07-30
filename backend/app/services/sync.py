@@ -331,6 +331,29 @@ def sync_league_fixtures(
     seen_changed: set[int] = set()
 
     for provider_key, competition_code, season_year in keys:
+        try:
+            resolved = provider.resolve_competition_season(competition_code, season_year)
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "sync_league_fixtures could not resolve competition type "
+                "competition=%s/%s",
+                competition_code,
+                season_year,
+                exc_info=True,
+            )
+            resolved = None
+        if isinstance(resolved, tuple) and resolved:
+            info = resolved[0]
+            ctype = getattr(info, "competition_type", None)
+            if ctype:
+                for pool in all_pools:
+                    if (
+                        (pool.provider or "football-data.org") == provider_key
+                        and (pool.competition_code or "").upper()
+                        == competition_code.upper()
+                        and int(pool.season_year or 0) == int(season_year)
+                    ):
+                        pool.competition_type = ctype
         result = sync_competition_fixtures(
             db,
             provider,

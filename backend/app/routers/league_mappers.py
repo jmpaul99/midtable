@@ -187,6 +187,7 @@ def _league_detail(
                 provider=p.provider,
                 competition_code=p.competition_code,
                 season_year=p.season_year,
+                competition_type=getattr(p, "competition_type", None),
                 tie_break_order=list(p.tie_break_order or []),
             )
             for p in sorted(

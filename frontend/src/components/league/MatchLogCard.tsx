@@ -1,6 +1,6 @@
 "use client";
 
-import { formatDate, formatNumber, formatScoreline } from "@/lib/format";
+import { formatDate, formatNumber, formatScoreline, formatPeriodShort } from "@/lib/format";
 import type { MatchLogRow, MatchOwnerInfo, UUID } from "@/lib/types";
 import { matchOwnerLabel } from "@/lib/types";
 import { Status } from "@/components/ui/State";
@@ -33,17 +33,21 @@ export function MatchLogCard({
   leagueId,
   match: m,
   showPoolLabel = false,
+  competitionType = null,
 }: {
   leagueId: UUID;
   match: MatchLogRow;
   showPoolLabel?: boolean;
+  competitionType?: string | null;
 }) {
   const hasPoints = m.home_points != null || m.away_points != null;
   const scoreline = formatScoreline(m.home_goals, m.away_goals);
   const homeOwner = matchOwnerLabel(m.home_owner);
   const awayOwner = matchOwnerLabel(m.away_owner);
   const meta = [
-    m.scheduled_matchweek != null ? `MW${m.scheduled_matchweek}` : null,
+    m.scheduled_matchweek != null
+      ? formatPeriodShort(m.scheduled_matchweek, competitionType)
+      : null,
     showPoolLabel && m.pool_label ? m.pool_label : null,
   ].filter(Boolean);
 

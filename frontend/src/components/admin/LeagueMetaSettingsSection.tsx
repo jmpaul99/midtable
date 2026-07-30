@@ -28,6 +28,7 @@ import {
 } from "@/lib/rosterClubOrder";
 import {
   LeaguePoolsEditor,
+  humanizeKey,
   normalizePayouts,
   normalizePhases,
   PayoutsEditor,
@@ -58,7 +59,7 @@ function poolsFromLeague(
     id: p.id,
     isNew: false,
     key: p.key,
-    label: p.label || p.key,
+    label: (p.label || "").trim() || humanizeKey(p.key),
     sort_order: p.sort_order ?? i + 1,
     slot_count: p.slot_count ?? 1,
     scores_match_results: p.scores_match_results ?? true,
@@ -447,7 +448,7 @@ export function LeagueMetaSettingsSection({
                     onChange={setPayouts}
                     phaseOptions={phases.map((p) => ({
                       value: p.key,
-                      label: p.label || p.key,
+                      label: (p.label || "").trim() || humanizeKey(p.key),
                     }))}
                   />
                 </div>
@@ -727,9 +728,9 @@ function ManagersInvitesPanel({
                         ? "Commissioner"
                         : i.role === "member" || !i.role
                           ? "Manager"
-                          : i.role.replaceAll("_", " ")}
+                          : humanizeKey(i.role)}
                       {latest
-                        ? ` · Last email ${latest.status}${
+                        ? ` · Last email ${humanizeKey(latest.status)}${
                             latest.created_at ? ` · ${formatDate(latest.created_at)}` : ""
                           }`
                         : ""}
@@ -772,9 +773,11 @@ function ManagersInvitesPanel({
                   <ul className="space-y-1 border-t border-line pt-2">
                     {deliveries.slice(0, 5).map((d) => (
                       <li key={d.id} className="text-[0.7rem] text-muted">
-                        <span className="font-semibold text-ink/80">{d.status}</span>
+                        <span className="font-semibold text-ink/80">
+                          {humanizeKey(d.status)}
+                        </span>
                         {" · "}
-                        {d.trigger}
+                        {humanizeKey(d.trigger)}
                         {d.created_at ? ` · ${formatDate(d.created_at)}` : ""}
                         {d.error ? ` — ${d.error}` : ""}
                       </li>

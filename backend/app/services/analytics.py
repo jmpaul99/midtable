@@ -20,11 +20,22 @@ from app.models import (
     RosterEntry,
     ScoringEvent,
     Team,
+    TeamPool,
 )
 from app.services.match_queries import FINISHED_STATUSES, matches_for_league
-from app.services.match_stats import UPSET_TYPES, finished_games_for_team, sum_upset_points
+from app.services.match_stats import (
+    finished_games_for_team,
+    sum_upset_points,
+    upset_types_for_league,
+)
 from app.services.members import member_label
 from app.services.payouts import apply_payouts
+from app.services.period_labels import (
+    build_period_catalog,
+    expanded_stages,
+    resolve_period_key,
+    scoring_competition_type,
+)
 from app.services.roster_owners import member_id_by_team_id_for_league
 from app.services.scoring import (
     MemberPoints,
@@ -171,7 +182,8 @@ def leaderboard(
         win_count = 0
         if mp:
             upset = sum_upset_points(
-                {k: float(v) for k, v in mp.event_points_by_type.items()}
+                {k: float(v) for k, v in mp.event_points_by_type.items()},
+                upset_types_for_league(league),
             )
             win_count = int(mp.event_counts_by_type.get("win", 0) or 0)
         metric_values = []
@@ -319,26 +331,48 @@ def matchweek_breakdown(db: Session, league: League) -> list[dict[str, Any]]:
         m.id: m
         for m in db.scalars(select(LeagueMember).where(LeagueMember.league_id == league.id)).all()
     }
-    buckets: dict[tuple[int, int], Decimal] = defaultdict(lambda: Decimal(0))
-    for event in db.scalars(select(ScoringEvent).where(ScoringEvent.league_id == league.id)).all():
-        if event.scheduled_matchweek is None:
+    pools = list(db.scalars(select(TeamPool).where(TeamPool.league_id == league.id)).all())
+    competition_type = scoring_competition_type(pools)
+    events = list(
+        db.scalars(select(ScoringEvent).where(ScoringEvent.league_id == league.id)).all()
+    )
+    catalog = build_period_catalog(
+        [(e.stage, e.scheduled_matchweek) for e in events],
+        competition_type=competition_type,
+    )
+    expanded = expanded_stages(catalog)
+    by_key = {p.key: p for p in catalog}
+
+    buckets: dict[tuple[int, str], Decimal] = defaultdict(lambda: Decimal(0))
+    for event in events:
+        period_key = resolve_period_key(
+            event.stage, event.scheduled_matchweek, expanded=expanded
+        )
+        if period_key is None or period_key not in by_key:
             continue
         member_id = roster.get(event.team_id)
         if member_id is None:
             continue
-        buckets[(member_id, event.scheduled_matchweek)] += Decimal(event.points)
+        buckets[(member_id, period_key)] += Decimal(event.points)
 
     rows = []
-    for (member_id, mw), pts in sorted(buckets.items(), key=lambda x: (x[0][1], x[0][0])):
+    order = {p.key: i for i, p in enumerate(catalog)}
+    for (member_id, period_key), pts in sorted(
+        buckets.items(), key=lambda x: (order.get(x[0][1], 999), x[0][0])
+    ):
         member = members.get(member_id)
         if not member:
             continue
         profile = db.get(Profile, member.profile_id)
+        period = by_key[period_key]
         rows.append(
             {
                 "member_id": str(member.public_id),
                 "display_name": member_label(member, profile),
-                "scheduled_matchweek": mw,
+                "period_key": period.key,
+                "label": period.label,
+                "stage": period.stage,
+                "scheduled_matchweek": period.scheduled_matchweek,
                 "points": float(pts),
             }
         )
@@ -351,11 +385,12 @@ def upset_stats(db: Session, league: League) -> list[dict[str, Any]]:
         m.id: m
         for m in db.scalars(select(LeagueMember).where(LeagueMember.league_id == league.id)).all()
     }
+    upset_types = upset_types_for_league(league)
     stats: dict[int, dict[str, Any]] = defaultdict(
         lambda: {"count": 0, "points": Decimal(0), "by_type": defaultdict(lambda: Decimal(0))}
     )
     for event in db.scalars(select(ScoringEvent).where(ScoringEvent.league_id == league.id)).all():
-        if event.event_type not in UPSET_TYPES:
+        if event.event_type not in upset_types:
             continue
         member_id = roster.get(event.team_id)
         if member_id is None:
@@ -364,19 +399,22 @@ def upset_stats(db: Session, league: League) -> list[dict[str, Any]]:
         stats[member_id]["points"] += Decimal(event.points)
         stats[member_id]["by_type"][event.event_type] += Decimal(event.points)
 
-    return [
-        {
-            "member_id": str(members[mid].public_id),
-            "display_name": member_label(
-                members[mid],
-                db.get(Profile, members[mid].profile_id),
-            ),
-            "count": data["count"],
-            "points": float(data["points"]),
-            "upset_count": data["count"],
-            "upset_points": float(data["points"]),
-            "by_type": {k: float(v) for k, v in data["by_type"].items()},
-        }
-        for mid, data in stats.items()
-        if mid in members
-    ]
+    return sorted(
+        [
+            {
+                "member_id": str(members[mid].public_id),
+                "display_name": member_label(
+                    members[mid],
+                    db.get(Profile, members[mid].profile_id),
+                ),
+                "count": data["count"],
+                "points": float(data["points"]),
+                "upset_count": data["count"],
+                "upset_points": float(data["points"]),
+                "by_type": {k: float(v) for k, v in data["by_type"].items()},
+            }
+            for mid, data in stats.items()
+            if mid in members
+        ],
+        key=lambda row: (-row["points"], -row["count"], row["display_name"]),
+    )

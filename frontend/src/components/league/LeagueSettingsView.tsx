@@ -2,11 +2,15 @@
 
 import { useMemo, type ReactNode } from "react";
 import type { League } from "@/lib/types";
+import { competitionDisplayLabel } from "@/lib/availableCompetitions";
 import { formatDateTimeWithZone } from "@/lib/format";
+import { matchStageLabel } from "@/lib/matchStages";
+import { scoringEventLabel } from "@/lib/scoringLabels";
 import { Card, Stack } from "@/components/ui/Card";
 import {
   ReviewBlock,
   formatPhaseFilter,
+  humanizeKey,
   normalizePayouts,
   normalizePhases,
   normalizeResultPoints,
@@ -23,13 +27,6 @@ type BonusTypeSummary = {
   default_points: number;
   sort_order?: number;
 };
-
-function humanizeKey(key: string): string {
-  return key
-    .split("_")
-    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-    .join(" ");
-}
 
 function tiebreakRuleLabel(
   r: TiebreakRung,
@@ -139,23 +136,23 @@ export function LeagueSettingsView({ league }: { league: League }) {
     const map = new Map<string, string>();
     map.set("season", "Overall");
     for (const p of league.phases || []) {
-      if (p.key) map.set(p.key, p.name || p.key);
+      if (p.key) map.set(p.key, (p.name || "").trim() || humanizeKey(p.key));
     }
     for (const p of phases) {
-      if (p.key) map.set(p.key, p.label || p.key);
+      if (p.key) map.set(p.key, (p.label || "").trim() || humanizeKey(p.key));
     }
     return map;
   }, [league.phases, phases]);
 
   function phaseLabel(key: string | null | undefined): string {
     if (!key) return "Overall";
-    return phaseLabelByKey.get(key) ?? "Overall";
+    return phaseLabelByKey.get(key) ?? humanizeKey(key);
   }
 
   const bonusLabelByKey = useMemo(() => {
     const map = new Map<string, string>();
     for (const b of bonusTypes) {
-      if (b.key) map.set(b.key, b.label || b.key);
+      if (b.key) map.set(b.key, (b.label || "").trim() || humanizeKey(b.key));
     }
     return map;
   }, [bonusTypes]);
@@ -167,13 +164,13 @@ export function LeagueSettingsView({ league }: { league: League }) {
   const eventLabelByKey = useMemo(() => {
     const map = new Map<string, string>();
     for (const t of upsetRules.thresholds) {
-      if (t.key) map.set(t.key, t.name || t.key);
+      if (t.key) map.set(t.key, upsetThresholdLabel(t));
     }
     return map;
   }, [upsetRules.thresholds]);
 
   function eventLabel(key: string): string {
-    return eventLabelByKey.get(key) || humanizeKey(key);
+    return eventLabelByKey.get(key) || scoringEventLabel(key);
   }
 
   const bonusRows =
@@ -245,10 +242,14 @@ export function LeagueSettingsView({ league }: { league: League }) {
                     key={p.id || p.key}
                     className="border-t border-line/60 pt-2 first:border-0 first:pt-0"
                   >
-                    <div>{p.label || p.key}</div>
+                    <div>
+                      {(p.label || "").trim() ||
+                        competitionDisplayLabel(p.competition_code, undefined) ||
+                        humanizeKey(p.key)}
+                    </div>
                     <div className="text-muted">
                       {[
-                        p.competition_code || null,
+                        competitionDisplayLabel(p.competition_code, undefined) || null,
                         p.season_year ? String(p.season_year) : null,
                         `${p.slot_count ?? 1} slot${(p.slot_count ?? 1) === 1 ? "" : "s"}`,
                         p.scores_match_results !== false
@@ -283,7 +284,7 @@ export function LeagueSettingsView({ league }: { league: League }) {
                 </div>
                 {stages.map(([stage, pts]) => (
                   <div key={stage} className="border-t border-line/60 pt-2">
-                    <div>{humanizeKey(stage)}</div>
+                    <div>{matchStageLabel(stage)}</div>
                     <div className="text-muted">
                       {[
                         pts.win != null ? `W ${pts.win}` : null,
@@ -332,7 +333,7 @@ export function LeagueSettingsView({ league }: { league: League }) {
                       >
                         <div>{upsetThresholdLabel(t)}</div>
                         <div className="text-muted">
-                          {humanizeKey(t.result)}
+                          {scoringEventLabel(t.result)}
                           {upsetRules.rank_source === "fixed_ranking_at_event_start"
                             ? " · gap in rankings "
                             : " · gap in table "}
@@ -360,7 +361,7 @@ export function LeagueSettingsView({ league }: { league: League }) {
                     key={p.key}
                     className="border-t border-line/60 pt-2 first:border-0 first:pt-0"
                   >
-                    <div>{p.label || p.key}</div>
+                    <div>{(p.label || "").trim() || humanizeKey(p.key)}</div>
                     <div className="text-muted">{formatPhaseFilter(p.match_filter)}</div>
                     {p.include_bonus_types.length > 0 && (
                       <div className="text-muted">

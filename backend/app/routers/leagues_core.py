@@ -50,10 +50,10 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["leagues"])
 
 
-def _league_list_sort_key(league: League) -> tuple[bool, datetime]:
-    """Active seasons first; within a group, newest created first (caller uses reverse=True)."""
+def _league_list_sort_key(league: League) -> tuple[bool, bool, datetime]:
+    """Drafting first, then other non-complete; newest created first within a group (reverse=True)."""
     created = league.created_at or datetime.min.replace(tzinfo=UTC)
-    return (league.status != "complete", created)
+    return (league.status == "drafting", league.status != "complete", created)
 
 
 def _league_config_from_template(
@@ -564,6 +564,7 @@ def update_settings(
                 if old_code:
                     codes_in_use.discard(old_code)
                 pool.competition_code = new_code
+                pool.competition_type = None
                 codes_in_use.add(new_code)
             if "season_year" in item and item["season_year"] is not None:
                 pool.season_year = int(item["season_year"])

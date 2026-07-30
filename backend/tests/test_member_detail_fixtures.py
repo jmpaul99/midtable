@@ -161,12 +161,24 @@ def test_member_fixtures_recent_upcoming_and_derby(
 
     team_ids_mock.return_value = {10, 20}
     owners_mock.return_value = {
+        10: {
+            "member_id": str(member_public_id),
+            "display_name": "Alex",
+            "team_name": "Foxes",
+            "acquired_via": "draft",
+        },
+        20: {
+            "member_id": str(member_public_id),
+            "display_name": "Alex",
+            "team_name": "Foxes",
+            "acquired_via": "draft",
+        },
         30: {
             "member_id": str(uuid4()),
             "display_name": "Sam",
             "team_name": "Lilywhites",
             "acquired_via": "draft",
-        }
+        },
     }
     pools_mock.return_value = [pool]
     lookup_mock.return_value = {
@@ -236,6 +248,10 @@ def test_member_fixtures_recent_upcoming_and_derby(
     assert derby_row.opponent_name == "Chelsea"
     assert derby_row.points == 3.0
     assert derby_row.opponent_owner is None
+    assert derby_row.home_owner is not None
+    assert derby_row.home_owner.team_name == "Foxes"
+    assert derby_row.away_owner is not None
+    assert derby_row.away_owner.team_name == "Foxes"
 
     upcoming_page = member_fixtures(
         member_id=member_public_id,
@@ -250,6 +266,12 @@ def test_member_fixtures_recent_upcoming_and_derby(
     assert up.is_home is True
     assert up.opponent_name == "Spurs"
     assert up.points is None
+    assert up.opponent_owner is not None
+    assert up.opponent_owner.team_name == "Lilywhites"
+    assert up.home_owner is not None
+    assert up.home_owner.team_name == "Foxes"
+    assert up.away_owner is not None
+    assert up.away_owner.team_name == "Lilywhites"
 
 
 @_patch_fixtures

@@ -13,6 +13,7 @@ import { useToast } from "@/components/ui/ToastProvider";
 import { cn } from "@/lib/cn";
 import {
   AVAILABLE_COMPETITIONS,
+  competitionDisplayLabel,
   defaultFootballSeasonYear,
 } from "@/lib/availableCompetitions";
 import { CompetitionAutocomplete } from "@/components/settings/CompetitionAutocomplete";
@@ -21,6 +22,7 @@ import {
   fromDatetimeLocalValue,
   parsePickTimerSeconds,
 } from "@/components/settings/DraftTimingFields";
+import { humanizeKey } from "@/components/settings/types";
 
 type TemplatePool = {
   key: string;
@@ -336,7 +338,15 @@ export function CreateLeagueForm({
                         {blockers.map((b, i) => (
                           <li key={i}>
                             {String(b.name || b.season_label || "league")} (
-                            {String(b.status || "?")}): {String(b.reason || JSON.stringify(b))}
+                            {b.status != null && b.status !== ""
+                              ? humanizeKey(String(b.status))
+                              : "Unknown"}
+                            ):{" "}
+                            {String(
+                              b.reason ||
+                                b.message ||
+                                "Complete or archive this league before continuing.",
+                            )}
                           </li>
                         ))}
                       </ul>
@@ -387,7 +397,11 @@ export function CreateLeagueForm({
                   className="grid grid-cols-1 gap-3 rounded-xl border border-line bg-surface-2/40 p-3 sm:grid-cols-2"
                   key={p.key}
                 >
-                  <strong className="sm:col-span-2">{p.label || p.key}</strong>
+                  <strong className="sm:col-span-2">
+                    {(p.label || "").trim() ||
+                      competitionDisplayLabel(p.competition_code || "", undefined) ||
+                      humanizeKey(p.key)}
+                  </strong>
                   <Label>
                     Competition
                     <CompetitionAutocomplete

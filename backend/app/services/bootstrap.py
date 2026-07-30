@@ -302,6 +302,8 @@ def bootstrap_teams_for_league(
         info, _ = provider.resolve_competition_season(
             pool.competition_code, int(pool.season_year)
         )
+        if info.competition_type:
+            pool.competition_type = info.competition_type
         if not info.available:
             logger.warning(
                 "bootstrap_teams provider unavailable league_id=%s pool_key=%s "

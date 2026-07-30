@@ -15,8 +15,11 @@ from app.providers.base import (
     ProviderTeam,
     RateLimitInfo,
 )
+from app.services.period_labels import normalize_competition_type
 
 logger = logging.getLogger(__name__)
+
+_KNOWN_TYPES = frozenset({"LEAGUE", "LEAGUE_CUP", "CUP", "PLAYOFFS"})
 
 
 class FootballDataError(RuntimeError):
@@ -195,6 +198,14 @@ class FootballDataProvider:
         return datetime.fromisoformat(value).replace(tzinfo=UTC)
 
     @staticmethod
+    def _competition_type_from_payload(payload: dict[str, Any]) -> str | None:
+        raw = payload.get("type")
+        normalized = normalize_competition_type(str(raw) if raw is not None else None)
+        if normalized in _KNOWN_TYPES:
+            return normalized
+        return None
+
+    @staticmethod
     def _season_start_year(season: dict[str, Any]) -> int | None:
         start = str(season.get("startDate") or "")
         if len(start) >= 4 and start[:4].isdigit():
@@ -281,6 +292,7 @@ class FootballDataProvider:
                 start_date=self._parse_provider_date(match.get("startDate")),
                 end_date=self._parse_provider_date(match.get("endDate")),
                 available=True,
+                competition_type=self._competition_type_from_payload(payload),
             ),
             rate,
         )
@@ -337,6 +349,7 @@ class FootballDataProvider:
                 end_date=self._parse_provider_date(match.get("endDate")),
                 available=True,
                 message=message,
+                competition_type=self._competition_type_from_payload(payload),
             ),
             rate,
         )

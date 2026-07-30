@@ -205,7 +205,11 @@ function LeagueList() {
             {leagues.map((league) => (
               <li key={league.id}>
                 <Link
-                  href={`/leagues/${league.id}`}
+                  href={
+                    league.status === "drafting"
+                      ? `/leagues/${league.id}/draft`
+                      : `/leagues/${league.id}`
+                  }
                   className="block rounded-xl border border-line bg-surface p-4 shadow-soft transition hover:border-brand/40 active:scale-[0.99]"
                 >
                   <div className="flex items-start justify-between gap-3">

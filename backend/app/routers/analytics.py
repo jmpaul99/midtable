@@ -19,13 +19,16 @@ from app.schemas.analytics import (
 )
 from app.services import analytics as analytics_service
 from app.services.analytics import phase_match_counts
+from app.services import match_stats as match_stats_service
 from app.services.match_queries import (
+    FINISHED_STATUSES,
     matches_for_league,
     pool_for_match,
     pool_lookup_for_league,
     scoring_pools_for_league,
 )
 from app.services.phases import phase_match_filter_fields
+from app.services.roster_owners import owner_by_team_id_for_league
 
 
 router = APIRouter(tags=["analytics"])
@@ -171,20 +174,27 @@ def match_events(
 ) -> dict:
     league, _ = membership
     match = db.scalars(select(Match).where(Match.public_id == match_id)).first()
-    if match is None or pool_for_match(db, league, match) is None:
+    pool = pool_for_match(db, league, match) if match is not None else None
+    if match is None or pool is None:
         raise HTTPException(status_code=404, detail="Match not found")
-    events = db.scalars(
-        select(ScoringEvent).where(
-            ScoringEvent.league_id == league.id,
-            ScoringEvent.match_id == match.id,
-        )
-    ).all()
+    events = list(
+        db.scalars(
+            select(ScoringEvent).where(
+                ScoringEvent.league_id == league.id,
+                ScoringEvent.match_id == match.id,
+            )
+        ).all()
+    )
     teams = {
         t.id: t
         for t in db.scalars(
             select(Team).where(Team.id.in_([match.home_team_id, match.away_team_id]))
         ).all()
     }
+    home = teams.get(match.home_team_id)
+    away = teams.get(match.away_team_id)
+    if home is None or away is None:
+        raise HTTPException(status_code=404, detail="Match not found")
     snapshot = db.scalars(
         select(StandingsSnapshot).where(
             StandingsSnapshot.provider == match.provider,
@@ -193,18 +203,38 @@ def match_events(
             StandingsSnapshot.kickoff_at == match.kickoff_at,
         )
     ).first()
+    points_by_team = match_stats_service.points_by_match_team(events)
+    owners = owner_by_team_id_for_league(db, league)
+    finished = match.status in FINISHED_STATUSES
+    home_pts = points_by_team.get((match.id, match.home_team_id))
+    away_pts = points_by_team.get((match.id, match.away_team_id))
+    if finished:
+        home_pts = home_pts if home_pts is not None else 0.0
+        away_pts = away_pts if away_pts is not None else 0.0
     return {
         "match_id": str(match.public_id),
         "kickoff_at": match.kickoff_at.isoformat(),
-        "home_team_id": str(teams[match.home_team_id].public_id),
-        "away_team_id": str(teams[match.away_team_id].public_id),
+        "status": match.status,
+        "scheduled_matchweek": match.scheduled_matchweek,
+        "duration": match.duration,
+        "stage": match.stage,
+        "pool_label": pool.label,
+        "home_team_id": str(home.public_id),
+        "away_team_id": str(away.public_id),
+        "home_team_name": home.name,
+        "away_team_name": away.name,
         "home_goals": match.home_goals,
         "away_goals": match.away_goals,
+        "home_points": home_pts,
+        "away_points": away_pts,
+        "home_owner": owners.get(match.home_team_id),
+        "away_owner": owners.get(match.away_team_id),
         "snapshot_id": str(snapshot.public_id) if snapshot else None,
         "events": [
             {
                 "id": str(e.public_id),
                 "team_id": str(teams[e.team_id].public_id) if e.team_id in teams else None,
+                "team_name": teams[e.team_id].name if e.team_id in teams else None,
                 "event_type": e.event_type,
                 "points": float(e.points),
                 "metadata": e.metadata_,

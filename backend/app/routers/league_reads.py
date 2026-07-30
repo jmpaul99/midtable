@@ -44,6 +44,7 @@ from app.services.match_queries import (
     scoring_pools_for_league,
 )
 from app.services.members import member_label
+from app.services.period_labels import points_by_period_from_events, scoring_competition_type
 from app.services.roster_owners import (
     owner_by_team_id_for_league,
     owner_dict,
@@ -393,8 +394,12 @@ def match_log(
             pool = pool_by_key.get((m.provider, m.competition_code, m.season_year))
             if pool is None or m.home_team_id not in teams or m.away_team_id not in teams:
                 continue
+            finished = m.status in _FINISHED
             home_pts = points_by_match_team.get((m.id, m.home_team_id))
             away_pts = points_by_match_team.get((m.id, m.away_team_id))
+            if finished:
+                home_pts = home_pts if home_pts is not None else 0.0
+                away_pts = away_pts if away_pts is not None else 0.0
             rows.append(
                 MatchLogRow(
                     id=m.public_id,
@@ -435,6 +440,8 @@ def _fixture_row(
     points: float | None,
     opponent_table_position: int | None = None,
     opponent_owner: dict[str, Any] | None = None,
+    home_owner: dict[str, Any] | None = None,
+    away_owner: dict[str, Any] | None = None,
 ) -> TeamFixtureRow | None:
     home = teams.get(match.home_team_id)
     away = teams.get(match.away_team_id)
@@ -460,6 +467,8 @@ def _fixture_row(
         opponent_id=opponent.public_id,
         opponent_table_position=opponent_table_position,
         opponent_owner=opponent_owner,
+        home_owner=home_owner,
+        away_owner=away_owner,
     )
 
 
@@ -624,7 +633,8 @@ def _member_fixture_page(
                         + points_by_match_team.get((match.id, match.away_team_id), 0.0)
                     )
                 else:
-                    points = points_by_match_team.get((match.id, focus_id))
+                    # No scoring events ⇒ 0 pts (don't leave null for finished games).
+                    points = points_by_match_team.get((match.id, focus_id), 0.0)
             else:
                 points = None
             row = _fixture_row(
@@ -638,6 +648,8 @@ def _member_fixture_page(
                 opponent_owner=owner_by_team_id.get(opponent_id)
                 if (intra_roster and opponent_member_id is not None)
                 else (None if intra_roster else owner_by_team_id.get(opponent_id)),
+                home_owner=owner_by_team_id.get(match.home_team_id),
+                away_owner=owner_by_team_id.get(match.away_team_id),
             )
             if row is not None:
                 rows.append(row)
@@ -768,9 +780,12 @@ def _team_fixture_page(
                 team_id=team.id,
                 teams=teams,
                 pool=pool_for_match(db, league, match, lookup=pool_lookup),
-                points=points_by_match.get(match.id) if finished else None,
+                # No scoring events ⇒ 0 pts for finished games (null only when unplayed).
+                points=points_by_match.get(match.id, 0.0) if finished else None,
                 opponent_table_position=opp_pos,
                 opponent_owner=owner_by_team_id.get(opponent_id),
+                home_owner=owner_by_team_id.get(match.home_team_id),
+                away_owner=owner_by_team_id.get(match.away_team_id),
             )
             if row is not None:
                 rows.append(row)
@@ -902,12 +917,14 @@ def member_detail(
     bonus_types, bonus_teams, bonus_matches = load_bonus_context(
         db, league.id, bonuses, known_teams=teams
     )
+    competition_type = scoring_competition_type(list(pools.values()))
     acc = accumulate_bonus_awards(
         bonuses,
         bonus_types=bonus_types,
         teams=bonus_teams,
         matches=bonus_matches,
         points_by_team=points_by_team,
+        competition_type=competition_type,
     )
     bonus_points = acc.bonus_points
     bonus_by_type = acc.bonus_by_type
@@ -981,7 +998,10 @@ def member_detail(
     wins = int(wdl["wins"])
     draws = int(wdl["draws"])
     losses = int(wdl["losses"])
-    upset_points = match_stats_service.sum_upset_points(event_points)
+    upset_points = match_stats_service.sum_upset_points(
+        event_points,
+        match_stats_service.upset_types_for_league(league),
+    )
     games_played = int(wdl["games_played"])
     games_total = sum(games_total_by_team.values())
 
@@ -1091,6 +1111,10 @@ def team_detail(
 
     owner_by_team_id = owner_by_team_id_for_league(db, league)
     owner = owner_by_team_id.get(team.id)
+    if owner is not None:
+        pick_number = match_stats_service.draft_pick_numbers(db, league.id).get(team.id)
+        if pick_number is not None:
+            owner = {**owner, "draft_pick_number": pick_number}
 
     events = db.scalars(
         select(ScoringEvent).where(
@@ -1107,6 +1131,14 @@ def team_detail(
             event.points
         )
     points_by_stage = match_stats_service.points_by_stage_from_events(events)
+    competition_type = (
+        pool.competition_type
+        if pool is not None
+        else None
+    )
+    points_by_period = points_by_period_from_events(
+        events, competition_type=competition_type
+    )
 
     bonuses = list(
         db.scalars(
@@ -1126,6 +1158,7 @@ def team_detail(
         bonus_types=bonus_types,
         teams=bonus_teams,
         matches=bonus_matches,
+        competition_type=competition_type,
     )
     bonus_points = acc.bonus_points
     bonus_by_type = acc.bonus_by_type
@@ -1223,7 +1256,10 @@ def team_detail(
     wins = int(wdl["wins"])
     draws = int(wdl["draws"])
     losses = int(wdl["losses"])
-    upset_points = match_stats_service.sum_upset_points(event_points)
+    upset_points = match_stats_service.sum_upset_points(
+        event_points,
+        match_stats_service.upset_types_for_league(league),
+    )
     games_played = int(wdl["games_played"])
 
     return TeamDetailResponse(
@@ -1246,6 +1282,7 @@ def team_detail(
             "event_counts_by_type": event_counts,
             "bonus_points_by_type": bonus_by_type,
             "points_by_stage": points_by_stage,
+            "points_by_period": points_by_period,
             "goals_for": goals["goals_for"],
             "goals_against": goals["goals_against"],
             "goal_difference": goals["goal_difference"],

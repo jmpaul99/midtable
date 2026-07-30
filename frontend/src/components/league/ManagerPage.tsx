@@ -2,7 +2,9 @@
 
 import { useCallback, useMemo, useState } from "react";
 import { useApiQuery } from "@/lib/useApiQuery";
-import { formatNumber } from "@/lib/format";
+import { formatNumber, scoringCompetitionType, formatPeriodNoun, formatPeriodShort } from "@/lib/format";
+import { scoringEventLabel } from "@/lib/scoringLabels";
+import { humanizeKey } from "@/components/settings/types";
 import type {
   BonusAward,
   Manager,
@@ -33,6 +35,7 @@ import {
   effectiveRosterClubOrder,
   type RosterClubOrder,
 } from "@/lib/rosterClubOrder";
+import { useLeague } from "@/components/LeagueShell";
 import { TeamCrest } from "./TeamCrest";
 import { TeamFixtureList } from "./TeamFixtureList";
 import { TeamLink } from "./TeamLink";
@@ -51,6 +54,7 @@ export function ManagerPage({
   leagueStatus,
   rosterClubOrder = "draft",
   eventTypeLabels,
+  bonusesConfigured = false,
 }: {
   leagueId: UUID;
   managerId: UUID;
@@ -60,7 +64,11 @@ export function ManagerPage({
   leagueStatus?: string;
   rosterClubOrder?: RosterClubOrder;
   eventTypeLabels?: Record<string, string>;
+  /** League has at least one bonus type defined. */
+  bonusesConfigured?: boolean;
 }) {
+  const league = useLeague();
+  const competitionType = scoringCompetitionType(league.pools);
   const clubOrder = effectiveRosterClubOrder(leagueStatus, rosterClubOrder);
   const detailQ = useApiQuery<ManagerDetail>(
     `/leagues/${leagueId}/members/${managerId}`,
@@ -211,23 +219,27 @@ export function ManagerPage({
         />
         <StatTile label="Record" value={`${s.wins}-${s.draws}-${s.losses}`} />
         <StatTile label="Upset pts" value={formatNumber(s.upset_points)} />
-        <StatTile
-          label="Bonus pts"
-          value={formatNumber(s.bonus_points)}
-          hint={
-            bonuses.length
-              ? `${bonuses.length} award${bonuses.length === 1 ? "" : "s"} below`
-              : undefined
-          }
-        />
+        {(bonusesConfigured || bonuses.length > 0 || s.bonus_points > 0) && (
+          <StatTile
+            label="Bonus pts"
+            value={formatNumber(s.bonus_points)}
+            hint={
+              bonuses.length
+                ? `${bonuses.length} award${bonuses.length === 1 ? "" : "s"} below`
+                : undefined
+            }
+          />
+        )}
       </StatGrid>
 
-      <BonusAwardsPanel
-        leagueId={leagueId}
-        bonuses={bonuses}
-        totalPoints={s.bonus_points}
-        showTeam
-      />
+      {(bonusesConfigured || bonuses.length > 0 || s.bonus_points > 0) && (
+        <BonusAwardsPanel
+          leagueId={leagueId}
+          bonuses={bonuses}
+          totalPoints={s.bonus_points}
+          showTeam
+        />
+      )}
 
       {highlights &&
         (highlights.best_matchweek ||
@@ -239,9 +251,21 @@ export function ManagerPage({
               <div className="grid grid-cols-1 gap-2 sm:grid-cols-3 sm:gap-3">
                 {highlights.best_matchweek && (
                   <div className="min-w-0 rounded-xl border border-line bg-surface-2/40 p-3">
-                    <Eyebrow>Best week</Eyebrow>
+                    <Eyebrow>
+                      Best{" "}
+                      {formatPeriodNoun(
+                        highlights.period_kind === "matchweek" ? "LEAGUE" : "CUP",
+                        { capitalize: false },
+                      )}
+                    </Eyebrow>
                     <div className="font-display text-xl font-extrabold tabular-nums sm:text-2xl">
-                      MW{highlights.best_matchweek.scheduled_matchweek}
+                      {highlights.best_matchweek.label ||
+                        (highlights.best_matchweek.scheduled_matchweek != null
+                          ? formatPeriodShort(
+                              highlights.best_matchweek.scheduled_matchweek,
+                              competitionType,
+                            )
+                          : "—")}
                     </div>
                     <Muted className="tabular-nums">
                       {formatNumber(highlights.best_matchweek.points)} pts
@@ -264,9 +288,11 @@ export function ManagerPage({
                 {highlights.biggest_upset && (
                   <div className="min-w-0 rounded-xl border border-line bg-surface-2/40 p-3">
                     <Eyebrow>Biggest upset</Eyebrow>
-                    <div className="font-display text-lg font-extrabold capitalize sm:text-xl">
-                      {eventTypeLabels?.[highlights.biggest_upset.event_type || ""] ||
-                        (highlights.biggest_upset.event_type || "").replaceAll("_", " ")}
+                    <div className="font-display text-lg font-extrabold sm:text-xl">
+                      {scoringEventLabel(
+                        highlights.biggest_upset.event_type || "",
+                        eventTypeLabels,
+                      )}
                     </div>
                     <Muted className="break-words text-sm tabular-nums">
                       {highlights.biggest_upset.gap != null
@@ -327,11 +353,11 @@ export function ManagerPage({
                   key={key}
                   className="flex min-w-0 items-center justify-between gap-2 rounded-xl border border-line bg-surface-2/40 px-3 py-2.5 text-sm"
                 >
-                  <span className="min-w-0 truncate capitalize">
-                    {key.replaceAll("_", " ")}
+                  <span className="min-w-0 truncate">
+                    {scoringEventLabel(key, eventTypeLabels)}
                   </span>
                   <span className="shrink-0 tabular-nums text-muted">
-                    {s.event_counts_by_type?.[key] ?? 0}× · {formatNumber(pts)}
+                    {s.event_counts_by_type?.[key] ?? 0} · {formatNumber(pts)} pts
                   </span>
                 </li>
               ))}
@@ -381,7 +407,9 @@ export function ManagerPage({
                               club.pool_name,
                               club.draft_pick_number != null
                                 ? `Pick #${club.draft_pick_number}`
-                                : club.acquired_via?.replaceAll("_", " "),
+                                : club.acquired_via
+                                  ? humanizeKey(club.acquired_via)
+                                  : null,
                             ]
                               .filter(Boolean)
                               .join(" · ")}
@@ -472,6 +500,7 @@ export function ManagerPage({
                 hasMore={recentFixtures.hasMore}
                 loadingMore={recentFixtures.loadingMore}
                 onShowMore={recentFixtures.showMore}
+                competitionType={competitionType}
               />
             )}
           </Stack>
@@ -493,6 +522,7 @@ export function ManagerPage({
                 hasMore={upcomingFixtures.hasMore}
                 loadingMore={upcomingFixtures.loadingMore}
                 onShowMore={upcomingFixtures.showMore}
+                competitionType={competitionType}
               />
             )}
           </Stack>

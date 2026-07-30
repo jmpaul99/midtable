@@ -265,7 +265,10 @@ export function defaultResolvedPoints(
   };
 }
 
-/** Resolved points for a stage; empty stage fields always use Default. */
+/**
+ * Resolved points for a stage. Empty stage ET/PK inherit that stage's win/loss,
+ * then Default (Default ET/PK already inherit Default win/loss).
+ */
 export function resolveResultPoints(
   value: ResultPoints,
   stage?: string | null,
@@ -273,14 +276,16 @@ export function resolveResultPoints(
   const defaults = defaultResolvedPoints(value);
   const stagePts = stage ? value.by_stage[stage] : undefined;
   if (!stagePts) return defaults;
+  const stageWin = stagePts.win ?? defaults.win;
+  const stageLoss = stagePts.loss ?? defaults.loss;
   return {
-    win: stagePts.win ?? defaults.win,
+    win: stageWin,
     draw: stagePts.draw ?? defaults.draw,
-    loss: stagePts.loss ?? defaults.loss,
-    win_et: stagePts.win_et ?? defaults.win_et,
-    loss_et: stagePts.loss_et ?? defaults.loss_et,
-    win_pk: stagePts.win_pk ?? defaults.win_pk,
-    loss_pk: stagePts.loss_pk ?? defaults.loss_pk,
+    loss: stageLoss,
+    win_et: stagePts.win_et ?? stagePts.win ?? defaults.win_et,
+    loss_et: stagePts.loss_et ?? stagePts.loss ?? defaults.loss_et,
+    win_pk: stagePts.win_pk ?? stagePts.win ?? defaults.win_pk,
+    loss_pk: stagePts.loss_pk ?? stagePts.loss ?? defaults.loss_pk,
   };
 }
 

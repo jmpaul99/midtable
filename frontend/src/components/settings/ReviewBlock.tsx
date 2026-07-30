@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import type { LeaderboardPhase } from "@/components/settings";
+import { matchStageLabel } from "@/lib/matchStages";
 
 export function ReviewBlock({ title, children }: { title: string; children: ReactNode }) {
   return (
@@ -10,20 +11,13 @@ export function ReviewBlock({ title, children }: { title: string; children: Reac
   );
 }
 
-function humanizeKey(key: string): string {
-  return key
-    .split("_")
-    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-    .join(" ");
-}
-
 export function formatPhaseFilter(filter: LeaderboardPhase["match_filter"]): string {
   if (filter.type === "matchweek_range") {
-    return `Matchweeks ${filter.from}–${filter.to}`;
+    return `Periods ${filter.from}–${filter.to}`;
   }
   if (filter.type === "stage_in") {
     return filter.stages.length
-      ? `Stages: ${filter.stages.map(humanizeKey).join(", ")}`
+      ? `Stages: ${filter.stages.map(matchStageLabel).join(", ")}`
       : "Stages: none";
   }
   return "—";

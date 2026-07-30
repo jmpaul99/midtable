@@ -43,6 +43,7 @@ class CompetitionSeasonInfo:
     end_date: datetime | None
     available: bool
     message: str | None = None
+    competition_type: str | None = None
 
 
 class FootballProvider(Protocol):

@@ -1,16 +1,20 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo } from "react";
-import { formatNumber } from "@/lib/api";
-import type { MatchweekRow, PpgRow, UpsetRow, UUID } from "@/lib/types";
+import { useMemo, useState } from "react";
+import { formatNumber, formatPeriodNoun, formatPeriodShort, scoringCompetitionType } from "@/lib/format";
+import { scoringEventLabel } from "@/lib/scoringLabels";
+import type { League, MatchweekRow, PpgRow, UpsetRow, UUID } from "@/lib/types";
 import { managerLabel } from "@/lib/types";
 import { Empty, ErrorState, Loading } from "@/components/ui/State";
+import { Button } from "@/components/ui/Button";
 import { Card, Muted, Stack, StatTile } from "@/components/ui/Card";
 import { useApiQuery } from "@/lib/useApiQuery";
 import { MatchLog } from "./MatchLog";
 import { TeamLink } from "./TeamLink";
 import { ManagerLink } from "./ManagerLink";
+
+const TEAM_PPG_PAGE_SIZE = 10;
 
 function statsManagerName(displayName: string | null | undefined, memberId: string | null | undefined) {
   return managerLabel(
@@ -19,7 +23,17 @@ function statsManagerName(displayName: string | null | undefined, memberId: stri
   );
 }
 
-export function StatsDashboard({ leagueId }: { leagueId: UUID }) {
+export function StatsDashboard({
+  leagueId,
+  eventTypeLabels,
+  league,
+}: {
+  leagueId: UUID;
+  eventTypeLabels?: Record<string, string>;
+  league?: League;
+}) {
+  const competitionType = scoringCompetitionType(league?.pools);
+  const periodNoun = formatPeriodNoun(competitionType, { plural: true });
   const ppgQ = useApiQuery<PpgRow[]>(`/leagues/${leagueId}/stats/points-per-game`, [leagueId]);
   const weeksQ = useApiQuery<MatchweekRow[]>(`/leagues/${leagueId}/stats/matchweeks`, [leagueId]);
   const upsetsQ = useApiQuery<UpsetRow[]>(`/leagues/${leagueId}/stats/upsets`, [leagueId]);
@@ -27,16 +41,25 @@ export function StatsDashboard({ leagueId }: { leagueId: UUID }) {
   const weeks = weeksQ.data ?? undefined;
   const upsets = upsetsQ.data ?? undefined;
   const error = ppgQ.error || weeksQ.error || upsetsQ.error || "";
+  const [teamPpgPage, setTeamPpgPage] = useState(1);
 
   const cumulative = useMemo(() => {
     if (!weeks) return [];
     const byMember = new Map<
       string,
-      { name: string; points: number; series: Array<{ mw: number; total: number }> }
+      { name: string; points: number; series: Array<{ key: string; label: string; total: number }> }
     >();
-    const sorted = [...weeks].sort(
-      (a, b) => Number(a.scheduled_matchweek || 0) - Number(b.scheduled_matchweek || 0),
-    );
+    const order = new Map<string, number>();
+    let ord = 0;
+    for (const row of weeks) {
+      const key = row.period_key || String(row.scheduled_matchweek ?? "");
+      if (key && !order.has(key)) order.set(key, ord++);
+    }
+    const sorted = [...weeks].sort((a, b) => {
+      const ak = a.period_key || String(a.scheduled_matchweek ?? "");
+      const bk = b.period_key || String(b.scheduled_matchweek ?? "");
+      return (order.get(ak) ?? 0) - (order.get(bk) ?? 0);
+    });
     for (const row of sorted) {
       const mid = String(row.member_id || "");
       const prev = byMember.get(mid) || {
@@ -45,11 +68,32 @@ export function StatsDashboard({ leagueId }: { leagueId: UUID }) {
         series: [],
       };
       prev.points += Number(row.points || 0);
-      prev.series.push({ mw: Number(row.scheduled_matchweek || 0), total: prev.points });
+      const key = row.period_key || String(row.scheduled_matchweek ?? "");
+      const label =
+        row.label ||
+        (row.scheduled_matchweek != null
+          ? formatPeriodShort(row.scheduled_matchweek, competitionType)
+          : key);
+      prev.series.push({ key, label, total: prev.points });
       byMember.set(mid, prev);
     }
     return [...byMember.entries()].map(([id, v]) => ({ id, ...v }));
-  }, [weeks]);
+  }, [weeks, competitionType]);
+
+  const teamPpgSorted = useMemo(() => {
+    if (!ppg) return [];
+    return [...ppg].sort(
+      (a, b) => Number(b.points_per_game || 0) - Number(a.points_per_game || 0),
+    );
+  }, [ppg]);
+
+  const teamPpgTotalPages = Math.max(1, Math.ceil(teamPpgSorted.length / TEAM_PPG_PAGE_SIZE) || 1);
+  const teamPpgPageClamped = Math.min(teamPpgPage, teamPpgTotalPages);
+  const teamPpgPageRows = teamPpgSorted.slice(
+    (teamPpgPageClamped - 1) * TEAM_PPG_PAGE_SIZE,
+    teamPpgPageClamped * TEAM_PPG_PAGE_SIZE,
+  );
+  const showTeamPpgPager = teamPpgSorted.length > TEAM_PPG_PAGE_SIZE;
 
   if (error) return <ErrorState error={error} />;
   if (!ppg || !weeks || !upsets) return <Loading label="Crunching stats" />;
@@ -73,15 +117,15 @@ export function StatsDashboard({ leagueId }: { leagueId: UUID }) {
   }));
   const max = Math.max(1, ...members.map((r) => r.points));
   const cumMax = Math.max(1, ...cumulative.map((c) => c.points));
+  const periodCount = new Set(
+    weeks.map((w) => w.period_key || String(w.scheduled_matchweek ?? "")),
+  ).size;
 
   return (
     <Stack gap="md" className="animate-in">
       <div className="grid grid-cols-1 gap-2 sm:grid-cols-3 sm:gap-3">
         <StatTile label="Teams" value={ppg.length} />
-        <StatTile
-          label="Weeks"
-          value={new Set(weeks.map((w) => w.scheduled_matchweek)).size}
-        />
+        <StatTile label={periodNoun} value={periodCount} />
         <StatTile
           label="Upsets"
           value={upsets.reduce((n, u) => n + Number(u.count || u.upset_count || 0), 0)}
@@ -126,40 +170,69 @@ export function StatsDashboard({ leagueId }: { leagueId: UUID }) {
 
         <Card className="min-w-0 overflow-hidden">
           <h2 className="mb-3 text-lg sm:mb-4 sm:text-xl">Team points per game</h2>
-          {!ppg.length ? (
+          {!teamPpgSorted.length ? (
             <Empty title="No team stats" />
           ) : (
-            <ul className="flex flex-col gap-2">
-              {ppg.map((r, i) => (
-                <li
-                  key={i}
-                  className="flex min-w-0 flex-col gap-1 rounded-xl border border-line bg-surface-2/40 px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between sm:gap-3 sm:py-3"
-                >
-                  <strong className="min-w-0 truncate text-sm">
-                    {r.team_id ? (
-                      <TeamLink leagueId={leagueId} teamId={String(r.team_id)}>
-                        {String(r.team_name || r.team_id)}
-                      </TeamLink>
-                    ) : (
-                      String(r.team_name || r.team_id)
-                    )}
-                  </strong>
-                  <span className="shrink-0 text-xs tabular-nums text-muted sm:text-sm">
-                    {formatNumber(Number(r.points || 0))} · {Number(r.games_played || 0)} GP ·{" "}
-                    {formatNumber(Number(r.points_per_game || 0))} PPG
-                  </span>
-                </li>
-              ))}
-            </ul>
+            <Stack gap="sm">
+              <ul className="flex flex-col gap-2">
+                {teamPpgPageRows.map((r, i) => (
+                  <li
+                    key={r.team_id ?? `${r.team_name}-${i}`}
+                    className="flex min-w-0 flex-col gap-1 rounded-xl border border-line bg-surface-2/40 px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between sm:gap-3 sm:py-3"
+                  >
+                    <strong className="min-w-0 truncate text-sm">
+                      {r.team_id ? (
+                        <TeamLink leagueId={leagueId} teamId={String(r.team_id)}>
+                          {String(r.team_name || r.team_id)}
+                        </TeamLink>
+                      ) : (
+                        String(r.team_name || r.team_id)
+                      )}
+                    </strong>
+                    <span className="shrink-0 text-xs tabular-nums text-muted sm:text-sm">
+                      {formatNumber(Number(r.points || 0))} · {Number(r.games_played || 0)} GP ·{" "}
+                      {formatNumber(Number(r.points_per_game || 0))} PPG
+                    </span>
+                  </li>
+                ))}
+              </ul>
+              {showTeamPpgPager && (
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <Muted className="text-sm">
+                    Page {teamPpgPageClamped} of {teamPpgTotalPages}
+                  </Muted>
+                  <div className="flex gap-2">
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      disabled={teamPpgPageClamped <= 1}
+                      onClick={() => setTeamPpgPage(teamPpgPageClamped - 1)}
+                    >
+                      Previous
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      disabled={teamPpgPageClamped >= teamPpgTotalPages}
+                      onClick={() => setTeamPpgPage(teamPpgPageClamped + 1)}
+                    >
+                      Next
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </Stack>
           )}
         </Card>
       </div>
 
       <Card className="min-w-0 overflow-hidden">
         <Stack>
-          <h2 className="text-lg sm:text-xl">Cumulative points by matchweek</h2>
+          <h2 className="text-lg sm:text-xl">Cumulative points by {periodNoun.toLowerCase()}</h2>
           {!cumulative.length ? (
-            <Empty title="No matchweek series yet" />
+            <Empty title={`No ${periodNoun.toLowerCase()} series yet`} />
           ) : (
             <Stack gap="sm">
               {cumulative.map((m) => (
@@ -181,7 +254,7 @@ export function StatsDashboard({ leagueId }: { leagueId: UUID }) {
                   </div>
                   <div className="-mx-1 mb-2 overflow-x-auto px-1">
                     <Muted className="whitespace-nowrap text-[11px] sm:text-xs">
-                      {m.series.map((s) => `MW${s.mw}:${formatNumber(s.total)}`).join(" · ")}
+                      {m.series.map((s) => `${s.label}:${formatNumber(s.total)}`).join(" · ")}
                     </Muted>
                   </div>
                   <div className="h-1.5 overflow-hidden rounded-full bg-line sm:h-2">
@@ -208,7 +281,10 @@ export function StatsDashboard({ leagueId }: { leagueId: UUID }) {
                 const byType = u.by_type || {};
                 const typeBits = Object.entries(byType)
                   .sort((a, b) => b[1] - a[1])
-                  .map(([k, v]) => `${k.replaceAll("_", " ")} ${formatNumber(v)}`);
+                  .map(
+                    ([k, v]) =>
+                      `${scoringEventLabel(k, eventTypeLabels)} ${formatNumber(v)}`,
+                  );
                 return (
                   <li
                     key={i}
@@ -228,7 +304,7 @@ export function StatsDashboard({ leagueId }: { leagueId: UUID }) {
                       </span>
                     </div>
                     {typeBits.length > 0 && (
-                      <Muted className="mt-1 break-words text-xs capitalize">
+                      <Muted className="mt-1 break-words text-xs">
                         {typeBits.join(" · ")}
                       </Muted>
                     )}
@@ -251,7 +327,7 @@ export function StatsDashboard({ leagueId }: { leagueId: UUID }) {
               View all matches
             </Link>
           </div>
-          <MatchLog leagueId={leagueId} limit={10} compact section="results" />
+          <MatchLog leagueId={leagueId} league={league} limit={10} compact section="results" />
         </Stack>
       </Card>
     </Stack>

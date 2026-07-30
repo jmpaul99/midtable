@@ -20,6 +20,7 @@ export default function LeagueTeamPage({
       members={league.members}
       currentManagerId={league.current_member_id}
       eventTypeLabels={upsetNameByKey(league.upset_rules)}
+      bonusesConfigured={(league.bonus_type_keys || []).length > 0}
     />
   );
 }
