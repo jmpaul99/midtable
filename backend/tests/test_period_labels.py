@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 from app.services.period_labels import (
     build_period_catalog,
+    events_by_competition_type,
     expanded_stages,
     format_period_range,
     format_period_short,
@@ -46,6 +47,54 @@ def test_scoring_competition_type_prefers_scoring_pool():
         ),
     ]
     assert scoring_competition_type(pools) == "CUP"
+
+
+def test_events_use_period_labels_for_their_match_competition_type():
+    pools = [
+        SimpleNamespace(
+            id=1,
+            sort_order=1,
+            scores_match_results=True,
+            competition_code="PL",
+            competition_type="LEAGUE",
+        ),
+        SimpleNamespace(
+            id=2,
+            sort_order=2,
+            scores_match_results=True,
+            competition_code="CL",
+            competition_type="CUP",
+        ),
+    ]
+    matches = {
+        10: SimpleNamespace(id=10, competition_code="PL"),
+        20: SimpleNamespace(id=20, competition_code="CL"),
+    }
+    events = [
+        SimpleNamespace(match_id=10, stage="REGULAR_SEASON", scheduled_matchweek=1),
+        SimpleNamespace(match_id=10, stage="REGULAR_SEASON", scheduled_matchweek=2),
+        SimpleNamespace(match_id=20, stage="GROUP_STAGE", scheduled_matchweek=1),
+        SimpleNamespace(match_id=20, stage="GROUP_STAGE", scheduled_matchweek=2),
+    ]
+
+    grouped = events_by_competition_type(events, matches, pools)
+    catalogs = {
+        competition_type: build_period_catalog(
+            [(event.stage, event.scheduled_matchweek) for event in grouped_events],
+            competition_type=competition_type,
+        )
+        for competition_type, grouped_events in grouped
+    }
+
+    assert [competition_type for competition_type, _ in grouped] == ["LEAGUE", "CUP"]
+    assert [(p.key, p.label) for p in catalogs["LEAGUE"]] == [
+        ("REGULAR_SEASON:1", "MW1"),
+        ("REGULAR_SEASON:2", "MW2"),
+    ]
+    assert [(p.key, p.label) for p in catalogs["CUP"]] == [
+        ("GROUP_STAGE:1", "Group stage · R1"),
+        ("GROUP_STAGE:2", "Group stage · R2"),
+    ]
 
 
 def test_wc_style_catalog_expands_group_collapses_knockout():

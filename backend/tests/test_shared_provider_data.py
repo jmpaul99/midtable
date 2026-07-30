@@ -218,7 +218,7 @@ def test_ranks_for_league_live_catalog_is_scoring_opt_in(monkeypatch):
     resolve.assert_called_once_with(db, catalog, sample_league=league)
 
 
-def test_previous_final_requires_zeroed_opener(monkeypatch):
+def test_previous_final_rejects_midseason_snapshot_without_opener(monkeypatch):
     midseason = SimpleNamespace(
         kickoff_at=datetime(2026, 9, 1, tzinfo=UTC),
         rows=[SimpleNamespace(played=3)],
@@ -238,6 +238,31 @@ def test_previous_final_requires_zeroed_opener(monkeypatch):
         )
         is None
     )
+
+
+def test_previous_final_accepts_season_final_without_opener(monkeypatch):
+    previous_final = SimpleNamespace(
+        kickoff_at=datetime(2026, 6, 1, tzinfo=UTC),
+        rows=[
+            SimpleNamespace(played=38),
+            SimpleNamespace(played=37),
+            SimpleNamespace(played=38),
+        ],
+    )
+    monkeypatch.setattr(
+        standings_mod,
+        "_snapshots_for_competition",
+        MagicMock(return_value=[previous_final]),
+    )
+
+    result = standings_mod.previous_final_snapshot_for_competition(
+        MagicMock(),
+        provider="football-data.org",
+        competition_code="PL",
+        season_year=2026,
+    )
+
+    assert result is previous_final
 
 
 def test_previous_final_precedes_zeroed_opener(monkeypatch):

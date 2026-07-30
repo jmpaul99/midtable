@@ -32,9 +32,9 @@ from app.services.members import member_label
 from app.services.payouts import apply_payouts
 from app.services.period_labels import (
     build_period_catalog,
+    events_by_competition_type,
     expanded_stages,
     resolve_period_key,
-    scoring_competition_type,
 )
 from app.services.roster_owners import member_id_by_team_id_for_league
 from app.services.scoring import (
@@ -332,50 +332,61 @@ def matchweek_breakdown(db: Session, league: League) -> list[dict[str, Any]]:
         for m in db.scalars(select(LeagueMember).where(LeagueMember.league_id == league.id)).all()
     }
     pools = list(db.scalars(select(TeamPool).where(TeamPool.league_id == league.id)).all())
-    competition_type = scoring_competition_type(pools)
     events = list(
         db.scalars(select(ScoringEvent).where(ScoringEvent.league_id == league.id)).all()
     )
-    catalog = build_period_catalog(
-        [(e.stage, e.scheduled_matchweek) for e in events],
-        competition_type=competition_type,
+    match_ids = {event.match_id for event in events if event.match_id is not None}
+    matches_by_id = (
+        {
+            match.id: match
+            for match in db.scalars(select(Match).where(Match.id.in_(match_ids))).all()
+        }
+        if match_ids
+        else {}
     )
-    expanded = expanded_stages(catalog)
-    by_key = {p.key: p for p in catalog}
-
-    buckets: dict[tuple[int, str], Decimal] = defaultdict(lambda: Decimal(0))
-    for event in events:
-        period_key = resolve_period_key(
-            event.stage, event.scheduled_matchweek, expanded=expanded
-        )
-        if period_key is None or period_key not in by_key:
-            continue
-        member_id = roster.get(event.team_id)
-        if member_id is None:
-            continue
-        buckets[(member_id, period_key)] += Decimal(event.points)
 
     rows = []
-    order = {p.key: i for i, p in enumerate(catalog)}
-    for (member_id, period_key), pts in sorted(
-        buckets.items(), key=lambda x: (order.get(x[0][1], 999), x[0][0])
+    for competition_type, grouped_events in events_by_competition_type(
+        events, matches_by_id, pools
     ):
-        member = members.get(member_id)
-        if not member:
-            continue
-        profile = db.get(Profile, member.profile_id)
-        period = by_key[period_key]
-        rows.append(
-            {
-                "member_id": str(member.public_id),
-                "display_name": member_label(member, profile),
-                "period_key": period.key,
-                "label": period.label,
-                "stage": period.stage,
-                "scheduled_matchweek": period.scheduled_matchweek,
-                "points": float(pts),
-            }
+        catalog = build_period_catalog(
+            [(e.stage, e.scheduled_matchweek) for e in grouped_events],
+            competition_type=competition_type,
         )
+        expanded = expanded_stages(catalog)
+        by_key = {period.key: period for period in catalog}
+        buckets: dict[tuple[int, str], Decimal] = defaultdict(lambda: Decimal(0))
+        for event in grouped_events:
+            period_key = resolve_period_key(
+                event.stage, event.scheduled_matchweek, expanded=expanded
+            )
+            if period_key is None or period_key not in by_key:
+                continue
+            member_id = roster.get(event.team_id)
+            if member_id is None:
+                continue
+            buckets[(member_id, period_key)] += Decimal(event.points)
+
+        order = {period.key: i for i, period in enumerate(catalog)}
+        for (member_id, period_key), pts in sorted(
+            buckets.items(), key=lambda x: (order.get(x[0][1], 999), x[0][0])
+        ):
+            member = members.get(member_id)
+            if not member:
+                continue
+            profile = db.get(Profile, member.profile_id)
+            period = by_key[period_key]
+            rows.append(
+                {
+                    "member_id": str(member.public_id),
+                    "display_name": member_label(member, profile),
+                    "period_key": period.key,
+                    "label": period.label,
+                    "stage": period.stage,
+                    "scheduled_matchweek": period.scheduled_matchweek,
+                    "points": float(pts),
+                }
+            )
     return rows
 
 

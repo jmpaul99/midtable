@@ -31,6 +31,7 @@ from app.services.match_queries import (
 from app.services.members import member_label
 from app.services.period_labels import (
     build_period_catalog,
+    events_by_competition_type,
     expanded_stages,
     period_kind,
     resolve_period_key,
@@ -498,58 +499,74 @@ def member_highlights(
         t.id: t for t in db.scalars(select(Team).where(Team.id.in_(all_team_ids))).all()
     } if all_team_ids else {}
 
-    catalog = build_period_catalog(
-        [(e.stage, e.scheduled_matchweek) for e in events],
-        competition_type=competition_type,
-    )
-    expanded = expanded_stages(catalog)
-    by_key = {p.key: p for p in catalog}
-    period_points: dict[str, float] = defaultdict(float)
+    period_defs: dict[tuple[str | None, str], Any] = {}
+    period_points: dict[tuple[str | None, str], float] = defaultdict(float)
     team_points: dict[int, float] = defaultdict(float)
     biggest_upset: dict[str, Any] | None = None
     upset_types = upset_types_for_league(league)
-    for event in events:
-        pts = float(event.points)
-        team_points[event.team_id] += pts
-        period_key = resolve_period_key(
-            event.stage, event.scheduled_matchweek, expanded=expanded
+    for event_competition_type, grouped_events in events_by_competition_type(
+        events, matches_by_id, pools
+    ):
+        catalog = build_period_catalog(
+            [(e.stage, e.scheduled_matchweek) for e in grouped_events],
+            competition_type=event_competition_type,
         )
-        if period_key is not None and period_key in by_key:
-            period_points[period_key] += pts
-        if event.event_type in upset_types:
-            meta = event.metadata_ or {}
-            gap = meta.get("gap")
-            candidate = {
-                "event_type": event.event_type,
-                "points": pts,
-                "gap": gap,
-                "match_id": None,
-                "team_id": str(teams[event.team_id].public_id) if event.team_id in teams else None,
-                "team_name": teams[event.team_id].name if event.team_id in teams else None,
-                "underdog_rank": meta.get("underdog_rank"),
-                "opponent_rank": meta.get("opponent_rank"),
-            }
-            match = matches_by_id.get(event.match_id)
-            if match:
-                candidate["match_id"] = str(match.public_id)
-                opp_id = (
-                    match.away_team_id
-                    if match.home_team_id == event.team_id
-                    else match.home_team_id
-                )
-                opp = teams.get(opp_id)
-                candidate["opponent_name"] = opp.name if opp else None
-            if biggest_upset is None:
-                biggest_upset = candidate
-            else:
-                prev_gap = biggest_upset.get("gap")
-                if gap is not None and (prev_gap is None or gap > prev_gap):
+        expanded = expanded_stages(catalog)
+        by_key = {period.key: period for period in catalog}
+        for period_key, period in by_key.items():
+            period_defs[(event_competition_type, period_key)] = period
+        for event in grouped_events:
+            pts = float(event.points)
+            team_points[event.team_id] += pts
+            period_key = resolve_period_key(
+                event.stage, event.scheduled_matchweek, expanded=expanded
+            )
+            if period_key is not None and period_key in by_key:
+                period_points[(event_competition_type, period_key)] += pts
+            if event.event_type in upset_types:
+                meta = event.metadata_ or {}
+                gap = meta.get("gap")
+                candidate = {
+                    "event_type": event.event_type,
+                    "points": pts,
+                    "gap": gap,
+                    "match_id": None,
+                    "team_id": (
+                        str(teams[event.team_id].public_id)
+                        if event.team_id in teams
+                        else None
+                    ),
+                    "team_name": (
+                        teams[event.team_id].name if event.team_id in teams else None
+                    ),
+                    "underdog_rank": meta.get("underdog_rank"),
+                    "opponent_rank": meta.get("opponent_rank"),
+                }
+                match = matches_by_id.get(event.match_id)
+                if match:
+                    candidate["match_id"] = str(match.public_id)
+                    opp_id = (
+                        match.away_team_id
+                        if match.home_team_id == event.team_id
+                        else match.home_team_id
+                    )
+                    opp = teams.get(opp_id)
+                    candidate["opponent_name"] = opp.name if opp else None
+                if biggest_upset is None:
                     biggest_upset = candidate
-                elif gap == prev_gap and pts > float(biggest_upset.get("points") or 0):
-                    biggest_upset = candidate
+                else:
+                    prev_gap = biggest_upset.get("gap")
+                    if gap is not None and (prev_gap is None or gap > prev_gap):
+                        biggest_upset = candidate
+                    elif gap == prev_gap and pts > float(
+                        biggest_upset.get("points") or 0
+                    ):
+                        biggest_upset = candidate
 
-    def period_payload(key: str, points: float) -> dict[str, Any]:
-        period = by_key[key]
+    def period_payload(
+        key: tuple[str | None, str], points: float
+    ) -> dict[str, Any]:
+        period = period_defs[key]
         return {
             "period_key": period.key,
             "label": period.label,

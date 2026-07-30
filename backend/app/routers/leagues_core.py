@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.auth.jwt import get_current_profile
 from app.db import get_db
-from app.deps import require_commissioner, require_league_member
+from app.deps import get_football_provider, require_commissioner, require_league_member
 from app.models import (
     CompetitionTemplate,
     DraftState,
@@ -45,11 +45,33 @@ from app.services.members import (
 )
 from app.services.errors import DomainError
 from app.logging_config import log_id
+from app.providers.football_data import FootballDataError, FootballDataProvider
 from app.services import analytics as analytics_service
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["leagues"])
+
+
+def _competition_type_from_provider(
+    provider: FootballDataProvider,
+    competition_code: str,
+    season_year: int,
+) -> str | None:
+    resolve = getattr(provider, "resolve_competition_season", None)
+    if not callable(resolve):
+        return None
+    try:
+        info, _ = resolve(competition_code, season_year)
+    except FootballDataError as exc:
+        logger.warning(
+            "competition type resolve failed competition=%s season=%s error=%s",
+            competition_code,
+            season_year,
+            exc,
+        )
+        return None
+    return info.competition_type
 
 
 def _league_list_sort_key(league: League) -> tuple[bool, bool, datetime]:
@@ -321,6 +343,7 @@ def update_settings(
     payload: LeagueSettingsUpdate,
     membership: tuple[League, LeagueMember] = Depends(require_commissioner),
     db: Session = Depends(get_db),
+    provider: FootballDataProvider = Depends(get_football_provider),
 ) -> LeagueDetailResponse:
     league, member = membership
     data = payload.model_dump(exclude_unset=True)
@@ -503,6 +526,9 @@ def update_settings(
                     provider=item.get("provider") or "football-data.org",
                     competition_code=code,
                     season_year=int(item["season_year"]),
+                    competition_type=_competition_type_from_provider(
+                        provider, code, int(item["season_year"])
+                    ),
                 )
                 db.add(pool)
                 keys_in_use.add(key)
@@ -564,7 +590,9 @@ def update_settings(
                         detail="Roster slots can only be changed before the draft opens.",
                     )
 
+            competition_identity_changed = False
             if "provider" in item and item["provider"] is not None:
+                competition_identity_changed = item["provider"] != pool.provider
                 pool.provider = item["provider"]
             if "competition_code" in item and item["competition_code"] is not None:
                 new_code = item["competition_code"]
@@ -577,10 +605,23 @@ def update_settings(
                 if old_code:
                     codes_in_use.discard(old_code)
                 pool.competition_code = new_code
-                pool.competition_type = None
+                competition_identity_changed = competition_identity_changed or new_code != old_code
                 codes_in_use.add(new_code)
             if "season_year" in item and item["season_year"] is not None:
-                pool.season_year = int(item["season_year"])
+                new_season_year = int(item["season_year"])
+                competition_identity_changed = (
+                    competition_identity_changed
+                    or new_season_year != int(pool.season_year or 0)
+                )
+                pool.season_year = new_season_year
+            if (
+                competition_identity_changed
+                and pool.competition_code
+                and pool.season_year is not None
+            ):
+                pool.competition_type = _competition_type_from_provider(
+                    provider, pool.competition_code, int(pool.season_year)
+                )
             if "slot_count" in item and item["slot_count"] is not None:
                 new_slots = int(item["slot_count"])
                 team_count = len(

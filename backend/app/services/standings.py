@@ -225,7 +225,7 @@ def previous_final_snapshot_for_competition(
     competition_code: str,
     season_year: int,
 ) -> StandingsSnapshot | None:
-    """Oldest played snapshot strictly before the zeroed season opener."""
+    """Previous-final snapshot, using a conservative fallback without an opener."""
     snapshots = _snapshots_for_competition(
         db,
         provider=provider,
@@ -241,6 +241,10 @@ def previous_final_snapshot_for_competition(
         None,
     )
     if opener is None:
+        for snap in snapshots:
+            played = [int(row.played or 0) for row in snap.rows]
+            if played and all(value > 0 for value in played) and min(played) >= 20:
+                return snap
         return None
 
     opener_kickoff = _aware(opener.kickoff_at)

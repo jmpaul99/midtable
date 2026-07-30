@@ -148,6 +148,42 @@ def scoring_competition_type(pools: Sequence[Any]) -> str | None:
     return None
 
 
+def events_by_competition_type(
+    events: Sequence[Any],
+    matches_by_id: dict[Any, Any],
+    pools: Sequence[Any],
+) -> list[tuple[str | None, list[Any]]]:
+    """Group events by their match competition's pool type in stable pool order."""
+    ordered_pools = sorted(
+        pools,
+        key=lambda p: (
+            not bool(getattr(p, "scores_match_results", True)),
+            int(getattr(p, "sort_order", 0) or 0),
+            int(getattr(p, "id", 0) or 0),
+        ),
+    )
+    type_by_code = {
+        str(p.competition_code).upper(): getattr(p, "competition_type", None)
+        for p in ordered_pools
+        if getattr(p, "competition_code", None)
+    }
+    type_order: list[str | None] = []
+    for pool in ordered_pools:
+        ctype = getattr(pool, "competition_type", None)
+        if ctype not in type_order:
+            type_order.append(ctype)
+
+    grouped: dict[str | None, list[Any]] = {}
+    for event in events:
+        match = matches_by_id.get(getattr(event, "match_id", None))
+        code = getattr(match, "competition_code", None)
+        ctype = type_by_code.get(str(code).upper()) if code else None
+        grouped.setdefault(ctype, []).append(event)
+        if ctype not in type_order:
+            type_order.append(ctype)
+    return [(ctype, grouped[ctype]) for ctype in type_order if ctype in grouped]
+
+
 def _stage_sort_key(stage: str) -> tuple[int, str]:
     return (_STAGE_INDEX.get(stage, 999), stage)
 

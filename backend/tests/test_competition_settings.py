@@ -10,7 +10,8 @@ import pytest
 from fastapi import HTTPException
 from pydantic import ValidationError
 
-from app.routers.leagues_core import update_settings
+from app.providers.base import CompetitionSeasonInfo, RateLimitInfo
+from app.routers.leagues_core import _competition_type_from_provider, update_settings
 from app.schemas.leagues import LeagueSettingsUpdate, PoolSettingsPatch, ReadinessCheck
 from app.services.competitions import AVAILABLE_COMPETITION_CODES, is_allowed_competition_code
 from app.services.sync import sync_league_fixtures
@@ -49,6 +50,24 @@ def test_pool_settings_create_accepts_allowed_code():
     )
     assert patch_item.competition_code == "PL"
     assert patch_item.id is None
+
+
+def test_competition_type_resolves_with_competition_identity():
+    provider = MagicMock()
+    provider.resolve_competition_season.return_value = (
+        CompetitionSeasonInfo(
+            code="CL",
+            season_year=2026,
+            start_date=None,
+            end_date=None,
+            available=True,
+            competition_type="CUP",
+        ),
+        RateLimitInfo(),
+    )
+
+    assert _competition_type_from_provider(provider, "CL", 2026) == "CUP"
+    provider.resolve_competition_season.assert_called_once_with("CL", 2026)
 
 
 def _league(*, status: str = "pre_draft", lid: int = 1) -> SimpleNamespace:
