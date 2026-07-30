@@ -22,8 +22,6 @@ from app.services.period_labels import normalize_competition_type
 logger = logging.getLogger(__name__)
 
 _KNOWN_TYPES = frozenset({"LEAGUE", "LEAGUE_CUP", "CUP", "PLAYOFFS"})
-# Free-tier budget is ~10 req/min; admin syncs walk many competitions.
-_MAX_RATE_LIMIT_RETRIES = 12
 
 
 class FootballDataError(RuntimeError):
@@ -149,69 +147,56 @@ class FootballDataProvider:
         )
 
     def _get(self, path: str, params: dict[str, Any] | None = None) -> tuple[Any, RateLimitInfo]:
-        last_rate = RateLimitInfo()
-        for attempt in range(1, _MAX_RATE_LIMIT_RETRIES + 1):
-            try:
-                response = self._client.get(path, params=params)
-            except httpx.HTTPError as exc:
-                logger.error(
-                    "football-data.org request failed path=%s error=%s", path, exc
-                )
-                raise FootballDataError(
-                    f"football-data.org request failed: {exc}"
-                ) from exc
-            rate = self.parse_rate_limit_headers(response.headers)
-            last_rate = rate
-            if response.status_code == 429:
-                if attempt >= _MAX_RATE_LIMIT_RETRIES:
-                    raise FootballDataError(
-                        f"rate limit exceeded; retry after "
-                        f"{rate.retry_after_seconds or 'unknown'}s",
-                        rate,
-                        rate_limited=True,
-                    )
-                wait = rate_limit_wait_seconds(rate, hit_limit=True) or 60
-                logger.warning(
-                    "football-data.org rate limited path=%s wait_s=%s attempt=%s/%s "
-                    "retry_after=%s available_minute=%s reset=%s",
-                    path,
-                    wait,
-                    attempt,
-                    _MAX_RATE_LIMIT_RETRIES,
-                    rate.retry_after_seconds,
-                    rate.requests_available_minute,
-                    rate.request_counter_reset,
-                )
-                time.sleep(wait)
-                continue
-            try:
-                response.raise_for_status()
-            except httpx.HTTPStatusError as exc:
-                logger.error(
-                    "football-data.org HTTP error path=%s status=%s",
-                    path,
-                    response.status_code,
-                )
-                raise FootballDataError(
-                    f"football-data.org returned {response.status_code}", rate
-                ) from exc
-            if (
-                rate.requests_available_minute is not None
-                and rate.requests_available_minute <= 2
-            ):
-                logger.warning(
-                    "football-data.org low rate budget path=%s available_minute=%s "
-                    "reset=%s",
-                    path,
-                    rate.requests_available_minute,
-                    rate.request_counter_reset,
-                )
-            return response.json(), rate
-        raise FootballDataError(
-            "rate limit exceeded; retries exhausted",
-            last_rate,
-            rate_limited=True,
-        )
+        # Fail fast on 429 — do not sleep here. Request handlers map rate limits to
+        # ConflictError; background syncs wait/retry via respect_rate_limit.
+        try:
+            response = self._client.get(path, params=params)
+        except httpx.HTTPError as exc:
+            logger.error(
+                "football-data.org request failed path=%s error=%s", path, exc
+            )
+            raise FootballDataError(
+                f"football-data.org request failed: {exc}"
+            ) from exc
+        rate = self.parse_rate_limit_headers(response.headers)
+        if response.status_code == 429:
+            logger.warning(
+                "football-data.org rate limited path=%s retry_after=%s "
+                "available_minute=%s reset=%s",
+                path,
+                rate.retry_after_seconds,
+                rate.requests_available_minute,
+                rate.request_counter_reset,
+            )
+            raise FootballDataError(
+                f"rate limit exceeded; retry after "
+                f"{rate.retry_after_seconds or 'unknown'}s",
+                rate,
+                rate_limited=True,
+            )
+        try:
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            logger.error(
+                "football-data.org HTTP error path=%s status=%s",
+                path,
+                response.status_code,
+            )
+            raise FootballDataError(
+                f"football-data.org returned {response.status_code}", rate
+            ) from exc
+        if (
+            rate.requests_available_minute is not None
+            and rate.requests_available_minute <= 2
+        ):
+            logger.warning(
+                "football-data.org low rate budget path=%s available_minute=%s "
+                "reset=%s",
+                path,
+                rate.requests_available_minute,
+                rate.request_counter_reset,
+            )
+        return response.json(), rate
 
     def list_teams(
         self, competition_code: str, season_year: int

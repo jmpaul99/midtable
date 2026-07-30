@@ -101,11 +101,27 @@ def test_update_competition_tiers(monkeypatch):
         lambda session: listed,
     )
 
-    out = update_competition_tiers(db, [("ELC", 3), ("unknown", 9)])
+    out = update_competition_tiers(db, [("ELC", 3)])
     assert elc.domestic_tier == 3
     assert elc.updated_at is not None
     assert out == listed
     db.flush.assert_called()
+
+
+def test_update_competition_tiers_rejects_unknown_code(monkeypatch):
+    db = MagicMock()
+    pl = SimpleNamespace(competition_code="PL", domestic_tier=1, updated_at=None)
+    monkeypatch.setattr(
+        "app.services.competitions.ensure_competition_tiers",
+        lambda session: [pl],
+    )
+    db.scalars.return_value.all.return_value = [pl]
+    try:
+        update_competition_tiers(db, [("ELC", 3), ("unknown", 9)])
+        raise AssertionError("expected ValueError")
+    except ValueError as exc:
+        assert "unknown" in str(exc).lower()
+    assert pl.domestic_tier == 1
 
 
 def test_update_competition_tiers_rejects_zero(monkeypatch):

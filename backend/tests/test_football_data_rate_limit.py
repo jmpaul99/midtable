@@ -54,20 +54,14 @@ def test_rate_limit_wait_none_when_budget_healthy():
     assert rate_limit_wait_seconds(rate, hit_limit=False) is None
 
 
-def test_get_retries_after_429_using_retry_after(monkeypatch):
+def test_get_fails_fast_on_429_without_sleeping(monkeypatch):
     client = MagicMock()
     limited = httpx.Response(
         429,
-        headers={"Retry-After": "1", "X-Requests-Available-Minute": "0"},
+        headers={"Retry-After": "60", "X-Requests-Available-Minute": "0"},
         request=httpx.Request("GET", "https://api.football-data.org/v4/competitions/PL"),
     )
-    ok = httpx.Response(
-        200,
-        json={"teams": []},
-        headers={"X-Requests-Available-Minute": "9"},
-        request=httpx.Request("GET", "https://api.football-data.org/v4/competitions/PL"),
-    )
-    client.get.side_effect = [limited, ok]
+    client.get.return_value = limited
     provider = FootballDataProvider("token", client=client)
 
     sleeps: list[float] = []
@@ -75,11 +69,12 @@ def test_get_retries_after_429_using_retry_after(monkeypatch):
         "app.providers.football_data.time.sleep", lambda s: sleeps.append(s)
     )
 
-    payload, rate = provider._get("/competitions/PL/teams", {"season": 2026})
-    assert payload == {"teams": []}
-    assert rate.requests_available_minute == 9
-    assert sleeps == [1]
-    assert client.get.call_count == 2
+    with pytest.raises(FootballDataError) as exc_info:
+        provider._get("/competitions/PL/teams", {"season": 2026})
+    assert exc_info.value.rate_limited is True
+    assert exc_info.value.rate_limit.retry_after_seconds == 60
+    assert sleeps == []
+    assert client.get.call_count == 1
 
 
 def test_resolve_competition_season_reraises_rate_limit():

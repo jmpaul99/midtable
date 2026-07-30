@@ -244,7 +244,9 @@ def update_competition_tiers(
     for raw_code, tier in updates:
         code = normalize_competition_code(raw_code)
         if code is None or code not in AVAILABLE_COMPETITION_CODES:
-            continue
+            raise ValueError(
+                f"unknown or unsupported competition code: {raw_code!r}"
+            )
         if tier is not None and int(tier) < 1:
             raise ValueError(f"domestic_tier must be >= 1 or null for {code}")
         row = by_code.get(code)
