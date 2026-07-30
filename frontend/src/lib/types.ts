@@ -23,6 +23,8 @@ export interface LeagueSummary {
   roster_club_order?: "draft" | "competition";
   draft_scheduled_at?: string | null;
   pick_timer_seconds?: number | null;
+  /** Earliest kickoff across scoring competitions; caps draft schedule. */
+  first_match_kickoff_at?: string | null;
   slug?: string;
   my_rank?: number | null;
   member_count?: number | null;

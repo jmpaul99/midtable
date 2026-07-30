@@ -23,6 +23,8 @@ from app.schemas.leagues import (
     BootstrapSeasonRequest,
     BootstrapTeamsRequest,
     BootstrapTeamsResponse,
+    EarliestKickoffRequest,
+    EarliestKickoffResponse,
     LeagueDetailResponse,
     LeagueJobResponse,
     ReadinessResponse,
@@ -32,6 +34,7 @@ from app.services.bootstrap import (
     bootstrap_teams_for_league,
     prior_leagues_blocking,
 )
+from app.services.draft_schedule import earliest_kickoff_for_keys
 from app.services.league_jobs import ActiveJobConflict, enqueue_league_job, trigger_job_run
 from app.services.members import default_team_name
 from app.services.readiness import evaluate_readiness
@@ -39,6 +42,20 @@ from app.services.readiness import evaluate_readiness
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["league-ops"])
+
+
+@router.post("/competitions/earliest-kickoff", response_model=EarliestKickoffResponse)
+def earliest_competition_kickoff(
+    payload: EarliestKickoffRequest,
+    _: Profile = Depends(get_current_profile),
+    db: Session = Depends(get_db),
+) -> EarliestKickoffResponse:
+    """Return the earliest known kickoff across the given competitions."""
+    keys = [
+        (item.provider, item.competition_code, item.season_year)
+        for item in payload.competitions
+    ]
+    return EarliestKickoffResponse(kickoff_at=earliest_kickoff_for_keys(db, keys))
 
 @router.post("/leagues/{league_id}/bootstrap-teams", response_model=BootstrapTeamsResponse)
 def bootstrap_teams(

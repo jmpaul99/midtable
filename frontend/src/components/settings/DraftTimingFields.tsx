@@ -25,6 +25,52 @@ export function fromDatetimeLocalValue(local: string): string | null {
   return d.toISOString();
 }
 
+/** Local datetime-local string for "now", floored to the current minute. */
+export function datetimeLocalMinNow(now = new Date()): string {
+  const d = new Date(now);
+  d.setSeconds(0, 0);
+  return toDatetimeLocalValue(d.toISOString());
+}
+
+/**
+ * Latest selectable draft start: one minute before first match kickoff.
+ * Returns empty when unknown or when that bound is not after `minLocal`.
+ */
+export function datetimeLocalMaxBeforeKickoff(
+  firstMatchKickoffAt: string | null | undefined,
+  minLocal?: string,
+): string {
+  if (!firstMatchKickoffAt) return "";
+  const kickoff = new Date(firstMatchKickoffAt);
+  if (Number.isNaN(kickoff.getTime())) return "";
+  const max = new Date(kickoff.getTime() - 60_000);
+  const maxLocal = toDatetimeLocalValue(max.toISOString());
+  if (minLocal && maxLocal <= minLocal) return "";
+  return maxLocal;
+}
+
+/** Client-side draft schedule rules; returns an error message or null. */
+export function validateDraftScheduledLocal(
+  scheduledLocal: string,
+  firstMatchKickoffAt?: string | null,
+  now = new Date(),
+): string | null {
+  const iso = fromDatetimeLocalValue(scheduledLocal);
+  if (!iso) return null;
+  const when = new Date(iso);
+  if (Number.isNaN(when.getTime())) return "Draft start is not a valid date and time.";
+  if (when.getTime() <= now.getTime()) {
+    return "Draft start must be in the future.";
+  }
+  if (firstMatchKickoffAt) {
+    const kickoff = new Date(firstMatchKickoffAt);
+    if (!Number.isNaN(kickoff.getTime()) && when.getTime() >= kickoff.getTime()) {
+      return "Draft start must be before the first match of the competition.";
+    }
+  }
+  return null;
+}
+
 export function DraftTimingFields({
   scheduledLocal,
   onScheduledLocalChange,
@@ -34,6 +80,8 @@ export function DraftTimingFields({
   timerDisabled = false,
   className,
   hint,
+  firstMatchKickoffAt,
+  scheduleError,
 }: {
   scheduledLocal: string;
   onScheduledLocalChange: (value: string) => void;
@@ -44,9 +92,17 @@ export function DraftTimingFields({
   className?: string;
   /** Override the default timing help line. */
   hint?: string;
+  /** ISO kickoff of the earliest competition match; caps the schedule. */
+  firstMatchKickoffAt?: string | null;
+  /** Inline validation message for the schedule field. */
+  scheduleError?: string | null;
 }) {
   const timerNum = Number(pickTimerSeconds);
   const hasTimer = Number.isFinite(timerNum) && timerNum > 0;
+  const minLocal = scheduleDisabled ? undefined : datetimeLocalMinNow();
+  const maxLocal = scheduleDisabled
+    ? undefined
+    : datetimeLocalMaxBeforeKickoff(firstMatchKickoffAt, minLocal);
 
   return (
     <div className={cn("flex min-w-0 max-w-full flex-col gap-3 sm:col-span-2", className)}>
@@ -60,7 +116,11 @@ export function DraftTimingFields({
             Draft start
             <FieldHelp label="Draft start">
               When the draft should auto-open. It still waits until the roster is full, draft order
-              is set, and clubs are loaded. Leave blank to open manually from the Draft page.
+              is set, and clubs are loaded. Must be in the future
+              {firstMatchKickoffAt
+                ? " and before the first match of the competition"
+                : ""}
+              . Leave blank to open manually from the Draft page.
             </FieldHelp>
           </LabelRow>
           <Input
@@ -68,6 +128,8 @@ export function DraftTimingFields({
             className="min-w-0 max-w-full"
             value={scheduledLocal}
             disabled={scheduleDisabled}
+            min={minLocal}
+            max={maxLocal || undefined}
             onChange={(e) => onScheduledLocalChange(e.target.value)}
           />
           <Muted className="mt-1 text-xs">
@@ -76,7 +138,13 @@ export function DraftTimingFields({
               .formatToParts(new Date())
               .find((p) => p.type === "timeZoneName")?.value ?? "local"}
             ).
+            {firstMatchKickoffAt
+              ? " Must be before the first competition match."
+              : ""}
           </Muted>
+          {scheduleError ? (
+            <Muted className="mt-1 text-xs font-semibold text-danger">{scheduleError}</Muted>
+          ) : null}
           {!scheduleDisabled && scheduledLocal ? (
             <button
               type="button"

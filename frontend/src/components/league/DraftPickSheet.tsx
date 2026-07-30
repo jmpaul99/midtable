@@ -195,6 +195,7 @@ export function DraftPickSheet({
         <div
           id={panelId}
           hidden={!open}
+          data-draft-pick-sheet-scroll
           className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-inherit px-3 pb-3"
         >
           {children}

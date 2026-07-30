@@ -19,6 +19,7 @@ from app.models import (
     League,
     LeagueMember,
     PoolTeam,
+    RankingList,
     RosterEntry,
     StandingsSnapshotRow,
     Team,
@@ -235,12 +236,11 @@ def _available_candidates(
     member: LeagueMember,
     pools: list[TeamPool],
 ) -> list[tuple[Team, TeamPool]]:
-    drafted_ids = {
-        e.team_id
-        for e in db.scalars(
+    drafted_ids = set(
+        db.scalars(
             select(RosterEntry.team_id).where(RosterEntry.league_id == league.id)
         ).all()
-    }
+    )
     fills = _roster_fill_counts(db, league_id=league.id)
     open_pools = [
         pool

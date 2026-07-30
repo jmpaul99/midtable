@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, errorMessage, json } from "@/lib/api";
 import { Button } from "@/components/ui/Button";
 import { Card, Muted, Stack } from "@/components/ui/Card";
@@ -52,6 +52,10 @@ export function CompetitionTiersEditor({
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [loadError, setLoadError] = useState("");
+  const onErrorRef = useRef(onError);
+  onErrorRef.current = onError;
+  const onSavedRef = useRef(onSaved);
+  onSavedRef.current = onSaved;
 
   const load = useCallback(() => {
     setLoading(true);
@@ -68,10 +72,10 @@ export function CompetitionTiersEditor({
       .catch((err) => {
         const msg = errorMessage(err);
         setLoadError(msg);
-        onError?.(msg);
+        onErrorRef.current?.(msg);
       })
       .finally(() => setLoading(false));
-  }, [onError]);
+  }, []);
 
   useEffect(() => {
     load();
@@ -100,9 +104,9 @@ export function CompetitionTiersEditor({
           updated.map((row) => [row.code, tierToSelectValue(row.domestic_tier)]),
         ),
       );
-      onSaved?.();
+      onSavedRef.current?.();
     } catch (err) {
-      onError?.(errorMessage(err));
+      onErrorRef.current?.(errorMessage(err));
     } finally {
       setSaving(false);
     }

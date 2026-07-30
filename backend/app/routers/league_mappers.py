@@ -19,6 +19,7 @@ from app.schemas.leagues import (
     PhaseResponse,
     PoolResponse,
 )
+from app.services.draft_schedule import earliest_kickoff_for_league
 from app.services.members import member_label
 from app.services.phases import phase_match_filter_fields
 from app.services.preassign import effective_preassign_count
@@ -138,6 +139,7 @@ def _league_detail(
         profile = db.get(Profile, member.profile_id)
         member_rows.append(_member_response(member, profile))
     max_members = _max_members(league)
+    first_match_kickoff_at = earliest_kickoff_for_league(db, league)
     return LeagueDetailResponse(
         id=league.public_id,
         name=league.name,
@@ -197,6 +199,7 @@ def _league_detail(
         ],
         phases=_phases(league),
         bonus_type_keys=[b.key for b in bonuses],
+        first_match_kickoff_at=first_match_kickoff_at,
         provider_params={
             p.key: {
                 "provider": p.provider,

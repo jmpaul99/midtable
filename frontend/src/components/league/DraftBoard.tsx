@@ -71,9 +71,12 @@ export function DraftBoard({
   const draftInflightRef = useRef(false);
   const draftQueuedRef = useRef(false);
   const draftQueuedForceTeamsRef = useRef(false);
+  const teamsRef = useRef<DraftableTeam[]>([]);
+  const sheetPickActionsRef = useRef<HTMLDivElement>(null);
   leagueStatusRef.current = league.status;
   onLeagueChangeRef.current = onLeagueChange;
   poolsRef.current = league.pools;
+  teamsRef.current = teams;
 
   const multiPool = league.pools.length > 1;
   const { subscribeDraftInvalidate } = useLeagueContext();
@@ -159,9 +162,9 @@ export function DraftBoard({
       if (draft.league_status && draft.league_status !== leagueStatusRef.current) {
         onLeagueChangeRef.current?.();
       }
-      // Full pool refetch only on first load / explicit refresh. Pick updates just
-      // flip availability from the draft payload (draft_order is stable).
-      if (opts?.forceTeams === true) {
+      // Live-sync often arrives before / cancels the board's initial forceTeams
+      // fetch — always load pools when we have no local list yet.
+      if (opts?.forceTeams === true || teamsRef.current.length === 0) {
         refreshTeams();
       } else if (picksChanged) {
         applyPicksToTeams(draft);
@@ -231,11 +234,13 @@ export function DraftBoard({
   useEffect(() => {
     return subscribeDraftInvalidate((draft) => {
       // Drop any in-flight board fetch so it cannot overwrite this newer payload.
+      const forceTeams =
+        draftQueuedForceTeamsRef.current || teamsRef.current.length === 0;
       draftReqIdRef.current += 1;
       draftInflightRef.current = false;
       draftQueuedRef.current = false;
       draftQueuedForceTeamsRef.current = false;
-      applyDraft(draft);
+      applyDraft(draft, { forceTeams });
     });
   }, [subscribeDraftInvalidate, applyDraft]);
 
@@ -262,6 +267,20 @@ export function DraftBoard({
   const canOpenDraft = readiness?.ready === true;
   const showOpenControls =
     commissioner && state && ["pending", "paused", "cancelled"].includes(state.status);
+
+  // Mobile pick sheet: after selecting a team, scroll to the selection + draft button.
+  useEffect(() => {
+    if (!team) return;
+    const el = sheetPickActionsRef.current;
+    if (!el) return;
+    const id = window.requestAnimationFrame(() => {
+      const scroller = el.closest("[data-draft-pick-sheet-scroll]");
+      if (scroller instanceof HTMLElement) {
+        scroller.scrollTo({ top: scroller.scrollHeight, behavior: "smooth" });
+      }
+    });
+    return () => cancelAnimationFrame(id);
+  }, [team, teamPoolId]);
 
   useEffect(() => {
     if (!showOpenControls) {
@@ -481,31 +500,36 @@ export function DraftBoard({
         {myTurn ? (
           <form className="flex flex-col gap-3" onSubmit={pick}>
             {list}
-            {selected && (
-              <div className="flex items-center gap-3 rounded-xl border border-brand/40 bg-brand/5 p-3">
-                <TeamCrest
-                  name={selected.name}
-                  crestUrl={selected.crest_url}
-                  size="lg"
-                />
-                <div className="min-w-0">
-                  <Muted className="text-xs">Selected</Muted>
-                  <strong className="flex min-w-0 items-baseline gap-1.5">
-                    <span className="truncate">{selected.name}</span>
-                    {multiPool && selected.pool_label ? (
-                      <Muted className="shrink-0 truncate text-xs font-normal">
-                        · {selected.pool_label}
-                      </Muted>
-                    ) : null}
-                  </strong>
+            <div
+              ref={variant === "sheet" ? sheetPickActionsRef : undefined}
+              className="flex flex-col gap-3"
+            >
+              {selected && (
+                <div className="flex items-center gap-3 rounded-xl border border-brand/40 bg-brand/5 p-3">
+                  <TeamCrest
+                    name={selected.name}
+                    crestUrl={selected.crest_url}
+                    size="lg"
+                  />
+                  <div className="min-w-0">
+                    <Muted className="text-xs">Selected</Muted>
+                    <strong className="flex min-w-0 items-baseline gap-1.5">
+                      <span className="truncate">{selected.name}</span>
+                      {multiPool && selected.pool_label ? (
+                        <Muted className="shrink-0 truncate text-xs font-normal">
+                          · {selected.pool_label}
+                        </Muted>
+                      ) : null}
+                    </strong>
+                  </div>
                 </div>
+              )}
+              <div className="flex justify-start">
+                <Button type="submit" variant="primary" disabled={!team || busy}>
+                  {busy ? <SpinnerIcon className="size-5" /> : <CheckIcon />}
+                  Draft team
+                </Button>
               </div>
-            )}
-            <div className="flex justify-start">
-              <Button type="submit" variant="primary" disabled={!team || busy}>
-                {busy ? <SpinnerIcon className="size-5" /> : <CheckIcon />}
-                Draft team
-              </Button>
             </div>
           </form>
         ) : (

@@ -21,6 +21,7 @@ import {
   DraftTimingFields,
   fromDatetimeLocalValue,
   parsePickTimerSeconds,
+  validateDraftScheduledLocal,
 } from "@/components/settings/DraftTimingFields";
 import { humanizeKey } from "@/components/settings/types";
 
@@ -33,6 +34,7 @@ type TemplatePool = {
 };
 
 type GateResponse = { blockers: Array<Record<string, Json>> };
+type EarliestKickoffResponse = { kickoff_at: string | null };
 
 function poolsFromTemplate(template: CompetitionTemplate | null): TemplatePool[] {
   const raw = (template?.pool_definitions || []) as Json[];
@@ -69,6 +71,7 @@ export function CreateLeagueForm({
   const [maxMembers, setMaxMembers] = useState("");
   const [draftScheduledLocal, setDraftScheduledLocal] = useState("");
   const [pickTimerSeconds, setPickTimerSeconds] = useState("");
+  const [firstMatchKickoffAt, setFirstMatchKickoffAt] = useState<string | null>(null);
   const [poolParams, setPoolParams] = useState<
     Record<string, { competition_code: string; season_year: string }>
   >({});
@@ -115,8 +118,50 @@ export function CreateLeagueForm({
       .catch((e) => setGatesError(errorMessage(e)));
   }, [isPremierLeague]);
 
+  useEffect(() => {
+    if (!templatePools.length) {
+      setFirstMatchKickoffAt(null);
+      return;
+    }
+    const competitions = templatePools
+      .map((p) => {
+        const code = (poolParams[p.key]?.competition_code || p.competition_code || "").trim();
+        const seasonYear = Number(
+          poolParams[p.key]?.season_year || p.season_year || defaultFootballSeasonYear(),
+        );
+        if (!code || !Number.isFinite(seasonYear)) return null;
+        return {
+          provider: p.provider || "football-data.org",
+          competition_code: code,
+          season_year: seasonYear,
+        };
+      })
+      .filter((item): item is NonNullable<typeof item> => item != null);
+    if (!competitions.length) {
+      setFirstMatchKickoffAt(null);
+      return;
+    }
+    let cancelled = false;
+    api<EarliestKickoffResponse>(
+      "/competitions/earliest-kickoff",
+      json("POST", { competitions }),
+    )
+      .then((res) => {
+        if (!cancelled) setFirstMatchKickoffAt(res.kickoff_at);
+      })
+      .catch(() => {
+        if (!cancelled) setFirstMatchKickoffAt(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [templatePools, poolParams]);
+
   const blockers = gates?.blockers || [];
   const plBlocked = isPremierLeague && blockers.length > 0;
+  const scheduleError = draftScheduledLocal.trim()
+    ? validateDraftScheduledLocal(draftScheduledLocal, firstMatchKickoffAt)
+    : null;
 
   function goNext() {
     if (!name.trim() || !seasonLabel.trim() || !maxMembers) {
@@ -140,6 +185,16 @@ export function CreateLeagueForm({
     if (!hasCompetitions) {
       setError("This template needs at least one competition before you can create a league.");
       return;
+    }
+    if (draftScheduledLocal.trim()) {
+      const scheduleErr = validateDraftScheduledLocal(
+        draftScheduledLocal,
+        firstMatchKickoffAt,
+      );
+      if (scheduleErr) {
+        setError(scheduleErr);
+        return;
+      }
     }
     setCreating(true);
     setError("");
@@ -315,6 +370,8 @@ export function CreateLeagueForm({
                 onScheduledLocalChange={setDraftScheduledLocal}
                 pickTimerSeconds={pickTimerSeconds}
                 onPickTimerSecondsChange={setPickTimerSeconds}
+                firstMatchKickoffAt={firstMatchKickoffAt}
+                scheduleError={scheduleError}
               />
 
               {isPremierLeague && (

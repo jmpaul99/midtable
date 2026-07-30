@@ -46,6 +46,8 @@ export function DraftOrderSection({
   onScheduledLocalChange,
   onPickTimerSecondsChange,
   onSave,
+  firstMatchKickoffAt,
+  scheduleError,
 }: {
   league: League;
   draftOrder: UUID[];
@@ -69,6 +71,8 @@ export function DraftOrderSection({
   onScheduledLocalChange: (value: string) => void;
   onPickTimerSecondsChange: (value: string) => void;
   onSave: () => void;
+  firstMatchKickoffAt?: string | null;
+  scheduleError?: string | null;
 }) {
   const multiPool = league.pools.length > 1;
   const showPreassignTools = preassignMode !== "off";
@@ -132,6 +136,8 @@ export function DraftOrderSection({
           onPickTimerSecondsChange={onPickTimerSecondsChange}
           scheduleDisabled={!scheduleEditable || settingsBusy}
           timerDisabled={!timerEditable || settingsBusy}
+          firstMatchKickoffAt={firstMatchKickoffAt}
+          scheduleError={scheduleError}
           hint="Schedule auto-open and the pick clock. Schedule can only be changed before the draft opens."
         />
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, errorMessage, json } from "@/lib/api";
 import type { UUID } from "@/lib/types";
 import { IconButton } from "@/components/ui/IconButton";
@@ -86,6 +86,8 @@ export function PlatformAdminRematch({
   );
   const [busyRank, setBusyRank] = useState<number | null>(null);
   const [busyTeamId, setBusyTeamId] = useState<string | null>(null);
+  const onErrorRef = useRef(onError);
+  onErrorRef.current = onError;
 
   useEffect(() => {
     api<CatalogOption[]>("/ranking-catalogs")
@@ -95,8 +97,8 @@ export function PlatformAdminRematch({
         const preferred = system.find((c) => c.key === preferredKey) || system[0];
         if (preferred) setCatalogId(preferred.id);
       })
-      .catch((e) => onError(errorMessage(e)));
-  }, [preferredKey, onError]);
+      .catch((e) => onErrorRef.current(errorMessage(e)));
+  }, [preferredKey]);
 
   useEffect(() => {
     const q = teamQuery.trim();
@@ -142,8 +144,8 @@ export function PlatformAdminRematch({
           ),
         );
       })
-      .catch((e) => onError(errorMessage(e)));
-  }, [catalogId, leagueId, onError]);
+      .catch((e) => onErrorRef.current(errorMessage(e)));
+  }, [catalogId, leagueId]);
 
   useEffect(() => {
     loadData();

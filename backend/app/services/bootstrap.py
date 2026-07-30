@@ -22,6 +22,7 @@ from app.models import (
 )
 from app.providers.base import FootballProvider
 from app.services.competitions import should_apply_team_kind, team_kind_for_competition
+from app.services.draft_schedule import validate_draft_scheduled_at
 from app.services.errors import (
     ConflictError,
     DomainError,
@@ -191,6 +192,20 @@ def bootstrap_season(
                 elif kind is not None and should_apply_team_kind(team.team_kind, kind):
                     team.team_kind = kind
                 db.add(PoolTeam(pool_id=pool.id, team_id=team.id))
+
+    validate_draft_scheduled_at(
+        db,
+        draft_scheduled_at,
+        competition_keys=[
+            (
+                str(p.get("provider", "football-data.org")),
+                str(p["competition_code"]),
+                int(p["season_year"]),
+            )
+            for p in pool_provider_params
+            if p.get("competition_code") and p.get("season_year") is not None
+        ],
+    )
 
     for index, bonus in enumerate(template.bonus_types or []):
         db.add(
@@ -434,6 +449,7 @@ def bootstrap_teams_for_league(
                 exc_info=True,
             )
     db.flush()
+    validate_draft_scheduled_at(db, league.draft_scheduled_at, league=league)
     summary = {
         "created_teams": created_teams,
         "linked": linked,

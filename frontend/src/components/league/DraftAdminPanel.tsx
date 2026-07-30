@@ -14,6 +14,7 @@ import {
   fromDatetimeLocalValue,
   parsePickTimerSeconds,
   toDatetimeLocalValue,
+  validateDraftScheduledLocal,
 } from "@/components/settings/DraftTimingFields";
 
 type DraftStyle = "linear" | "snake";
@@ -262,6 +263,21 @@ export function DraftAdminPanel({
         return;
       }
     }
+    if (scheduleEditable && scheduledLocal.trim()) {
+      const scheduleErr = validateDraftScheduledLocal(
+        scheduledLocal,
+        league.first_match_kickoff_at,
+      );
+      if (scheduleErr) {
+        toast({
+          message: scheduleErr,
+          tone: "error",
+          durationMs: 6000,
+          dismissible: true,
+        });
+        return;
+      }
+    }
 
     setSettingsBusy(true);
     let timingSaved = false;
@@ -389,6 +405,12 @@ export function DraftAdminPanel({
           onScheduledLocalChange={setScheduledLocal}
           onPickTimerSecondsChange={setPickTimerSeconds}
           onSave={() => void saveDraftSettings()}
+          firstMatchKickoffAt={league.first_match_kickoff_at}
+          scheduleError={
+            scheduleEditable && scheduledLocal.trim()
+              ? validateDraftScheduledLocal(scheduledLocal, league.first_match_kickoff_at)
+              : null
+          }
         />
         <RosterCorrectionsSection
           league={league}

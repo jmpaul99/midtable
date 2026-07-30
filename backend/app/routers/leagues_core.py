@@ -37,11 +37,13 @@ from app.schemas.leagues import (
     MemberSelfUpdate,
 )
 from app.services.bootstrap import attach_template_structure
+from app.services.draft_schedule import validate_draft_scheduled_at
 from app.services.members import (
     default_team_name,
     is_sole_commissioner,
     renumber_draft_slots,
 )
+from app.services.errors import DomainError
 from app.logging_config import log_id
 from app.services import analytics as analytics_service
 
@@ -180,6 +182,11 @@ def create_league(
         attach_template_structure(db, league=league, template=template)
     else:
         db.add(DraftState(league_id=league.id, current_pick_number=1, status="pending"))
+    try:
+        # Past-date only here — competition keys are finalized by bootstrap-teams.
+        validate_draft_scheduled_at(db, payload.draft_scheduled_at)
+    except DomainError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
     db.commit()
     db.refresh(league)
     db.refresh(member)
@@ -361,6 +368,12 @@ def update_settings(
                 status_code=409,
                 detail="Draft schedule can only be changed before the draft opens.",
             )
+        try:
+            validate_draft_scheduled_at(
+                db, data.get("draft_scheduled_at"), league=league
+            )
+        except DomainError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
     if "pick_timer_seconds" in data and league.status == "complete":
         raise HTTPException(
             status_code=409,
