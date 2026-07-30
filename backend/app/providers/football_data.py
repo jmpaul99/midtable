@@ -283,50 +283,63 @@ class FootballDataProvider:
         payload, rate = self._get(
             f"/competitions/{competition_code}/standings", {"season": season_year}
         )
-        blocks = [
+        all_blocks = [
             block
             for block in (payload.get("standings") or [])
-            if isinstance(block, dict) and str(block.get("type") or "").upper() == "TOTAL"
+            if isinstance(block, dict)
         ]
-        if not blocks:
-            blocks = [
-                block
-                for block in (payload.get("standings") or [])
-                if isinstance(block, dict)
-            ]
-        chosen = blocks[0] if blocks else {}
-        # Prefer overall / null-group TOTAL table when multiple TOTAL blocks exist.
-        for block in blocks:
-            if block.get("group") in (None, ""):
-                chosen = block
-                break
+        total_blocks = [
+            block
+            for block in all_blocks
+            if str(block.get("type") or "").upper() == "TOTAL"
+        ]
+        overall = [
+            block for block in total_blocks if block.get("group") in (None, "")
+        ]
+        if overall:
+            # Domestic leagues: single overall TOTAL table.
+            table_blocks = [overall[0]]
+        elif total_blocks:
+            # Multi-group cups: merge every TOTAL group table.
+            table_blocks = total_blocks
+        else:
+            # No TOTAL blocks: merge remaining blocks so group-only payloads
+            # still include every team rather than the first block alone.
+            table_blocks = all_blocks
+
         rows: list[ProviderStandingRow] = []
-        for item in chosen.get("table") or []:
-            if not isinstance(item, dict):
-                continue
-            team = item.get("team") or {}
-            team_id = team.get("id")
-            if team_id is None:
-                continue
-            played = int(item.get("playedGames") or 0)
-            goals_for = int(item.get("goalsFor") or 0)
-            goals_against = int(item.get("goalsAgainst") or 0)
-            gd = item.get("goalDifference")
-            if gd is None:
-                gd = goals_for - goals_against
-            rows.append(
-                ProviderStandingRow(
-                    external_team_id=str(team_id),
-                    position=int(item.get("position") or 0),
-                    played=played,
-                    points=int(item.get("points") or 0),
-                    goals_for=goals_for,
-                    goals_against=goals_against,
-                    goal_difference=int(gd),
-                    team_name=team.get("name"),
+        seen_team_ids: set[str] = set()
+        for chosen in table_blocks:
+            for item in chosen.get("table") or []:
+                if not isinstance(item, dict):
+                    continue
+                team = item.get("team") or {}
+                team_id = team.get("id")
+                if team_id is None:
+                    continue
+                external_id = str(team_id)
+                if external_id in seen_team_ids:
+                    continue
+                seen_team_ids.add(external_id)
+                played = int(item.get("playedGames") or 0)
+                goals_for = int(item.get("goalsFor") or 0)
+                goals_against = int(item.get("goalsAgainst") or 0)
+                gd = item.get("goalDifference")
+                if gd is None:
+                    gd = goals_for - goals_against
+                rows.append(
+                    ProviderStandingRow(
+                        external_team_id=external_id,
+                        position=int(item.get("position") or 0),
+                        played=played,
+                        points=int(item.get("points") or 0),
+                        goals_for=goals_for,
+                        goals_against=goals_against,
+                        goal_difference=int(gd),
+                        team_name=team.get("name"),
+                    )
                 )
-            )
-        rows.sort(key=lambda r: r.position)
+        rows.sort(key=lambda r: (r.position, r.external_team_id))
         return rows, rate
 
     @staticmethod

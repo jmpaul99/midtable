@@ -71,12 +71,18 @@ def bonus_award_row(
     teams: dict[int, Team],
     matches: dict[int, Match],
     competition_type: str | None = None,
+    competition_type_by_code: dict[str, str | None] | None = None,
 ) -> BonusAwardRow:
     bt = bonus_types.get(bonus.bonus_type_id)
     key = bt.key if bt else "bonus"
     label = (bt.label or bt.key) if bt else "bonus"
     team = teams.get(bonus.team_id) if bonus.team_id is not None else None
     match = matches.get(bonus.match_id) if bonus.match_id is not None else None
+    ctype = competition_type
+    if match is not None and competition_type_by_code:
+        code = getattr(match, "competition_code", None)
+        if code:
+            ctype = competition_type_by_code.get(str(code).upper(), competition_type)
     return BonusAwardRow(
         id=bonus.public_id,
         target=bonus_target(bonus),
@@ -84,7 +90,7 @@ def bonus_award_row(
         team_name=team.name if team else None,
         crest_url=team.crest_url if team else None,
         match_id=match.public_id if match else None,
-        match_label=match_label(match, teams, competition_type=competition_type) if match else None,
+        match_label=match_label(match, teams, competition_type=ctype) if match else None,
         scheduled_matchweek=match.scheduled_matchweek if match else None,
         bonus_type=key,
         bonus_type_label=label,
@@ -109,6 +115,7 @@ def accumulate_bonus_awards(
     matches: dict[int, Match],
     points_by_team: dict[int, float] | None = None,
     competition_type: str | None = None,
+    competition_type_by_code: dict[str, str | None] | None = None,
 ) -> BonusAccumulation:
     """Fold bonuses into totals, by-type map, award rows; optionally mutate points_by_team."""
     acc = BonusAccumulation()
@@ -127,6 +134,7 @@ def accumulate_bonus_awards(
                 teams=teams,
                 matches=matches,
                 competition_type=competition_type,
+                competition_type_by_code=competition_type_by_code,
             )
         )
     return acc

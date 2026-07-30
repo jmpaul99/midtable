@@ -925,7 +925,13 @@ def member_detail(
     bonus_types, bonus_teams, bonus_matches = load_bonus_context(
         db, league.id, bonuses, known_teams=teams
     )
-    competition_type = scoring_competition_type(list(pools.values()))
+    pool_list = list(pools.values())
+    competition_type = scoring_competition_type(pool_list)
+    competition_type_by_code = {
+        str(p.competition_code).upper(): getattr(p, "competition_type", None)
+        for p in pool_list
+        if getattr(p, "competition_code", None)
+    }
     acc = accumulate_bonus_awards(
         bonuses,
         bonus_types=bonus_types,
@@ -933,6 +939,7 @@ def member_detail(
         matches=bonus_matches,
         points_by_team=points_by_team,
         competition_type=competition_type,
+        competition_type_by_code=competition_type_by_code,
     )
     bonus_points = acc.bonus_points
     bonus_by_type = acc.bonus_by_type
@@ -1161,12 +1168,21 @@ def team_detail(
     bonus_types, bonus_teams, bonus_matches = load_bonus_context(
         db, league.id, bonuses, known_teams={team.id: team}
     )
+    league_pools = list(
+        db.scalars(select(TeamPool).where(TeamPool.league_id == league.id)).all()
+    )
+    competition_type_by_code = {
+        str(p.competition_code).upper(): getattr(p, "competition_type", None)
+        for p in league_pools
+        if getattr(p, "competition_code", None)
+    }
     acc = accumulate_bonus_awards(
         bonuses,
         bonus_types=bonus_types,
         teams=bonus_teams,
         matches=bonus_matches,
         competition_type=competition_type,
+        competition_type_by_code=competition_type_by_code,
     )
     bonus_points = acc.bonus_points
     bonus_by_type = acc.bonus_by_type

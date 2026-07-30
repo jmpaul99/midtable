@@ -97,6 +97,54 @@ def test_events_use_period_labels_for_their_match_competition_type():
     ]
 
 
+def test_same_type_pools_keep_separate_period_catalogs():
+    pools = [
+        SimpleNamespace(
+            id=1,
+            sort_order=1,
+            scores_match_results=True,
+            competition_code="FAC",
+            competition_type="CUP",
+        ),
+        SimpleNamespace(
+            id=2,
+            sort_order=2,
+            scores_match_results=True,
+            competition_code="ELC",
+            competition_type="CUP",
+        ),
+    ]
+    matches = {
+        10: SimpleNamespace(id=10, competition_code="FAC"),
+        20: SimpleNamespace(id=20, competition_code="ELC"),
+    }
+    events = [
+        SimpleNamespace(match_id=10, stage="LAST_16", scheduled_matchweek=1),
+        SimpleNamespace(match_id=10, stage="QUARTER_FINALS", scheduled_matchweek=1),
+        SimpleNamespace(match_id=20, stage="GROUP_STAGE", scheduled_matchweek=1),
+        SimpleNamespace(match_id=20, stage="GROUP_STAGE", scheduled_matchweek=2),
+        SimpleNamespace(match_id=20, stage="GROUP_STAGE", scheduled_matchweek=3),
+    ]
+
+    grouped = events_by_competition_type(events, matches, pools)
+    assert [ctype for ctype, _ in grouped] == ["CUP", "CUP"]
+    assert [len(evs) for _, evs in grouped] == [2, 3]
+
+    catalogs = [
+        build_period_catalog(
+            [(event.stage, event.scheduled_matchweek) for event in grouped_events],
+            competition_type=competition_type,
+        )
+        for competition_type, grouped_events in grouped
+    ]
+    assert [p.key for p in catalogs[0]] == ["QUARTER_FINALS", "LAST_16"]
+    assert [p.key for p in catalogs[1]] == [
+        "GROUP_STAGE:1",
+        "GROUP_STAGE:2",
+        "GROUP_STAGE:3",
+    ]
+
+
 def test_wc_style_catalog_expands_group_collapses_knockout():
     items = [
         ("GROUP_STAGE", 1),

@@ -113,6 +113,107 @@ def test_list_standings_prefers_total_null_group():
     assert rows[0].position == 1
 
 
+def test_list_standings_merges_multi_group_total_blocks():
+    provider = FootballDataProvider(api_token="test", client=MagicMock())
+    payload = {
+        "standings": [
+            {
+                "type": "TOTAL",
+                "group": "GROUP_A",
+                "table": [
+                    {
+                        "position": 1,
+                        "team": {"id": 1, "name": "A1"},
+                        "playedGames": 6,
+                        "points": 12,
+                        "goalsFor": 10,
+                        "goalsAgainst": 4,
+                        "goalDifference": 6,
+                    },
+                    {
+                        "position": 2,
+                        "team": {"id": 2, "name": "A2"},
+                        "playedGames": 6,
+                        "points": 9,
+                        "goalsFor": 8,
+                        "goalsAgainst": 5,
+                        "goalDifference": 3,
+                    },
+                ],
+            },
+            {
+                "type": "TOTAL",
+                "group": "GROUP_B",
+                "table": [
+                    {
+                        "position": 1,
+                        "team": {"id": 3, "name": "B1"},
+                        "playedGames": 6,
+                        "points": 15,
+                        "goalsFor": 12,
+                        "goalsAgainst": 3,
+                        "goalDifference": 9,
+                    },
+                    {
+                        "position": 2,
+                        "team": {"id": 4, "name": "B2"},
+                        "playedGames": 6,
+                        "points": 7,
+                        "goalsFor": 5,
+                        "goalsAgainst": 6,
+                        "goalDifference": -1,
+                    },
+                ],
+            },
+        ]
+    }
+    provider._get = MagicMock(return_value=(payload, RateLimitInfo()))  # type: ignore[method-assign]
+    rows, _ = provider.list_standings("CL", 2024)
+    assert [r.external_team_id for r in rows] == ["1", "3", "2", "4"]
+    assert {r.external_team_id for r in rows} == {"1", "2", "3", "4"}
+
+
+def test_list_standings_merges_non_total_blocks_when_total_missing():
+    provider = FootballDataProvider(api_token="test", client=MagicMock())
+    payload = {
+        "standings": [
+            {
+                "type": "HOME",
+                "group": "GROUP_A",
+                "table": [
+                    {
+                        "position": 1,
+                        "team": {"id": 10, "name": "Home A"},
+                        "playedGames": 3,
+                        "points": 9,
+                        "goalsFor": 5,
+                        "goalsAgainst": 1,
+                        "goalDifference": 4,
+                    }
+                ],
+            },
+            {
+                "type": "HOME",
+                "group": "GROUP_B",
+                "table": [
+                    {
+                        "position": 1,
+                        "team": {"id": 20, "name": "Home B"},
+                        "playedGames": 3,
+                        "points": 6,
+                        "goalsFor": 4,
+                        "goalsAgainst": 2,
+                        "goalDifference": 2,
+                    }
+                ],
+            },
+        ]
+    }
+    provider._get = MagicMock(return_value=(payload, RateLimitInfo()))  # type: ignore[method-assign]
+    rows, _ = provider.list_standings("FAC", 2024)
+    assert [r.external_team_id for r in rows] == ["10", "20"]
+
+
 def test_ensure_baselines_skips_previous_standings_when_cached():
     db = MagicMock()
     existing = SimpleNamespace(

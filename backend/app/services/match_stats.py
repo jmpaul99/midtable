@@ -499,13 +499,13 @@ def member_highlights(
         t.id: t for t in db.scalars(select(Team).where(Team.id.in_(all_team_ids))).all()
     } if all_team_ids else {}
 
-    period_defs: dict[tuple[str | None, str], Any] = {}
-    period_points: dict[tuple[str | None, str], float] = defaultdict(float)
+    period_defs: dict[tuple[int, str], Any] = {}
+    period_points: dict[tuple[int, str], float] = defaultdict(float)
     team_points: dict[int, float] = defaultdict(float)
     biggest_upset: dict[str, Any] | None = None
     upset_types = upset_types_for_league(league)
-    for event_competition_type, grouped_events in events_by_competition_type(
-        events, matches_by_id, pools
+    for group_i, (event_competition_type, grouped_events) in enumerate(
+        events_by_competition_type(events, matches_by_id, pools)
     ):
         catalog = build_period_catalog(
             [(e.stage, e.scheduled_matchweek) for e in grouped_events],
@@ -514,7 +514,7 @@ def member_highlights(
         expanded = expanded_stages(catalog)
         by_key = {period.key: period for period in catalog}
         for period_key, period in by_key.items():
-            period_defs[(event_competition_type, period_key)] = period
+            period_defs[(group_i, period_key)] = period
         for event in grouped_events:
             pts = float(event.points)
             team_points[event.team_id] += pts
@@ -522,7 +522,7 @@ def member_highlights(
                 event.stage, event.scheduled_matchweek, expanded=expanded
             )
             if period_key is not None and period_key in by_key:
-                period_points[(event_competition_type, period_key)] += pts
+                period_points[(group_i, period_key)] += pts
             if event.event_type in upset_types:
                 meta = event.metadata_ or {}
                 gap = meta.get("gap")
@@ -564,7 +564,7 @@ def member_highlights(
                         biggest_upset = candidate
 
     def period_payload(
-        key: tuple[str | None, str], points: float
+        key: tuple[int, str], points: float
     ) -> dict[str, Any]:
         period = period_defs[key]
         return {
