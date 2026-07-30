@@ -131,6 +131,38 @@ def test_wc_style_catalog_expands_group_collapses_knockout():
     assert resolve_period_key("FINAL", 1, expanded=expanded) == "FINAL"
 
 
+def test_expanded_stage_null_matchweek_keeps_stage_bucket():
+    items = [
+        ("GROUP_STAGE", 1),
+        ("GROUP_STAGE", 2),
+        ("GROUP_STAGE", None),
+        ("FINAL", 1),
+    ]
+    catalog = build_period_catalog(items, competition_type="CUP")
+    keys = [p.key for p in catalog]
+    assert "GROUP_STAGE:1" in keys
+    assert "GROUP_STAGE:2" in keys
+    assert "GROUP_STAGE" in keys
+    assert "FINAL" in keys
+
+    expanded = expanded_stages(catalog)
+    assert resolve_period_key("GROUP_STAGE", None, expanded=expanded) == "GROUP_STAGE"
+    assert resolve_period_key("GROUP_STAGE", 1, expanded=expanded) == "GROUP_STAGE:1"
+
+    events = [
+        SimpleNamespace(stage="GROUP_STAGE", scheduled_matchweek=1, points=3),
+        SimpleNamespace(stage="GROUP_STAGE", scheduled_matchweek=2, points=1),
+        SimpleNamespace(stage="GROUP_STAGE", scheduled_matchweek=None, points=2),
+        SimpleNamespace(stage="FINAL", scheduled_matchweek=1, points=6),
+    ]
+    rows = points_by_period_from_events(events, competition_type="CUP")
+    by_key = {r["period_key"]: r for r in rows}
+    assert by_key["GROUP_STAGE:1"]["points"] == 3.0
+    assert by_key["GROUP_STAGE:2"]["points"] == 1.0
+    assert by_key["GROUP_STAGE"]["points"] == 2.0
+    assert by_key["FINAL"]["points"] == 6.0
+
+
 def test_pl_style_catalog_uses_matchweek_labels():
     items = [("REGULAR_SEASON", n) for n in range(1, 5)]
     catalog = build_period_catalog(items, competition_type="LEAGUE")

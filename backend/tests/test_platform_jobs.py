@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock
 from uuid import uuid4
 
@@ -12,6 +12,7 @@ from app.models import PlatformJob
 from app.services.platform_jobs import (
     ActivePlatformJobConflict,
     enqueue_platform_job,
+    fail_stale_running_platform_jobs,
     json_safe_fifa_summary,
     latest_platform_jobs,
     record_cron_platform_result,
@@ -45,8 +46,16 @@ def _job(
 
 def test_enqueue_raises_when_active_job_exists():
     existing = _job(status="running")
+    existing.started_at = datetime.now(UTC)
     db = MagicMock()
-    db.scalars.return_value.first.return_value = existing
+
+    def scalars(_stmt):
+        out = MagicMock()
+        out.all.return_value = []
+        out.first.return_value = existing
+        return out
+
+    db.scalars.side_effect = scalars
 
     with pytest.raises(ActivePlatformJobConflict) as exc:
         enqueue_platform_job(db, kind="teams_and_rankings", created_by_profile_id=9)
@@ -56,7 +65,14 @@ def test_enqueue_raises_when_active_job_exists():
 
 def test_enqueue_creates_pending_job():
     db = MagicMock()
-    db.scalars.return_value.first.return_value = None
+
+    def scalars(_stmt):
+        out = MagicMock()
+        out.all.return_value = []
+        out.first.return_value = None
+        return out
+
+    db.scalars.side_effect = scalars
 
     def refresh(job):
         job.public_id = uuid4()
@@ -77,6 +93,47 @@ def test_enqueue_creates_pending_job():
     assert job.params == {"season_year": 2025}
     db.add.assert_called_once()
     db.commit.assert_called()
+
+
+def test_fail_stale_running_platform_jobs():
+    stale = _job(status="running")
+    stale.started_at = datetime.now(UTC) - timedelta(hours=3)
+    db = MagicMock()
+    db.scalars.return_value.all.return_value = [stale]
+
+    count = fail_stale_running_platform_jobs(db, now=datetime.now(UTC))
+    assert count == 1
+    assert stale.status == "failed"
+    assert "Timed out" in (stale.error or "")
+    assert stale.finished_at is not None
+    db.commit.assert_called()
+
+
+def test_enqueue_reclaims_stale_running_job(monkeypatch):
+    stale = _job(status="running")
+    stale.started_at = datetime.now(UTC) - timedelta(hours=3)
+    db = MagicMock()
+    calls = {"n": 0}
+
+    def scalars(_stmt):
+        out = MagicMock()
+        calls["n"] += 1
+        if calls["n"] == 1:
+            out.all.return_value = [stale]
+            return out
+        out.first.return_value = None
+        out.all.return_value = []
+        return out
+
+    db.scalars.side_effect = scalars
+    db.refresh.side_effect = lambda job: setattr(job, "public_id", uuid4()) or setattr(
+        job, "created_at", datetime.now(UTC)
+    )
+
+    job = enqueue_platform_job(db, kind="teams_and_rankings", created_by_profile_id=1)
+    assert stale.status == "failed"
+    assert job.status == "pending"
+    db.add.assert_called_once()
 
 
 def test_latest_jobs_independent_per_source():

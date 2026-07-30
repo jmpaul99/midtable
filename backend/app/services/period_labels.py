@@ -199,6 +199,7 @@ def build_period_catalog(
     Stages with zero or one distinct matchday collapse to a single stage period.
     """
     by_stage: dict[str, set[int]] = {}
+    null_mw_stages: set[str] = set()
     for raw_stage, mw in items:
         stage = (raw_stage or "").strip()
         if competition_type == "LEAGUE" and not stage:
@@ -206,6 +207,8 @@ def build_period_catalog(
         by_stage.setdefault(stage, set())
         if mw is not None:
             by_stage[stage].add(int(mw))
+        else:
+            null_mw_stages.add(stage)
 
     if not by_stage:
         return []
@@ -231,6 +234,16 @@ def build_period_catalog(
                         stage=stage_or_none,
                         scheduled_matchweek=mw,
                         label=label,
+                    )
+                )
+            # Keep a collapsed stage bucket for null-matchweek events on expanded stages.
+            if stage and stage in null_mw_stages:
+                periods.append(
+                    PeriodDef(
+                        key=stage,
+                        stage=stage_or_none,
+                        scheduled_matchweek=None,
+                        label=match_stage_label(stage),
                     )
                 )
         else:
@@ -279,7 +292,8 @@ def resolve_period_key(
     stage_key = (stage or "").strip()
     if stage_key in expanded:
         if matchweek is None:
-            return None
+            # Expanded stages may still have null-matchweek events; bucket on stage.
+            return stage_key
         return f"{stage_key}:{int(matchweek)}"
     if stage_key:
         return stage_key

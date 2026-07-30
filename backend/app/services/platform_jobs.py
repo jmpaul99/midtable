@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 from uuid import UUID
 
@@ -22,6 +22,8 @@ logger = logging.getLogger(__name__)
 JobKind = Literal["teams_and_rankings", "fifa_rankings"]
 JobSource = Literal["admin", "cron"]
 ACTIVE_STATUSES = ("pending", "running")
+# Teams+FIFA sync can take a while under rate limits; past this, assume the worker died.
+_STALE_RUNNING_AFTER = timedelta(hours=2)
 
 
 class ActivePlatformJobConflict(Exception):
@@ -30,6 +32,39 @@ class ActivePlatformJobConflict(Exception):
     def __init__(self, job: PlatformJob):
         self.job = job
         super().__init__("A platform sync job is already in progress")
+
+
+def fail_stale_running_platform_jobs(
+    db: Session,
+    *,
+    now: datetime | None = None,
+    max_age: timedelta = _STALE_RUNNING_AFTER,
+) -> int:
+    """Mark abandoned ``running`` jobs failed so new syncs can enqueue."""
+    cutoff = (now or datetime.now(UTC)) - max_age
+    stale = list(
+        db.scalars(
+            select(PlatformJob).where(
+                PlatformJob.status == "running",
+                PlatformJob.started_at.is_not(None),
+                PlatformJob.started_at < cutoff,
+            )
+        ).all()
+    )
+    if not stale:
+        return 0
+    finished = now or datetime.now(UTC)
+    for job in stale:
+        job.status = "failed"
+        job.error = "Timed out (worker did not finish)"
+        job.finished_at = finished
+        logger.warning(
+            "platform_job marked stale job_id=%s started_at=%s",
+            job.public_id,
+            job.started_at,
+        )
+    db.commit()
+    return len(stale)
 
 
 def get_platform_job_by_public_id(db: Session, job_id: UUID) -> PlatformJob | None:
@@ -62,6 +97,7 @@ def enqueue_platform_job(
     params: dict[str, Any] | None = None,
 ) -> PlatformJob:
     """Create a pending job. Raises ActivePlatformJobConflict if one is already active."""
+    fail_stale_running_platform_jobs(db)
     existing = db.scalars(
         select(PlatformJob).where(PlatformJob.status.in_(ACTIVE_STATUSES))
     ).first()
@@ -80,6 +116,7 @@ def enqueue_platform_job(
         db.commit()
     except IntegrityError as exc:
         db.rollback()
+        fail_stale_running_platform_jobs(db)
         existing = db.scalars(
             select(PlatformJob).where(PlatformJob.status.in_(ACTIVE_STATUSES))
         ).first()
