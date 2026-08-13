@@ -242,6 +242,14 @@ export interface DraftPick {
   pool_id?: UUID;
 }
 
+export interface DraftPreassign {
+  member_id: UUID;
+  team_id: UUID;
+  pool_id: UUID;
+  team_name?: string | null;
+  crest_url?: string | null;
+}
+
 export interface AutopickPreview {
   mode: "ranking" | "table" | "random";
   team_id?: UUID | null;
@@ -259,6 +267,7 @@ export interface DraftState {
   on_clock_member_id?: UUID | null;
   version: number;
   picks: DraftPick[];
+  preassigns?: DraftPreassign[];
   league_status?: string;
   pick_deadline_at?: string | null;
   pick_timer_seconds?: number | null;

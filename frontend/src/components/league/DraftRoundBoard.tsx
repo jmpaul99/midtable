@@ -1,13 +1,19 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { AutopickPreview, DraftPick, League, Manager } from "@/lib/types";
+import type {
+  AutopickPreview,
+  DraftPick,
+  DraftPreassign,
+  League,
+  Manager,
+} from "@/lib/types";
 import { managerLabel } from "@/lib/types";
 import {
   buildBoardCells,
   cellKey,
+  draftRoundsAfterPreassigns,
   orderedDraftMembers,
-  totalRounds as rosterTotalRounds,
 } from "@/lib/draftBoard";
 import { cn } from "@/lib/cn";
 import { formatCountdownDuration } from "@/lib/format";
@@ -36,6 +42,7 @@ const YOUR_COL_EDGE_BOTTOM =
 export function DraftRoundBoard({
   league,
   picks,
+  preassigns = [],
   currentPickNumber,
   currentRound,
   onClockMemberId,
@@ -46,6 +53,7 @@ export function DraftRoundBoard({
 }: {
   league: League;
   picks: DraftPick[];
+  preassigns?: DraftPreassign[];
   currentPickNumber: number;
   currentRound: number;
   onClockMemberId?: string | null;
@@ -56,7 +64,22 @@ export function DraftRoundBoard({
 }) {
   const yourMemberId = league.current_member_id;
   const ordered = useMemo(() => orderedDraftMembers(league), [league]);
-  const rosterRounds = useMemo(() => rosterTotalRounds(league.pools), [league.pools]);
+  const rosterRounds = useMemo(
+    () => draftRoundsAfterPreassigns(league.pools, ordered, preassigns),
+    [league.pools, ordered, preassigns],
+  );
+  const preassignsByMember = useMemo(() => {
+    const map = new Map<string, DraftPreassign[]>();
+    for (const row of preassigns) {
+      const id = String(row.member_id || "");
+      if (!id) continue;
+      const list = map.get(id) || [];
+      list.push(row);
+      map.set(id, list);
+    }
+    return map;
+  }, [preassigns]);
+  const showPreassignRow = preassigns.length > 0;
   const { rounds, cells, onClockKey } = useMemo(
     () =>
       buildBoardCells({
@@ -208,6 +231,51 @@ export function DraftRoundBoard({
               </tr>
             </thead>
             <tbody>
+              {showPreassignRow ? (
+                <tr>
+                  <th
+                    scope="row"
+                    className={cn(
+                      ROUND_COL,
+                      "border-b border-r border-line bg-surface px-0.5 py-1.5 text-center text-[10px] font-bold uppercase leading-tight tracking-wide text-muted sm:text-xs",
+                    )}
+                  >
+                    Pre
+                  </th>
+                  {ordered.map((m) => {
+                    const isYou = Boolean(yourMemberId && m.id === yourMemberId);
+                    const rows = preassignsByMember.get(m.id) || [];
+                    return (
+                      <td
+                        key={m.id}
+                        className={cn(
+                          "border-b border-line px-1 py-1.5 align-top sm:px-1.5",
+                          isYou ? YOUR_COL_CELL_BG : "bg-surface-2",
+                          isYou && (rounds < 1 ? YOUR_COL_EDGE_BOTTOM : YOUR_COL_EDGE_X),
+                        )}
+                      >
+                        {rows.length ? (
+                          <div className="flex flex-col gap-1">
+                            {rows.map((row) => (
+                              <PreassignCell
+                                key={`${row.pool_id}:${row.team_id}`}
+                                leagueId={league.id}
+                                row={row}
+                                crestByTeamId={crestByTeamId}
+                                yours={isYou}
+                              />
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="flex min-h-[4.75rem] items-center justify-center rounded-md border border-dashed border-line bg-surface px-1 py-1.5 sm:min-h-[5.25rem]">
+                            <span className="sr-only">No preassign</span>
+                          </div>
+                        )}
+                      </td>
+                    );
+                  })}
+                </tr>
+              ) : null}
               {Array.from({ length: rounds }, (_, i) => i + 1).map((round) => (
                 <tr key={round}>
                   <th
@@ -403,6 +471,48 @@ function PickedCell({
       >
         {pick.team_id ? (
           <TeamLink leagueId={leagueId} teamId={pick.team_id}>
+            <span className="line-clamp-2 break-words">{name}</span>
+          </TeamLink>
+        ) : (
+          <span className="line-clamp-2 break-words">{name}</span>
+        )}
+      </span>
+    </div>
+  );
+}
+
+function PreassignCell({
+  leagueId,
+  row,
+  crestByTeamId,
+  yours = false,
+}: {
+  leagueId: string;
+  row: DraftPreassign;
+  crestByTeamId: Map<string, string | null>;
+  yours?: boolean;
+}) {
+  const name = String(row.team_name || row.team_id || "Team");
+  const crest =
+    row.crest_url ?? (row.team_id ? crestByTeamId.get(row.team_id) : null) ?? null;
+  return (
+    <div
+      className={cn(
+        "flex min-h-[4.75rem] min-w-0 flex-col items-center justify-center gap-1 rounded-md border bg-surface px-1.5 py-1.5 sm:min-h-[5.25rem]",
+        yours ? "border-brand/40 shadow-sm" : "border-line/80",
+      )}
+    >
+      <Muted className="text-[9px] font-extrabold uppercase tracking-wide">Pre</Muted>
+      <TeamCrest name={name} crestUrl={crest} size="sm" className="shrink-0 sm:size-9" />
+      <span
+        className={cn(
+          "max-w-full text-center text-[10px] font-bold leading-snug sm:text-xs",
+          yours && "text-brand",
+        )}
+        title={name}
+      >
+        {row.team_id ? (
+          <TeamLink leagueId={leagueId} teamId={row.team_id}>
             <span className="line-clamp-2 break-words">{name}</span>
           </TeamLink>
         ) : (

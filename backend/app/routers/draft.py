@@ -24,6 +24,7 @@ from app.schemas.draft import (
     AutopickPreviewResponse,
     DraftPickRequest,
     DraftPickResponse,
+    DraftPreassignResponse,
     DraftStateResponse,
 )
 from app.schemas.leagues import DraftOrderUpdate, MemberResponse, PreassignRequest, RosterPatchRequest
@@ -83,13 +84,21 @@ def _build_draft_state(db: Session, league: League) -> DraftStateResponse:
         .where(DraftPick.league_id == league.id)
         .order_by(DraftPick.pick_number)
     ).all()
+    preassign_entries = list(
+        db.scalars(
+            select(RosterEntry).where(
+                RosterEntry.league_id == league.id,
+                RosterEntry.source == "preassigned",
+            )
+        ).all()
+    )
     member_by_id = {m.id: m for m in members}
-    team_ids = [p.team_id for p in picks]
+    team_ids = [p.team_id for p in picks] + [e.team_id for e in preassign_entries]
     teams = {
         t.id: t
         for t in db.scalars(select(Team).where(Team.id.in_(team_ids))).all()
     } if team_ids else {}
-    pool_ids = {p.pool_id for p in picks}
+    pool_ids = {p.pool_id for p in picks} | {e.pool_id for e in preassign_entries}
     pools_by_id = {
         p.id: p
         for p in db.scalars(select(TeamPool).where(TeamPool.id.in_(pool_ids))).all()
@@ -104,6 +113,20 @@ def _build_draft_state(db: Session, league: League) -> DraftStateResponse:
                 id=pick.public_id,
                 pick_number=pick.pick_number,
                 round_number=pick.round_number,
+                member_id=member.public_id if member else UUID(int=0),
+                team_id=team.public_id if team else UUID(int=0),
+                pool_id=pool.public_id if pool else UUID(int=0),
+                team_name=team.name if team else None,
+                crest_url=team.crest_url if team else None,
+            )
+        )
+    preassign_rows: list[DraftPreassignResponse] = []
+    for entry in preassign_entries:
+        member = member_by_id.get(entry.member_id)
+        team = teams.get(entry.team_id)
+        pool = pools_by_id.get(entry.pool_id)
+        preassign_rows.append(
+            DraftPreassignResponse(
                 member_id=member.public_id if member else UUID(int=0),
                 team_id=team.public_id if team else UUID(int=0),
                 pool_id=pool.public_id if pool else UUID(int=0),
@@ -153,6 +176,7 @@ def _build_draft_state(db: Session, league: League) -> DraftStateResponse:
         draft_scheduled_at=league.draft_scheduled_at,
         autopick_preview=autopick_preview,
         picks=pick_rows,
+        preassigns=preassign_rows,
     )
 
 @router.get("/leagues/{league_id}/draft", response_model=DraftStateResponse)
