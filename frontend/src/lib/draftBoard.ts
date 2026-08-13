@@ -1,4 +1,4 @@
-import type { DraftPick, League, Manager, Pool } from "@/lib/types";
+import type { DraftPick, DraftPreassign, League, Manager, Pool } from "@/lib/types";
 import { managerLabel } from "@/lib/types";
 
 export type BoardCell =
@@ -17,10 +17,38 @@ export function orderedDraftMembers(
   });
 }
 
-/** Total draft rounds = sum of roster slots across pools. */
+/** Total roster slots per manager = sum of roster slots across pools. */
 export function totalRounds(pools: Pick<Pool, "slot_count">[] | null | undefined): number {
   if (!pools?.length) return 0;
   return pools.reduce((sum, p) => sum + (Number(p.slot_count) || 0), 0);
+}
+
+/**
+ * Numbered draft rounds after preassigns: max remaining open slots across
+ * managers (total roster slots minus that manager's preassign count).
+ */
+export function draftRoundsAfterPreassigns(
+  pools: Pick<Pool, "slot_count">[] | null | undefined,
+  members: Pick<Manager, "id">[] | null | undefined,
+  preassigns: Pick<DraftPreassign, "member_id">[] | null | undefined,
+): number {
+  const rosterSlots = totalRounds(pools);
+  if (rosterSlots < 1) return 0;
+  if (!members?.length) return rosterSlots;
+
+  const preCount = new Map<string, number>();
+  for (const row of preassigns || []) {
+    const id = String(row.member_id || "");
+    if (!id) continue;
+    preCount.set(id, (preCount.get(id) || 0) + 1);
+  }
+
+  let maxRemaining = 0;
+  for (const m of members) {
+    const remaining = Math.max(0, rosterSlots - (preCount.get(m.id) || 0));
+    if (remaining > maxRemaining) maxRemaining = remaining;
+  }
+  return maxRemaining;
 }
 
 /**

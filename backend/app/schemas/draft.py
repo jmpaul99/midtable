@@ -24,6 +24,14 @@ class DraftPickResponse(IdSchema):
     crest_url: str | None = None
 
 
+class DraftPreassignResponse(BaseModel):
+    member_id: UUID
+    team_id: UUID
+    pool_id: UUID
+    team_name: str | None = None
+    crest_url: str | None = None
+
+
 class AutopickPreviewResponse(BaseModel):
     mode: Literal["ranking", "table", "random"]
     team_id: UUID | None = None
@@ -46,3 +54,4 @@ class DraftStateResponse(BaseModel):
     draft_scheduled_at: datetime | None = None
     autopick_preview: AutopickPreviewResponse | None = None
     picks: list[DraftPickResponse] = Field(default_factory=list)
+    preassigns: list[DraftPreassignResponse] = Field(default_factory=list)

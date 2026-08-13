@@ -54,7 +54,12 @@ export function DraftBoard({
   const [poolFilter, setPoolFilter] = useState("");
   const [state, setState] = useState<DraftState>();
   const [teams, setTeams] = useState<DraftableTeam[]>([]);
+  /** Load / refresh failures only — cleared by successful draft sync. */
   const [error, setError] = useState("");
+  /** Open-draft / readiness action failures — not cleared by live sync. */
+  const [actionError, setActionError] = useState("");
+  /** Pick submission failures — not cleared by live sync. */
+  const [pickError, setPickError] = useState("");
   const [team, setTeam] = useState("");
   const [teamPoolId, setTeamPoolId] = useState("");
   const [busy, setBusy] = useState(false);
@@ -130,15 +135,21 @@ export function DraftBoard({
   }, [league.id]);
 
   const applyPicksToTeams = useCallback((draft: DraftState) => {
-    const draftedIds = new Set(draft.picks.map((p) => p.team_id));
+    const takenIds = new Set<string>();
+    for (const p of draft.picks) {
+      if (p.team_id) takenIds.add(p.team_id);
+    }
+    for (const p of draft.preassigns ?? []) {
+      if (p.team_id) takenIds.add(p.team_id);
+    }
     setTeams((prev) => {
       if (!prev.length) return prev;
       let changed = false;
       const next = prev.map((t) => {
-        const drafted = draftedIds.has(t.id);
-        if (t.available === !drafted && t.drafted === drafted) return t;
+        const taken = takenIds.has(t.id) || t.current_owner != null;
+        if (t.available === !taken && t.drafted === taken) return t;
         changed = true;
-        return { ...t, available: !drafted, drafted };
+        return { ...t, available: !taken, drafted: taken };
       });
       return changed ? next : prev;
     });
@@ -216,6 +227,8 @@ export function DraftBoard({
     setState(undefined);
     setTeam("");
     setFilter("");
+    setActionError("");
+    setPickError("");
     syncMetaRef.current = { version: -1, status: "", pickCount: -1 };
     draftQueuedRef.current = false;
     draftQueuedForceTeamsRef.current = false;
@@ -261,12 +274,52 @@ export function DraftBoard({
   const phase = draftPhase(state?.status, league.status);
   const running = phase === "live";
   const myTurn = Boolean(running && onClock === league.current_member_id);
+
+  /** Pools the on-clock manager still has open roster slots in (null = no filter). */
+  const openPoolIdsForPicker = useMemo(() => {
+    if (!myTurn || !onClock || !state) return null;
+    const fills = new Map<string, number>();
+    for (const row of state.preassigns ?? []) {
+      if (row.member_id !== onClock || !row.pool_id) continue;
+      fills.set(row.pool_id, (fills.get(row.pool_id) || 0) + 1);
+    }
+    for (const pick of state.picks) {
+      if (pick.member_id !== onClock || !pick.pool_id) continue;
+      fills.set(pick.pool_id, (fills.get(pick.pool_id) || 0) + 1);
+    }
+    const open = new Set<string>();
+    for (const pool of league.pools) {
+      const slots = Number(pool.slot_count) || 0;
+      if ((fills.get(pool.id) || 0) < slots) open.add(pool.id);
+    }
+    return open;
+  }, [myTurn, onClock, state, league.pools]);
+
+  const pickablePoolTeams = useMemo(() => {
+    if (!openPoolIdsForPicker) return poolAvailableTeams;
+    return poolAvailableTeams.filter((t) => openPoolIdsForPicker.has(t.pool_id));
+  }, [poolAvailableTeams, openPoolIdsForPicker]);
+
+  const pickableTeams = useMemo(() => {
+    const q = filter.trim().toLowerCase();
+    if (!q) return pickablePoolTeams;
+    return pickablePoolTeams.filter((t) => t.name.toLowerCase().includes(q));
+  }, [pickablePoolTeams, filter]);
+
   const selected =
-    availableTeams.find((t) => t.id === team && t.pool_id === teamPoolId) ||
+    pickableTeams.find((t) => t.id === team && t.pool_id === teamPoolId) ||
     teams.find((t) => t.id === team && t.pool_id === teamPoolId);
   const canOpenDraft = readiness?.ready === true;
   const showOpenControls =
     commissioner && state && ["pending", "paused", "cancelled"].includes(state.status);
+
+  useEffect(() => {
+    if (!team || !teamPoolId || !openPoolIdsForPicker) return;
+    if (openPoolIdsForPicker.has(teamPoolId)) return;
+    setTeam("");
+    setTeamPoolId("");
+    setPickError("You've already filled your slots for this competition.");
+  }, [team, teamPoolId, openPoolIdsForPicker]);
 
   // Mobile pick sheet: after selecting a team, scroll to the selection + draft button.
   useEffect(() => {
@@ -321,17 +374,20 @@ export function DraftBoard({
 
   async function openDraft() {
     if (!canOpenDraft) {
-      setError(readiness?.errors?.[0] || "League is not ready to open the draft.");
+      setActionError(
+        readiness?.errors?.[0] || "League is not ready to open the draft.",
+      );
       return;
     }
     setBusy(true);
+    setActionError("");
     try {
       setState(await api<DraftState>(`/leagues/${league.id}/draft/open`, json("POST")));
-      setError("");
+      setActionError("");
       onLeagueChange?.();
       load();
     } catch (e) {
-      setError(errorMessage(e));
+      setActionError(errorMessage(e));
     } finally {
       setBusy(false);
     }
@@ -341,27 +397,33 @@ export function DraftBoard({
     e.preventDefault();
     if (!state || !team) return;
     setBusy(true);
+    setPickError("");
     const key = pendingKey || randomUUID();
     setPendingKey(key);
     try {
-      setState(
-        await api<DraftState>(
-          `/leagues/${league.id}/draft/picks`,
-          json("POST", {
-            team_id: team,
-            ...(teamPoolId ? { pool_id: teamPoolId } : {}),
-            idempotency_key: key,
-            expected_version: state.version,
-          }),
-        ),
+      const draft = await api<DraftState>(
+        `/leagues/${league.id}/draft/picks`,
+        json("POST", {
+          team_id: team,
+          ...(teamPoolId ? { pool_id: teamPoolId } : {}),
+          idempotency_key: key,
+          expected_version: state.version,
+        }),
       );
+      setState(draft);
+      applyPicksToTeams(draft);
       setTeam("");
       setTeamPoolId("");
       setPendingKey(null);
+      setPickError("");
       load();
     } catch (err) {
-      setError(errorMessage(err));
-      load();
+      const message = errorMessage(err);
+      const friendly =
+        /roster slot for this competition is full/i.test(message)
+          ? "You've already filled your slots for this competition."
+          : message;
+      setPickError(friendly);
     } finally {
       setBusy(false);
     }
@@ -373,6 +435,7 @@ export function DraftBoard({
       <DraftRoundBoard
         league={league}
         picks={state.picks}
+        preassigns={state.preassigns ?? []}
         currentPickNumber={state.current_pick_number}
         currentRound={state.current_round}
         onClockMemberId={onClock}
@@ -387,17 +450,23 @@ export function DraftBoard({
   function renderAvailablePickPanel(variant: "sidebar" | "sheet" = "sidebar") {
     if (!state) return null;
     const listMaxH = variant === "sheet" ? "max-h-[min(40vh,20rem)]" : "max-h-80";
+    const listTeams = myTurn ? pickableTeams : availableTeams;
+    const listPoolCount = myTurn ? pickablePoolTeams.length : poolAvailableTeams.length;
     const list = (
       <div
         className={cn("overflow-y-auto rounded-xl border border-line", listMaxH)}
         role={myTurn ? "listbox" : undefined}
         aria-label="Available teams"
       >
-        {!availableTeams.length ? (
-          <Muted className="p-3 text-sm">No available teams match.</Muted>
+        {!listTeams.length ? (
+          <Muted className="p-3 text-sm">
+            {myTurn && openPoolIdsForPicker && openPoolIdsForPicker.size === 0
+              ? "No open competition slots left for your pick."
+              : "No available teams match."}
+          </Muted>
         ) : (
           <ul className="divide-y divide-line">
-            {availableTeams.map((t) => {
+            {listTeams.map((t) => {
               const selectedRow = team === t.id && teamPoolId === t.pool_id;
               const body = (
                 <>
@@ -422,6 +491,7 @@ export function DraftBoard({
                       onClick={() => {
                         setTeam(t.id);
                         setTeamPoolId(t.pool_id);
+                        setPickError("");
                       }}
                       className={cn(
                         "flex w-full items-center gap-3 px-3 py-2.5 text-left transition",
@@ -445,9 +515,9 @@ export function DraftBoard({
       <Stack className="min-w-0" gap={variant === "sheet" ? "sm" : "md"}>
         <div>
           <Eyebrow>
-            {poolAvailableTeams.length} left
-            {filter.trim() && availableTeams.length !== poolAvailableTeams.length
-              ? ` · ${availableTeams.length} shown`
+            {listPoolCount} left
+            {filter.trim() && listTeams.length !== listPoolCount
+              ? ` · ${listTeams.length} shown`
               : ""}
           </Eyebrow>
           {variant === "sidebar" || myTurn ? (
@@ -478,6 +548,7 @@ export function DraftBoard({
                 value={poolFilter}
                 onChange={(value) => {
                   setPoolFilter(value);
+                  setPickError("");
                   if (value && teamPoolId && teamPoolId !== value) {
                     setTeam("");
                     setTeamPoolId("");
@@ -524,6 +595,9 @@ export function DraftBoard({
                   </div>
                 </div>
               )}
+              {pickError ? (
+                <StatusBanner tone="error">{pickError}</StatusBanner>
+              ) : null}
               <div className="flex justify-start">
                 <Button type="submit" variant="primary" disabled={!team || busy}>
                   {busy ? <SpinnerIcon className="size-5" /> : <CheckIcon />}
@@ -675,6 +749,9 @@ export function DraftBoard({
                 }
                 checksSummaryLabel="Pre-draft checks"
               />
+              {actionError ? (
+                <StatusBanner tone="error">{actionError}</StatusBanner>
+              ) : null}
               <div className="flex justify-start">
                 <IconButton
                   type="button"
