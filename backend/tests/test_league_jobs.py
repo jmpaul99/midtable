@@ -281,6 +281,18 @@ def test_cancel_pending_job():
     db.commit.assert_called()
 
 
+def test_league_job_status_allows_cancelled_in_migration():
+    """Regression: DB CHECK must include cancelled or cancel returns IntegrityError 409."""
+    from pathlib import Path
+
+    sql = Path("supabase/migrations/029_league_job_cancelled_status.sql")
+    if not sql.exists():
+        sql = Path(__file__).resolve().parents[2] / "supabase/migrations/029_league_job_cancelled_status.sql"
+    text = sql.read_text(encoding="utf-8")
+    assert "cancelled" in text
+    assert "league_jobs_status_check" in text
+
+
 def test_cancel_running_sync_releases_locks(monkeypatch):
     from app.services.league_jobs import cancel_league_job
 
