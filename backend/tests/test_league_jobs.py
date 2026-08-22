@@ -263,6 +263,110 @@ def test_run_league_job_recompute(monkeypatch):
     assert out.summary["finished_matches"] == 10
 
 
+def test_cancel_pending_job():
+    from app.services.league_jobs import cancel_league_job
+
+    job_id = uuid4()
+    job = _job(public_id=job_id, status="pending", kind="sync")
+    league = SimpleNamespace(id=1, public_id=uuid4())
+    db = MagicMock()
+    locked = MagicMock()
+    locked.first.return_value = job
+    db.scalars.return_value = locked
+
+    out = cancel_league_job(db, league, job_id)
+    assert out.status == "cancelled"
+    assert out.error == "Cancelled by commissioner"
+    assert out.finished_at is not None
+    db.commit.assert_called()
+
+
+def test_cancel_running_sync_releases_locks(monkeypatch):
+    from app.services.league_jobs import cancel_league_job
+
+    job_id = uuid4()
+    job = _job(public_id=job_id, status="running", kind="sync")
+    job.started_at = datetime.now(UTC)
+    league = SimpleNamespace(id=1, public_id=uuid4())
+    db = MagicMock()
+    locked = MagicMock()
+    locked.first.return_value = job
+    db.scalars.return_value = locked
+
+    released = {"n": 0}
+
+    def fake_release(_db, _league):
+        released["n"] += 1
+        return 2
+
+    monkeypatch.setattr(jobs_mod, "release_competition_sync_locks_for_league", fake_release)
+
+    out = cancel_league_job(db, league, job_id)
+    assert out.status == "cancelled"
+    assert released["n"] == 1
+
+
+def test_cancel_recompute_skips_sync_lock_release(monkeypatch):
+    from app.services.league_jobs import cancel_league_job
+
+    job_id = uuid4()
+    job = _job(public_id=job_id, status="running", kind="recompute")
+    league = SimpleNamespace(id=1, public_id=uuid4())
+    db = MagicMock()
+    locked = MagicMock()
+    locked.first.return_value = job
+    db.scalars.return_value = locked
+
+    monkeypatch.setattr(
+        jobs_mod,
+        "release_competition_sync_locks_for_league",
+        lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("should not release")),
+    )
+
+    out = cancel_league_job(db, league, job_id)
+    assert out.status == "cancelled"
+
+
+def test_cancel_terminal_job_raises():
+    from app.services.league_jobs import JobNotCancellable, cancel_league_job
+
+    job_id = uuid4()
+    job = _job(public_id=job_id, status="succeeded", kind="sync")
+    league = SimpleNamespace(id=1, public_id=uuid4())
+    db = MagicMock()
+    locked = MagicMock()
+    locked.first.return_value = job
+    db.scalars.return_value = locked
+
+    with pytest.raises(JobNotCancellable):
+        cancel_league_job(db, league, job_id)
+
+
+def test_run_league_job_preserves_cancelled(monkeypatch):
+    job_id = uuid4()
+    job = _job(public_id=job_id, status="pending", kind="recompute")
+    cancelled = _job(public_id=job_id, status="cancelled", kind="recompute")
+    league = SimpleNamespace(id=1, public_id=uuid4())
+
+    db = MagicMock()
+    claim = MagicMock()
+    claim.first.return_value = job
+    after = MagicMock()
+    after.first.return_value = cancelled
+    db.scalars.side_effect = [claim, after]
+    db.get.return_value = league
+
+    monkeypatch.setattr(
+        jobs_mod,
+        "recompute_league_scores",
+        lambda *_a, **_k: {"finished_matches": 1, "scored": 1, "cascaded": 0},
+    )
+
+    out = run_league_job(db, job_id, MagicMock())
+    assert out is cancelled
+    assert out.status == "cancelled"
+
+
 def test_sync_all_records_cron_jobs(monkeypatch):
     from app.services import sync as sync_mod
 

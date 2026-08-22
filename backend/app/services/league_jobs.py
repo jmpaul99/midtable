@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 JobKind = Literal["sync", "recompute"]
 JobSource = Literal["commissioner", "cron"]
 ACTIVE_STATUSES = ("pending", "running")
+TERMINAL_STATUSES = ("succeeded", "failed", "cancelled")
 
 
 class ActiveJobConflict(Exception):
@@ -35,8 +36,96 @@ class ActiveJobConflict(Exception):
         super().__init__("A sync or recompute job is already in progress for this league")
 
 
+class JobNotCancellable(Exception):
+    """Raised when a job is not pending/running."""
+
+    def __init__(self, job: LeagueJob):
+        self.job = job
+        super().__init__(f"Job is {job.status} and cannot be cancelled")
+
+
 def get_job_by_public_id(db: Session, job_id: UUID) -> LeagueJob | None:
     return db.scalars(select(LeagueJob).where(LeagueJob.public_id == job_id)).first()
+
+
+def release_competition_sync_locks_for_league(db: Session, league: League) -> int:
+    """Clear in-progress SyncStatus locks for this league's scoring competitions.
+
+    Used when cancelling a hung sync so another job can acquire the lock without
+    waiting for the stale-lock timeout.
+    """
+    from app.models import SyncStatus
+    from app.services.match_queries import (
+        competition_keys_from_pools,
+        scoring_pools_for_league,
+    )
+
+    keys = competition_keys_from_pools(scoring_pools_for_league(db, league))
+    if not keys:
+        return 0
+    released = 0
+    for provider, competition_code, season_year in keys:
+        status = db.scalars(
+            select(SyncStatus)
+            .where(
+                SyncStatus.provider == provider,
+                SyncStatus.competition_code == competition_code,
+                SyncStatus.season_year == season_year,
+                SyncStatus.in_progress.is_(True),
+            )
+            .with_for_update()
+        ).first()
+        if status is None:
+            continue
+        status.in_progress = False
+        status.in_progress_since = None
+        released += 1
+        logger.info(
+            "league_job released sync lock competition=%s/%s/%s league_id=%s",
+            provider,
+            competition_code,
+            season_year,
+            log_id(league),
+        )
+    return released
+
+
+def cancel_league_job(
+    db: Session,
+    league: League,
+    job_id: UUID,
+) -> LeagueJob:
+    """Mark a pending/running job cancelled and release competition sync locks."""
+    job = (
+        db.scalars(
+            select(LeagueJob).where(LeagueJob.public_id == job_id).with_for_update()
+        ).first()
+    )
+    if job is None or job.league_id != league.id:
+        raise ValueError(f"Job not found: {job_id}")
+    if job.status not in ACTIVE_STATUSES:
+        raise JobNotCancellable(job)
+
+    now = datetime.now(UTC)
+    prior = job.status
+    job.status = "cancelled"
+    job.error = "Cancelled by commissioner"
+    if job.started_at is None:
+        job.started_at = now
+    job.finished_at = now
+    released = 0
+    if job.kind == "sync":
+        released = release_competition_sync_locks_for_league(db, league)
+    db.commit()
+    db.refresh(job)
+    logger.info(
+        "league_job cancelled job_id=%s league_id=%s prior_status=%s locks_released=%s",
+        job.public_id,
+        log_id(league),
+        prior,
+        released,
+    )
+    return job
 
 
 def _latest_for_source(db: Session, league_id: int, source: str) -> LeagueJob | None:
@@ -234,27 +323,32 @@ def run_league_job(
     job.error = None
     db.commit()
 
+    outcome_status = "failed"
+    outcome_error: str | None = "Unknown job kind"
+    outcome_summary: dict[str, Any] | None = None
+
     try:
         if job.kind == "sync":
             from app.services.sync import sync_league_fixtures
 
             result = sync_league_fixtures(db, league, provider)
             if not result.get("ok"):
-                job.status = "failed"
-                job.error = str(result.get("error") or "Sync failed")
-                job.summary = _json_safe_summary(result)
+                outcome_status = "failed"
+                outcome_error = str(result.get("error") or "Sync failed")
+                outcome_summary = _json_safe_summary(result)
             else:
-                job.status = "succeeded"
-                job.summary = _json_safe_summary(result)
-                job.error = None
+                outcome_status = "succeeded"
+                outcome_error = None
+                outcome_summary = _json_safe_summary(result)
         elif job.kind == "recompute":
             summary = recompute_league_scores(db, league)
-            job.status = "succeeded"
-            job.summary = summary
-            job.error = None
+            outcome_status = "succeeded"
+            outcome_error = None
+            outcome_summary = summary
         else:
-            job.status = "failed"
-            job.error = f"Unknown job kind: {job.kind}"
+            outcome_status = "failed"
+            outcome_error = f"Unknown job kind: {job.kind}"
+            outcome_summary = None
     except Exception as exc:  # noqa: BLE001
         logger.exception(
             "league_job failed job_id=%s league_id=%s kind=%s",
@@ -269,6 +363,12 @@ def run_league_job(
         if refreshed is None:
             # Preserve the original failure; do not mask it with NoResultFound.
             raise
+        if refreshed.status == "cancelled":
+            logger.info(
+                "league_job exception after cancel job_id=%s; leaving cancelled",
+                job_id,
+            )
+            return refreshed
         job = refreshed
         job.status = "failed"
         job.error = str(exc)
@@ -284,6 +384,22 @@ def run_league_job(
             raise exc
         return job
 
+    refreshed = db.scalars(
+        select(LeagueJob).where(LeagueJob.public_id == job_id).with_for_update()
+    ).first()
+    if refreshed is None:
+        raise ValueError(f"Job not found after run: {job_id}")
+    if refreshed.status == "cancelled":
+        logger.info(
+            "league_job completed work but already cancelled job_id=%s",
+            job_id,
+        )
+        return refreshed
+
+    job = refreshed
+    job.status = outcome_status
+    job.error = outcome_error
+    job.summary = outcome_summary
     job.finished_at = datetime.now(UTC)
     db.commit()
     db.refresh(job)
