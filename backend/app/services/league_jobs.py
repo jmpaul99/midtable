@@ -141,7 +141,7 @@ def record_cron_league_result(
 def _json_safe_summary(result: dict[str, Any]) -> dict[str, Any]:
     out: dict[str, Any] = {}
     for key, value in result.items():
-        if key in {"changed_matches", "ok"}:
+        if key in {"changed_matches", "ok", "sibling_results"}:
             continue
         if isinstance(value, (str, int, float, bool)) or value is None:
             out[key] = value

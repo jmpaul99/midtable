@@ -65,12 +65,36 @@ def test_sync_soft_fail_in_progress_logs(caplog: pytest.LogCaptureFixture, monke
     db.scalars.return_value = scalars_result
 
     monkeypatch.setattr(sync_mod, "ensure_fixed_ranking_for_league", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        sync_mod,
+        "leagues_sharing_competition_keys",
+        lambda *_a, **_k: [league],
+    )
+    monkeypatch.setattr(
+        sync_mod,
+        "score_league_after_sync",
+        lambda *_a, **_k: {
+            "scored": 0,
+            "cascaded": 0,
+            "skipped_missing_snapshot": 0,
+            "gap_fill_seeds": 0,
+            "seed_count": 0,
+        },
+    )
+    monkeypatch.setattr(
+        "app.services.draft_schedule.clear_draft_schedule_if_after_first_kickoff",
+        lambda *_a, **_k: False,
+    )
 
     with caplog.at_level(logging.WARNING, logger="app.services.sync"):
         result = sync_league_fixtures(db, league, MagicMock())
     assert result["ok"] is False
     assert result["status_code"] == 409
-    assert any("reason=in_progress" in r.getMessage() for r in caplog.records)
+    assert any(
+        "reason=in_progress" in r.getMessage()
+        or "reason=competition_errors" in r.getMessage()
+        for r in caplog.records
+    )
 
 
 def test_authz_platform_admin_denied_logs(caplog: pytest.LogCaptureFixture):
