@@ -5,6 +5,7 @@ import { formatDate } from "@/lib/format";
 import { humanizeKey } from "@/components/settings/types";
 import type { LatestLeagueJobs, League, LeagueJob, Readiness } from "@/lib/types";
 import { ErrorState, Status, StatusBanner } from "@/components/ui/State";
+import { Button } from "@/components/ui/Button";
 import { IconButton } from "@/components/ui/IconButton";
 import { DownloadIcon, RefreshIcon } from "@/components/ui/icons";
 import { Card, Muted, Row, Stack } from "@/components/ui/Card";
@@ -16,6 +17,7 @@ import { LeagueSettingsSection } from "./LeagueSettingsSection";
 import { RankingIngest } from "./RankingIngest";
 import { SeasonActionsSection } from "./SeasonActionsSection";
 import { summarizeJob, useAdminLeagueData } from "./useAdminLeagueData";
+import type { UUID } from "@/lib/types";
 
 const SYNC_WARNING =
   "Pull latest fixtures and results and score finished matches in the background? You can leave this page and check back.";
@@ -52,12 +54,14 @@ export function AdminPanel({
     bonusTypes,
     latestJobs,
     jobBusy,
+    cancelBusy,
     poolTeams,
     readiness,
     error,
     load,
     action,
     enqueueJob,
+    cancelJob,
     updateJoinLink,
     toast,
   } = useAdminLeagueData(league, onLeagueChange);
@@ -209,9 +213,11 @@ export function AdminPanel({
           readiness={readiness}
           latestJobs={latestJobs}
           jobBusy={jobBusy}
+          cancelBusy={cancelBusy}
           needsTeamLoad={needsTeamLoad}
           onSync={() => void enqueueJob("sync")}
           onRecompute={() => void enqueueJob("recompute")}
+          onCancelJob={(jobId) => void cancelJob(jobId)}
         />
       </div>
 
@@ -235,19 +241,28 @@ function SyncReadinessSection({
   readiness,
   latestJobs,
   jobBusy,
+  cancelBusy,
   needsTeamLoad,
   onSync,
   onRecompute,
+  onCancelJob,
 }: {
   readiness?: Readiness;
   latestJobs: LatestLeagueJobs;
   jobBusy: boolean;
+  cancelBusy: boolean;
   needsTeamLoad: boolean;
   onSync: () => void;
   onRecompute: () => void;
+  onCancelJob: (jobId: UUID) => void;
 }) {
   const [syncConfirmOpen, setSyncConfirmOpen] = useState(false);
   const [recomputeConfirmOpen, setRecomputeConfirmOpen] = useState(false);
+  const [cancelConfirmOpen, setCancelConfirmOpen] = useState(false);
+
+  const manualActive =
+    !!latestJobs.manual &&
+    (latestJobs.manual.status === "pending" || latestJobs.manual.status === "running");
 
   return (
     <Card>
@@ -323,7 +338,7 @@ function SyncReadinessSection({
             title="Sync fixtures & scores?"
             description={SYNC_WARNING}
             confirmLabel="Sync now"
-            cancelLabel="Cancel"
+            cancelLabel="Back"
             tone="warning"
             onCancel={() => setSyncConfirmOpen(false)}
             onConfirm={() => {
@@ -336,7 +351,7 @@ function SyncReadinessSection({
             title="Recompute scores?"
             description={RECOMPUTE_WARNING}
             confirmLabel="Recompute"
-            cancelLabel="Cancel"
+            cancelLabel="Back"
             tone="warning"
             onCancel={() => setRecomputeConfirmOpen(false)}
             onConfirm={() => {
@@ -344,9 +359,28 @@ function SyncReadinessSection({
               onRecompute();
             }}
           />
+          <ConfirmDialog
+            open={cancelConfirmOpen}
+            title="Cancel running job?"
+            description="Marks the job cancelled so you can start a new sync or recompute. If work is still running on the server it may finish in the background, but the lock is cleared."
+            confirmLabel="Cancel job"
+            cancelLabel="Keep running"
+            tone="danger"
+            onCancel={() => setCancelConfirmOpen(false)}
+            onConfirm={() => {
+              setCancelConfirmOpen(false);
+              if (latestJobs.manual) onCancelJob(latestJobs.manual.id);
+            }}
+          />
 
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <JobResultCard title="Manual" job={latestJobs.manual} empty="No manual sync or recompute yet." />
+            <JobResultCard
+              title="Manual"
+              job={latestJobs.manual}
+              empty="No manual sync or recompute yet."
+              onCancel={manualActive ? () => setCancelConfirmOpen(true) : undefined}
+              cancelBusy={cancelBusy}
+            />
             <JobResultCard
               title="Scheduled"
               job={latestJobs.cron}
@@ -363,10 +397,14 @@ function JobResultCard({
   title,
   job,
   empty,
+  onCancel,
+  cancelBusy,
 }: {
   title: string;
   job: LeagueJob | null;
   empty: string;
+  onCancel?: () => void;
+  cancelBusy?: boolean;
 }) {
   return (
     <div className="rounded-xl border border-line bg-surface-2/50 p-3">
@@ -388,6 +426,18 @@ function JobResultCard({
               {job.error}
             </StatusBanner>
           )}
+          {onCancel ? (
+            <div className="mt-3">
+              <Button
+                type="button"
+                variant="secondary"
+                disabled={cancelBusy}
+                onClick={onCancel}
+              >
+                {cancelBusy ? "Cancelling…" : "Cancel job"}
+              </Button>
+            </div>
+          ) : null}
         </>
       )}
     </div>
