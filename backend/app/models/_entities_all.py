@@ -535,7 +535,9 @@ class LeagueJob(Base):
     league_id: Mapped[int] = mapped_column(ForeignKey("leagues.id", ondelete="CASCADE"))
     kind: Mapped[str] = mapped_column(Text)  # sync | recompute
     source: Mapped[str] = mapped_column(Text)  # commissioner | cron
-    status: Mapped[str] = mapped_column(Text)  # pending | running | succeeded | failed
+    status: Mapped[str] = mapped_column(
+        Text
+    )  # pending | running | succeeded | failed | cancelled
     created_by_profile_id: Mapped[int | None] = mapped_column(
         ForeignKey("profiles.id", ondelete="SET NULL")
     )

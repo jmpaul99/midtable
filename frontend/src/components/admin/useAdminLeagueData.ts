@@ -120,9 +120,11 @@ export function useAdminLeagueData(league: League, onLeagueChange?: () => void) 
         if (!toastedJobIds.current.has(job.id)) {
           toastedJobIds.current.add(job.id);
           const summary = summarizeJob(job);
+          const tone =
+            job.status === "failed" || job.status === "cancelled" ? "error" : "success";
           toast({
             message: summary,
-            tone: job.status === "failed" ? "error" : "success",
+            tone,
             durationMs: summary.length > 120 ? null : 5000,
             dismissible: summary.length > 120 ? true : undefined,
           });
@@ -195,6 +197,42 @@ export function useAdminLeagueData(league: League, onLeagueChange?: () => void) 
     }
   }
 
+  const [cancelBusy, setCancelBusy] = useState(false);
+
+  async function cancelJob(jobId: UUID) {
+    setCancelBusy(true);
+    try {
+      const job = await api<LeagueJob>(
+        `/leagues/${league.id}/jobs/${jobId}/cancel`,
+        json("POST"),
+      );
+      setLatestJobs((prev) => ({
+        ...prev,
+        manual: job.source === "commissioner" ? job : prev.manual,
+      }));
+      setPollingJobId(null);
+      toastedJobIds.current.add(job.id);
+      toast({
+        message: summarizeJob(job),
+        tone: "error",
+        durationMs: 5000,
+        dismissible: true,
+      });
+      void load();
+      onLeagueChange?.();
+      return job;
+    } catch (e) {
+      toast({
+        message: errorMessage(e),
+        tone: "error",
+        durationMs: 6000,
+        dismissible: true,
+      });
+    } finally {
+      setCancelBusy(false);
+    }
+  }
+
   const [joinLinkBusy, setJoinLinkBusy] = useState(false);
 
   async function updateJoinLink(body: { enabled?: boolean; rotate?: boolean }) {
@@ -241,12 +279,14 @@ export function useAdminLeagueData(league: League, onLeagueChange?: () => void) 
     bonusTypes,
     latestJobs,
     jobBusy,
+    cancelBusy,
     poolTeams,
     readiness,
     error,
     load,
     action,
     enqueueJob,
+    cancelJob,
     updateJoinLink,
     toast,
   };
@@ -259,6 +299,9 @@ export function summarizeJob(job: LeagueJob): string {
 
   if (job.status === "pending") return `${subject} queued.`;
   if (job.status === "running") return `${subject} running…`;
+  if (job.status === "cancelled") {
+    return job.error || `${subject} cancelled.`;
+  }
   if (job.status === "failed") {
     return job.error || `${subject} failed.`;
   }

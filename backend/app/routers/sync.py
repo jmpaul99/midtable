@@ -15,6 +15,8 @@ from app.schemas.leagues import (
 )
 from app.services.league_jobs import (
     ActiveJobConflict,
+    JobNotCancellable,
+    cancel_league_job,
     enqueue_league_job,
     get_job_by_public_id,
     latest_jobs_for_league,
@@ -116,6 +118,37 @@ def get_league_job(
     job = get_job_by_public_id(db, job_id)
     if job is None or job.league_id != league.id:
         raise HTTPException(status_code=404, detail="Job not found")
+    return _job_response(job)
+
+
+@router.post(
+    "/leagues/{league_id}/jobs/{job_id}/cancel",
+    response_model=LeagueJobResponse,
+)
+def cancel_league_job_endpoint(
+    job_id: UUID,
+    membership: tuple[League, LeagueMember] = Depends(require_commissioner),
+    db: Session = Depends(get_db),
+) -> LeagueJobResponse:
+    """Cancel a pending/running job so a new sync or recompute can be enqueued."""
+    league, _ = membership
+    try:
+        job = cancel_league_job(db, league, job_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except JobNotCancellable as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": str(exc),
+                "job": _job_response(exc.job).model_dump(mode="json"),
+            },
+        ) from exc
+    logger.info(
+        "commissioner_cancel_job league_id=%s job_id=%s",
+        league.public_id,
+        job.public_id,
+    )
     return _job_response(job)
 
 

@@ -393,7 +393,7 @@ export interface LeagueJob {
   id: UUID;
   kind: "sync" | "recompute" | string;
   source: "commissioner" | "cron" | string;
-  status: "pending" | "running" | "succeeded" | "failed" | string;
+  status: "pending" | "running" | "succeeded" | "failed" | "cancelled" | string;
   error: string | null;
   summary: Record<string, unknown> | null;
   created_at: string;
