@@ -638,13 +638,28 @@ def test_sync_league_fixtures_skips_ranking_ensure_before_pull(monkeypatch):
     )
     monkeypatch.setattr(
         sync_mod,
-        "score_changed_matches",
-        lambda *_a, **_k: {"scored": 0, "cascaded": 0, "skipped_missing_snapshot": 0},
+        "leagues_sharing_competition_keys",
+        lambda *_a, **_k: [league],
+    )
+    monkeypatch.setattr(
+        sync_mod,
+        "score_league_after_sync",
+        lambda *_a, **_k: {
+            "scored": 0,
+            "cascaded": 0,
+            "skipped_missing_snapshot": 0,
+            "gap_fill_seeds": 0,
+            "seed_count": 0,
+        },
+    )
+    monkeypatch.setattr(
+        "app.services.draft_schedule.clear_draft_schedule_if_after_first_kickoff",
+        lambda *_a, **_k: False,
     )
 
     result = sync_league_fixtures(db, league, provider=MagicMock())
     assert result["ok"] is True
-    # ensure runs inside score_changed_matches (mocked), not before competition pull
+    # ensure runs inside score_changed_matches (mocked via score_league_after_sync)
     assert ensure_calls["n"] == 0
 
 

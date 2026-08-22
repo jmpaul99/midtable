@@ -275,10 +275,19 @@ function summaryParts(summary: Record<string, unknown> | null | undefined): stri
   if (summary.updated != null) parts.push(`${summary.updated} updated`);
   if (summary.changed != null) parts.push(`${summary.changed} changed`);
   if (summary.scored != null) parts.push(`${summary.scored} scored`);
+  if (summary.gap_fill_seeds != null && Number(summary.gap_fill_seeds) > 0) {
+    parts.push(`${summary.gap_fill_seeds} gap-fill`);
+  }
+  if (summary.sibling_leagues_scored != null && Number(summary.sibling_leagues_scored) > 0) {
+    parts.push(`${summary.sibling_leagues_scored} sibling leagues`);
+  }
   if (summary.cascaded != null) parts.push(`${summary.cascaded} cascaded`);
   if (summary.finished_matches != null) parts.push(`${summary.finished_matches} finished`);
   if (summary.skipped_missing_teams != null) {
     parts.push(`${summary.skipped_missing_teams} skipped (missing clubs)`);
+  }
+  if (summary.skipped_missing_snapshot != null && Number(summary.skipped_missing_snapshot) > 0) {
+    parts.push(`${summary.skipped_missing_snapshot} missing ranks`);
   }
   return parts;
 }

@@ -295,8 +295,14 @@ def test_sync_all_records_cron_jobs(monkeypatch):
     monkeypatch.setattr(sync_mod, "scoring_pools_for_league", lambda *_a, **_k: [pool])
     monkeypatch.setattr(
         sync_mod,
-        "score_changed_matches",
-        lambda *_a, **_k: {"scored": 0, "cascaded": 0, "skipped_missing_snapshot": 0},
+        "score_league_after_sync",
+        lambda *_a, **_k: {
+            "scored": 0,
+            "cascaded": 0,
+            "skipped_missing_snapshot": 0,
+            "gap_fill_seeds": 0,
+            "seed_count": 0,
+        },
     )
     monkeypatch.setattr(sync_mod, "record_cron_league_result", fake_record)
 

@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session
 
 from app.logging_config import log_id
@@ -67,6 +68,121 @@ def earliest_finished_seeds_per_pool(
         pool_matches.sort(key=lambda x: x.kickoff_at)
         seeds.append(pool_matches[0])
     return finished, seeds
+
+
+def merge_scoring_seeds(*groups: Sequence[Match]) -> list[Match]:
+    """Dedupe match seeds by id, preserving first-seen order."""
+    out: list[Match] = []
+    seen: set[int] = set()
+    for group in groups:
+        for match in group:
+            match_id = match.id
+            if match_id is None or match_id in seen:
+                continue
+            seen.add(match_id)
+            out.append(match)
+    return out
+
+
+def unscored_finished_matches(db: Session, league: League) -> list[Match]:
+    """Finished scoring-pool matches with no ScoringEvent rows for this league."""
+    matches = matches_for_league(db, league)
+    if not matches:
+        return []
+    pool_lookup = pool_lookup_for_league(db, league)
+    finished: list[Match] = []
+    for match in matches:
+        pool = pool_for_match(db, league, match, lookup=pool_lookup)
+        if pool is None:
+            continue
+        if is_finished(match_to_input(match, pool_id=pool.id)):
+            finished.append(match)
+    if not finished:
+        return []
+    scored_ids = set(
+        db.scalars(
+            select(ScoringEvent.match_id).where(
+                ScoringEvent.league_id == league.id,
+                ScoringEvent.match_id.in_([m.id for m in finished]),
+            )
+        ).all()
+    )
+    return [m for m in finished if m.id not in scored_ids]
+
+
+def gap_fill_seeds_for_league(db: Session, league: League) -> list[Match]:
+    """Earliest unscored finished match per scoring pool (efficient cascade seeds)."""
+    gaps = unscored_finished_matches(db, league)
+    if not gaps:
+        return []
+    pool_lookup = pool_lookup_for_league(db, league)
+    pool_by_match_id: dict[int, int] = {}
+    scoring_pool_ids: set[int] = set()
+    for match in gaps:
+        pool = pool_for_match(db, league, match, lookup=pool_lookup)
+        if pool is None:
+            continue
+        pool_by_match_id[match.id] = pool.id
+        scoring_pool_ids.add(pool.id)
+    _, seeds = earliest_finished_seeds_per_pool(
+        gaps,
+        pool_by_match_id=pool_by_match_id,
+        scoring_pool_ids=scoring_pool_ids,
+    )
+    return seeds
+
+
+def score_league_after_sync(
+    db: Session,
+    league: League,
+    changed: Sequence[Match],
+) -> dict[str, Any]:
+    """Score provider-changed matches plus gap-fill seeds for missing events."""
+    gap_seeds = gap_fill_seeds_for_league(db, league)
+    seeds = merge_scoring_seeds(changed, gap_seeds)
+    summary = score_changed_matches(db, league, seeds)
+    return {
+        **summary,
+        "gap_fill_seeds": len(gap_seeds),
+        "seed_count": len(seeds),
+    }
+
+
+def leagues_sharing_competition_keys(
+    db: Session,
+    keys: Sequence[CompetitionKey],
+    *,
+    statuses: Sequence[str] = ("active", "drafting"),
+    always_include: League | None = None,
+) -> list[League]:
+    """Active/drafting leagues that score any of the given competitions."""
+    leagues: list[League] = []
+    if keys:
+        key_preds = [
+            and_(
+                TeamPool.provider == provider,
+                TeamPool.competition_code == competition_code,
+                TeamPool.season_year == season_year,
+            )
+            for provider, competition_code, season_year in keys
+        ]
+        leagues = list(
+            db.scalars(
+                select(League)
+                .join(TeamPool, TeamPool.league_id == League.id)
+                .where(
+                    League.status.in_(tuple(statuses)),
+                    TeamPool.scores_match_results.is_(True),
+                    or_(*key_preds),
+                )
+                .distinct()
+                .order_by(League.id)
+            ).all()
+        )
+    if always_include is None:
+        return leagues
+    others = [league for league in leagues if league.id != always_include.id]
+    return [always_include, *others]
 
 
 def _ensure_sync_status(
@@ -316,7 +432,13 @@ def sync_league_fixtures(
     league: League,
     provider: FootballProvider,
 ) -> dict[str, Any]:
-    """Sync competitions for this league's scoring pools, then score the league."""
+    """Sync competitions for this league's scoring pools, then score affected leagues.
+
+    Scoring covers:
+    - Matches changed in this pull
+    - Gap-fill: finished matches still missing ScoringEvents for a league
+    - Every active/drafting league that shares a synced competition (fixtures are shared)
+    """
     all_pools = list(
         db.scalars(select(TeamPool).where(TeamPool.league_id == league.id)).all()
     )
@@ -347,6 +469,7 @@ def sync_league_fixtures(
     skipped_missing_teams = 0
     changed_matches: list[Match] = []
     seen_changed: set[int] = set()
+    competition_failures: list[dict[str, Any]] = []
 
     for provider_key, competition_code, season_year in keys:
         try:
@@ -380,7 +503,8 @@ def sync_league_fixtures(
             season_year=season_year,
         )
         if not result.get("ok"):
-            return result
+            competition_failures.append(result)
+            continue
         # Persist each competition independently so a later failure cannot roll it back.
         db.commit()
         created += int(result.get("created") or 0)
@@ -391,33 +515,119 @@ def sync_league_fixtures(
                 seen_changed.add(m.id)
                 changed_matches.append(m)
 
-    score_summary = score_changed_matches(db, league, changed_matches)
+    affected_leagues = leagues_sharing_competition_keys(
+        db, keys, always_include=league
+    )
+    primary_summary: dict[str, Any] = {
+        "scored": 0,
+        "cascaded": 0,
+        "skipped_missing_snapshot": 0,
+        "gap_fill_seeds": 0,
+        "seed_count": 0,
+    }
+    sibling_results: list[dict[str, Any]] = []
+    score_failures = 0
+    for target in affected_leagues:
+        try:
+            score_summary = score_league_after_sync(db, target, changed_matches)
+            if target.id == league.id:
+                primary_summary = score_summary
+            else:
+                sibling_results.append(
+                    {
+                        "league_id": str(target.public_id),
+                        "ok": True,
+                        **{
+                            k: score_summary[k]
+                            for k in (
+                                "scored",
+                                "cascaded",
+                                "skipped_missing_snapshot",
+                                "gap_fill_seeds",
+                                "seed_count",
+                            )
+                            if k in score_summary
+                        },
+                    }
+                )
+        except Exception as exc:  # noqa: BLE001
+            logger.exception(
+                "sync_league_fixtures score failed league_id=%s initiator=%s",
+                log_id(target),
+                log_id(league),
+            )
+            score_failures += 1
+            if target.id == league.id:
+                raise
+            sibling_results.append(
+                {
+                    "league_id": str(target.public_id),
+                    "ok": False,
+                    "error": str(exc),
+                }
+            )
+
     from app.services.draft_schedule import clear_draft_schedule_if_after_first_kickoff
 
     cleared_schedule = clear_draft_schedule_if_after_first_kickoff(db, league)
     db.commit()
+
+    if competition_failures and created == 0 and updated == 0 and not changed_matches:
+        # Nothing synced; surface the first competition error (e.g. lock conflict).
+        first = competition_failures[0]
+        logger.warning(
+            "sync_league_fixtures soft-fail league_id=%s reason=competition_errors "
+            "failures=%s scored_anyway=%s",
+            log_id(league),
+            len(competition_failures),
+            primary_summary.get("scored", 0),
+        )
+        return {
+            "ok": False,
+            "error": str(first.get("error") or "Sync failed"),
+            "status_code": int(first.get("status_code") or 502),
+            "competition_failures": len(competition_failures),
+            "sibling_leagues_scored": sum(1 for r in sibling_results if r.get("ok")),
+            "sibling_results": sibling_results,
+            **primary_summary,
+        }
+
+    ok = not competition_failures and score_failures == 0
     logger.info(
-        "sync_league_fixtures ok league_id=%s created=%s updated=%s changed=%s "
-        "scored=%s skipped_missing_teams=%s skipped_pools=%s cleared_draft_schedule=%s",
+        "sync_league_fixtures ok=%s league_id=%s created=%s updated=%s changed=%s "
+        "scored=%s gap_fill_seeds=%s siblings=%s skipped_missing_teams=%s "
+        "skipped_pools=%s cleared_draft_schedule=%s competition_failures=%s",
+        ok,
         log_id(league),
         created,
         updated,
         len(changed_matches),
-        score_summary.get("scored", 0),
+        primary_summary.get("scored", 0),
+        primary_summary.get("gap_fill_seeds", 0),
+        len(sibling_results),
         skipped_missing_teams,
         skipped_pools_missing_code,
         cleared_schedule,
+        len(competition_failures),
     )
-    return {
-        "ok": True,
-        "status_code": 200,
+    payload: dict[str, Any] = {
+        "ok": ok,
+        "status_code": 200 if ok else 502,
         "created": created,
         "updated": updated,
         "changed": len(changed_matches),
         "skipped_missing_teams": skipped_missing_teams,
         "skipped_pools_missing_code": skipped_pools_missing_code,
-        **score_summary,
+        "sibling_leagues_scored": sum(1 for r in sibling_results if r.get("ok")),
+        "sibling_results": sibling_results,
+        "competition_failures": len(competition_failures),
+        **primary_summary,
     }
+    if competition_failures:
+        payload["error"] = str(
+            competition_failures[0].get("error") or "One or more competitions failed"
+        )
+    return payload
 
 
 def sync_all_active_competitions_then_score(
@@ -425,7 +635,7 @@ def sync_all_active_competitions_then_score(
     provider: FootballProvider,
     leagues: list[League],
 ) -> dict[str, Any]:
-    """Cron helper: sync each competition once, then score every league."""
+    """Cron helper: sync each competition once, then score every league with gap-fill."""
     key_to_leagues: dict[CompetitionKey, list[League]] = {}
     for league in leagues:
         pools = scoring_pools_for_league(db, league)
@@ -466,7 +676,7 @@ def sync_all_active_competitions_then_score(
                     seen.add(m.id)
                     changed.append(m)
         try:
-            score_summary = score_changed_matches(db, league, changed)
+            score_summary = score_league_after_sync(db, league, changed)
             record_cron_league_result(
                 db,
                 league,

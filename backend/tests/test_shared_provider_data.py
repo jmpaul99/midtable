@@ -341,8 +341,14 @@ def test_sync_all_active_competitions_calls_provider_once_per_competition(monkey
     )
     monkeypatch.setattr(
         sync_mod,
-        "score_changed_matches",
-        lambda *_a, **_k: {"scored": 0, "cascaded": 0, "skipped_missing_snapshot": 0},
+        "score_league_after_sync",
+        lambda *_a, **_k: {
+            "scored": 0,
+            "cascaded": 0,
+            "skipped_missing_snapshot": 0,
+            "gap_fill_seeds": 0,
+            "seed_count": 0,
+        },
     )
 
     db = MagicMock()
