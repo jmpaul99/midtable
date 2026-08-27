@@ -18,5 +18,50 @@ jobs:
           API_URL: ${{ secrets.API_URL }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
         run: |
-          curl -fsS -X POST "${API_URL}/internal/sync-and-score" \
-            -H "X-Cron-Secret: ${CRON_SECRET}"
+          set -euo pipefail
+          API_URL="${API_URL%/}"
+          if [ -z "${API_URL}" ] || [ -z "${CRON_SECRET}" ]; then
+            echo "API_URL and CRON_SECRET secrets must be set" >&2
+            exit 1
+          fi
+
+          # Best-effort warm-up so cold Cloud Run instances are ready before POST.
+          curl -fsS -o /dev/null "${API_URL}/health" || true
+
+          body="$(mktemp)"
+          attempt=1
+          max_attempts=4
+          sleep_s=5
+          while [ "${attempt}" -le "${max_attempts}" ]; do
+            http_code="$(
+              curl -sS -o "${body}" -w "%{http_code}" \
+                -X POST "${API_URL}/internal/sync-and-score" \
+                -H "X-Cron-Secret: ${CRON_SECRET}" \
+                -H "Content-Type: application/json" \
+                --data-raw '{}' \
+                || echo "000"
+            )"
+            if [ "${http_code}" = "200" ]; then
+              cat "${body}"
+              echo
+              exit 0
+            fi
+
+            echo "Attempt ${attempt}/${max_attempts} failed with HTTP ${http_code}" >&2
+            cat "${body}" >&2 || true
+            echo >&2
+
+            # Retry transient edge/platform failures only (not 401 auth).
+            # Do not retry app 500s after a long sync — those need a code fix.
+            case "${http_code}" in
+              403|429|502|503|504|000) ;;
+              *) exit 1 ;;
+            esac
+
+            if [ "${attempt}" -eq "${max_attempts}" ]; then
+              exit 1
+            fi
+            sleep "${sleep_s}"
+            sleep_s=$((sleep_s * 2))
+            attempt=$((attempt + 1))
+          done
