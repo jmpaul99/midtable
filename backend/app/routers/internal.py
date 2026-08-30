@@ -33,24 +33,49 @@ def sync_and_score(
     db: Session = Depends(get_db),
     provider: FootballDataProvider = Depends(get_football_provider),
 ) -> dict:
-    """Cron entrypoint: sync each competition once, then score all active leagues."""
-    leagues = list(
-        db.scalars(
-            select(League).where(League.status.in_(("active", "drafting")))
-        ).all()
-    )
-    logger.info("sync-and-score started leagues=%s", len(leagues))
-    payload = sync_all_active_competitions_then_score(db, provider, leagues)
-    logger.info(
-        "sync-and-score finished ok=%s failures=%s competitions=%s leagues=%s",
-        payload.get("ok"),
-        payload.get("failures"),
-        len(payload.get("competitions") or []),
-        len(payload.get("leagues") or []),
-    )
-    if payload.get("failures"):
-        raise HTTPException(status_code=502, detail=payload)
-    return payload
+    """Cron entrypoint: sync each competition once, then score all active leagues.
+
+    Soft failures (competition/score errors) already return HTTP 502 with a
+    structured payload. Any unexpected exception is also converted to HTTP 502
+    with ``error`` / ``error_type`` so Actions logs are actionable — opaque
+    FastAPI 500 ``{"detail":"Internal server error"}`` hid the root cause on
+    runs #343/#344/#348 even after the baselines savepoint fix (#22).
+    """
+    try:
+        leagues = list(
+            db.scalars(
+                select(League).where(League.status.in_(("active", "drafting")))
+            ).all()
+        )
+        logger.info("sync-and-score started leagues=%s", len(leagues))
+        payload = sync_all_active_competitions_then_score(db, provider, leagues)
+        logger.info(
+            "sync-and-score finished ok=%s failures=%s competitions=%s leagues=%s",
+            payload.get("ok"),
+            payload.get("failures"),
+            len(payload.get("competitions") or []),
+            len(payload.get("leagues") or []),
+        )
+        if payload.get("failures"):
+            raise HTTPException(status_code=502, detail=payload)
+        return payload
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("sync-and-score unhandled error")
+        try:
+            db.rollback()
+        except Exception:  # noqa: BLE001
+            logger.exception("sync-and-score rollback after unhandled error failed")
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "ok": False,
+                "failures": 1,
+                "error": str(exc)[:500],
+                "error_type": type(exc).__name__,
+            },
+        ) from exc
 
 
 @router.post(
