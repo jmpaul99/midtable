@@ -413,6 +413,9 @@ class MatchLogRow(BaseModel):
     id: UUID
     kickoff_at: datetime
     status: str
+    # Status in {FINISHED, AWARDED} only — not scoring is_finished() (which needs goals).
+    # UI uses this / status for Recent vs Upcoming and FT chrome; goals may still be null.
+    finished: bool = False
     scheduled_matchweek: int | None = None
     home_team_id: UUID
     away_team_id: UUID

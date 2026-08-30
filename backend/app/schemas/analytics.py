@@ -126,6 +126,8 @@ class MatchEventsResponse(BaseModel):
     match_id: UUID
     kickoff_at: str
     status: str
+    # Status-only finished flag (FINISHED/AWARDED). Independent of home_goals/away_goals.
+    finished: bool = False
     scheduled_matchweek: int | None = None
     duration: str | None = None
     stage: str | None = None

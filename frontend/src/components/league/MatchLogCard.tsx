@@ -1,6 +1,11 @@
 "use client";
 
-import { formatDate, formatNumber, formatScoreline, formatPeriodShort } from "@/lib/format";
+import {
+  formatDate,
+  formatMatchScoreDisplay,
+  formatNumber,
+  formatPeriodShort,
+} from "@/lib/format";
 import type { MatchLogRow, MatchOwnerInfo, UUID } from "@/lib/types";
 import { matchOwnerLabel } from "@/lib/types";
 import { Status } from "@/components/ui/State";
@@ -41,7 +46,8 @@ export function MatchLogCard({
   competitionType?: string | null;
 }) {
   const hasPoints = m.home_points != null || m.away_points != null;
-  const scoreline = formatScoreline(m.home_goals, m.away_goals);
+  // Finished rows without goals still show FT chrome ("–"), not a blank score.
+  const scoreline = formatMatchScoreDisplay(m.home_goals, m.away_goals, m.status);
   const homeOwner = matchOwnerLabel(m.home_owner);
   const awayOwner = matchOwnerLabel(m.away_owner);
   const meta = [

@@ -50,9 +50,19 @@ export function Status({ value }: { value: string }) {
   const live = normalized === "drafting";
   const good =
     live ||
-    ["active", "ready", "succeeded", "complete", "completed", "locked", "running", "ok"].includes(
-      normalized,
-    );
+    [
+      "active",
+      "ready",
+      "succeeded",
+      "complete",
+      "completed",
+      // Match FT: status-only finished (even before goals land on the row).
+      "finished",
+      "awarded",
+      "locked",
+      "running",
+      "ok",
+    ].includes(normalized);
   return (
     <span className="inline-flex items-center gap-1.5 rounded-full border border-line bg-surface px-2.5 py-1 text-xs font-bold capitalize text-ink">
       <i
