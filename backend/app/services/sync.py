@@ -10,6 +10,7 @@ from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import and_, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.logging_config import log_id
@@ -253,13 +254,21 @@ def _ensure_sync_status(
         .with_for_update()
     ).first()
     if status is None:
-        status = SyncStatus(
-            provider=provider,
-            competition_code=competition_code,
-            season_year=season_year,
-        )
-        db.add(status)
-        db.flush()
+        # Concurrent cron + commissioner can race on the unique
+        # (provider, competition_code, season_year). Insert under a savepoint so
+        # a unique violation cannot abort the caller's outer transaction
+        # (PendingRollbackError → opaque HTTP 500 from /internal/sync-and-score).
+        try:
+            with db.begin_nested():
+                status = SyncStatus(
+                    provider=provider,
+                    competition_code=competition_code,
+                    season_year=season_year,
+                )
+                db.add(status)
+                db.flush()
+        except IntegrityError:
+            status = None
         status = db.scalars(
             select(SyncStatus)
             .where(
@@ -296,12 +305,34 @@ def sync_competition_fixtures(
     season_year: int,
 ) -> dict[str, Any]:
     """Pull and upsert shared Match rows for one competition season."""
-    status = _ensure_sync_status(
-        db,
-        provider=provider_key,
-        competition_code=competition_code,
-        season_year=season_year,
-    )
+    try:
+        status = _ensure_sync_status(
+            db,
+            provider=provider_key,
+            competition_code=competition_code,
+            season_year=season_year,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.exception(
+            "sync_competition lock lookup failed competition=%s/%s",
+            competition_code,
+            season_year,
+        )
+        try:
+            db.rollback()
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "sync_competition rollback after lock lookup failed competition=%s/%s",
+                competition_code,
+                season_year,
+            )
+        return {
+            "ok": False,
+            "error": f"sync lock lookup failed: {exc}",
+            "status_code": 500,
+            "competition_code": competition_code,
+            "season_year": season_year,
+        }
     if status.in_progress and not _lock_stale(status):
         logger.warning(
             "sync_competition soft-fail competition=%s/%s reason=in_progress",
@@ -327,8 +358,30 @@ def sync_competition_fixtures(
     status.in_progress_since = datetime.now(UTC)
     status.last_error = None
     # Commit so other requests see the lock (cron + commissioner across processes).
-    db.commit()
-    db.refresh(status)
+    try:
+        db.commit()
+        db.refresh(status)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception(
+            "sync_competition failed to acquire lock competition=%s/%s",
+            competition_code,
+            season_year,
+        )
+        try:
+            db.rollback()
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "sync_competition rollback after lock acquire failed competition=%s/%s",
+                competition_code,
+                season_year,
+            )
+        return {
+            "ok": False,
+            "error": f"sync lock acquire failed: {exc}",
+            "status_code": 500,
+            "competition_code": competition_code,
+            "season_year": season_year,
+        }
 
     changed_matches: list[Match] = []
     created = 0
@@ -463,17 +516,39 @@ def sync_competition_fixtures(
             competition_code,
             season_year,
         )
-        db.rollback()
-        status = _ensure_sync_status(
-            db,
-            provider=provider_key,
-            competition_code=competition_code,
-            season_year=season_year,
-        )
-        status.in_progress = False
-        status.in_progress_since = None
-        status.last_error = str(exc)
-        db.commit()
+        try:
+            db.rollback()
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "sync_competition rollback failed competition=%s/%s",
+                competition_code,
+                season_year,
+            )
+        try:
+            status = _ensure_sync_status(
+                db,
+                provider=provider_key,
+                competition_code=competition_code,
+                season_year=season_year,
+            )
+            status.in_progress = False
+            status.in_progress_since = None
+            status.last_error = str(exc)
+            db.commit()
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "sync_competition failed to clear lock competition=%s/%s",
+                competition_code,
+                season_year,
+            )
+            try:
+                db.rollback()
+            except Exception:  # noqa: BLE001
+                logger.exception(
+                    "sync_competition rollback after lock clear failed competition=%s/%s",
+                    competition_code,
+                    season_year,
+                )
         return {
             "ok": False,
             "error": str(exc),
@@ -691,7 +766,36 @@ def sync_all_active_competitions_then_score(
     provider: FootballProvider,
     leagues: list[League],
 ) -> dict[str, Any]:
-    """Cron helper: sync each competition once, then score every league with gap-fill."""
+    """Cron helper: sync each competition once, then score every league with gap-fill.
+
+    Never raises on soft or unexpected failures — returns ``failures`` so the
+    /internal/sync-and-score handler can emit HTTP 502 with a structured body
+    instead of an opaque FastAPI 500.
+    """
+    try:
+        return _sync_all_active_competitions_then_score_body(db, provider, leagues)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("sync_all_active_competitions_then_score unhandled")
+        try:
+            db.rollback()
+        except Exception:  # noqa: BLE001
+            logger.exception("sync_all rollback after unhandled error failed")
+        return {
+            "ok": False,
+            "failures": 1,
+            "error": str(exc)[:500],
+            "error_type": type(exc).__name__,
+            "competitions": [],
+            "leagues": [],
+        }
+
+
+def _sync_all_active_competitions_then_score_body(
+    db: Session,
+    provider: FootballProvider,
+    leagues: list[League],
+) -> dict[str, Any]:
+    """Inner cron sync+score loop (raises only if something escapes per-item handlers)."""
     key_to_leagues: dict[CompetitionKey, list[League]] = {}
     for league in leagues:
         pools = scoring_pools_for_league(db, league)
