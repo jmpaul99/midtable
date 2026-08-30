@@ -365,17 +365,22 @@ def sync_competition_fixtures(
         status.in_progress = False
         status.in_progress_since = None
         db.flush()
+        # Baselines are best-effort. Use a savepoint so a DB error (e.g. concurrent
+        # standings_snapshots unique violation vs commissioner sync) cannot abort the
+        # outer transaction — that used to poison the session and make the caller's
+        # db.commit() raise PendingRollbackError → HTTP 500 from /internal/sync-and-score.
         try:
             from app.services.standings import ensure_competition_season_table_baselines
 
-            ensure_competition_season_table_baselines(
-                db,
-                provider,
-                provider_key=provider_key,
-                competition_code=competition_code,
-                season_year=season_year,
-            )
-            db.flush()
+            with db.begin_nested():
+                ensure_competition_season_table_baselines(
+                    db,
+                    provider,
+                    provider_key=provider_key,
+                    competition_code=competition_code,
+                    season_year=season_year,
+                )
+                db.flush()
         except Exception:  # noqa: BLE001
             logger.warning(
                 "sync_competition table baselines failed competition=%s/%s",
@@ -643,7 +648,8 @@ def sync_all_active_competitions_then_score(
             key_to_leagues.setdefault(key, []).append(league)
 
     competition_results: list[dict[str, Any]] = []
-    changed_by_key: dict[CompetitionKey, list[Match]] = {}
+    # Persist match ids (not ORM instances) so later scoring survives commit/rollback.
+    changed_ids_by_key: dict[CompetitionKey, list[int]] = {}
     failures = 0
 
     for key, _league_list in key_to_leagues.items():
@@ -658,8 +664,48 @@ def sync_all_active_competitions_then_score(
         # Drop Match objects before serializing response; keep ids for scoring.
         changed = list(result.pop("changed_matches", []) or [])
         if result.get("ok"):
-            db.commit()
-            changed_by_key[key] = changed
+            try:
+                db.commit()
+            except Exception as exc:  # noqa: BLE001
+                logger.exception(
+                    "sync_all commit failed after competition=%s/%s",
+                    competition_code,
+                    season_year,
+                )
+                db.rollback()
+                # Lock may still be held from the in-progress commit at sync start.
+                try:
+                    status = _ensure_sync_status(
+                        db,
+                        provider=provider_key,
+                        competition_code=competition_code,
+                        season_year=season_year,
+                    )
+                    status.in_progress = False
+                    status.in_progress_since = None
+                    status.last_error = str(exc)
+                    db.commit()
+                except Exception:  # noqa: BLE001
+                    logger.exception(
+                        "sync_all failed to clear lock competition=%s/%s",
+                        competition_code,
+                        season_year,
+                    )
+                    db.rollback()
+                failures += 1
+                competition_results.append(
+                    {
+                        "ok": False,
+                        "error": str(exc),
+                        "status_code": 500,
+                        "competition_code": competition_code,
+                        "season_year": season_year,
+                    }
+                )
+                continue
+            changed_ids_by_key[key] = [
+                mid for mid in (m.id for m in changed) if mid is not None
+            ]
         else:
             failures += 1
         competition_results.append(result)
@@ -668,13 +714,20 @@ def sync_all_active_competitions_then_score(
     for league in leagues:
         pools = scoring_pools_for_league(db, league)
         league_keys = set(competition_keys_from_pools(pools))
-        changed: list[Match] = []
+        match_ids: list[int] = []
         seen: set[int] = set()
         for key in league_keys:
-            for m in changed_by_key.get(key, []):
-                if m.id not in seen:
-                    seen.add(m.id)
-                    changed.append(m)
+            for mid in changed_ids_by_key.get(key, []):
+                if mid not in seen:
+                    seen.add(mid)
+                    match_ids.append(mid)
+        changed: list[Match] = []
+        if match_ids:
+            by_id = {
+                m.id: m
+                for m in db.scalars(select(Match).where(Match.id.in_(match_ids))).all()
+            }
+            changed = [by_id[mid] for mid in match_ids if mid in by_id]
         try:
             score_summary = score_league_after_sync(db, league, changed)
             record_cron_league_result(
