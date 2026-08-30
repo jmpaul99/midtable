@@ -385,8 +385,20 @@ def sync_competition_fixtures(
                     existing.scheduled_matchweek = pm.matchday
                 existing.kickoff_at = pm.kickoff_at
                 existing.status = pm.status
-                existing.home_goals = pm.home_goals
-                existing.away_goals = pm.away_goals
+                # Thin competition-list payloads can leave FINISHED rows with
+                # null goals even after status is final. Never wipe known scores
+                # with a null/null provider row while the match stays finished.
+                provider_finished = pm.status in FINISHED_STATUSES
+                wiping_finished_goals = (
+                    provider_finished
+                    and pm.home_goals is None
+                    and pm.away_goals is None
+                    and existing.home_goals is not None
+                    and existing.away_goals is not None
+                )
+                if not wiping_finished_goals:
+                    existing.home_goals = pm.home_goals
+                    existing.away_goals = pm.away_goals
                 existing.duration = pm.duration or "REGULAR"
                 if pm.stage:
                     existing.stage = pm.stage
