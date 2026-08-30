@@ -3,10 +3,18 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 from uuid import uuid4
 
+from app.services.scoring.engine import (
+    MatchInput,
+    RankedTeam,
+    ResultPoints,
+    UpsetRules,
+    score_match_events,
+)
 from app.services.sync import (
     gap_fill_seeds_for_league,
     merge_scoring_seeds,
@@ -89,6 +97,28 @@ def test_gap_fill_seeds_earliest_per_pool(monkeypatch):
     assert sorted(m.id for m in seeds) == [11, 21]
 
 
+def test_gap_fill_seeds_all_unscored(monkeypatch):
+    from app.services import sync as sync_mod
+
+    league = SimpleNamespace(id=7)
+    early = _finished_match(match_id=11, kickoff_hour=10, pool_id=1)
+    late = _finished_match(match_id=12, kickoff_hour=18, pool_id=1)
+
+    def fake_pool(_db, _league, match, lookup=None):
+        return SimpleNamespace(id=match._pool_id)
+
+    monkeypatch.setattr(
+        sync_mod,
+        "unscored_finished_matches",
+        lambda *_a, **_k: [late, early],
+    )
+    monkeypatch.setattr(sync_mod, "pool_lookup_for_league", lambda *_a, **_k: {})
+    monkeypatch.setattr(sync_mod, "pool_for_match", fake_pool)
+
+    seeds = gap_fill_seeds_for_league(MagicMock(), league, all_unscored=True)
+    assert [m.id for m in seeds] == [11, 12]
+
+
 def test_score_league_after_sync_merges_changed_and_gaps(monkeypatch):
     from app.services import sync as sync_mod
 
@@ -96,8 +126,16 @@ def test_score_league_after_sync_merges_changed_and_gaps(monkeypatch):
     changed = [_finished_match(match_id=5, kickoff_hour=16)]
     gap_seed = _finished_match(match_id=2, kickoff_hour=10)
     seen: dict[str, list[int]] = {}
+    gap_calls = {"n": 0}
 
-    monkeypatch.setattr(sync_mod, "gap_fill_seeds_for_league", lambda *_a, **_k: [gap_seed])
+    def fake_gap(_db, _league, all_unscored=False):
+        gap_calls["n"] += 1
+        # After first scoring pass, earliest seed is no longer stuck.
+        if gap_calls["n"] == 1:
+            return [gap_seed]
+        return []
+
+    monkeypatch.setattr(sync_mod, "gap_fill_seeds_for_league", fake_gap)
 
     def fake_score(_db, _league, seeds):
         seen["seeds"] = [m.id for m in seeds]
@@ -110,6 +148,103 @@ def test_score_league_after_sync_merges_changed_and_gaps(monkeypatch):
     assert summary["gap_fill_seeds"] == 1
     assert summary["seed_count"] == 2
     assert summary["scored"] == 2
+
+
+def test_score_league_after_sync_unblocks_later_when_earliest_stuck(monkeypatch):
+    """Earliest gap seed that stays unscored must not leave later fixtures unseeded."""
+    from app.services import sync as sync_mod
+
+    league = SimpleNamespace(id=3, public_id=uuid4())
+    early = _finished_match(match_id=10, kickoff_hour=10)
+    late = _finished_match(match_id=20, kickoff_hour=16)
+    calls: list[list[int]] = []
+
+    def fake_gap(_db, _league, all_unscored=False):
+        if all_unscored:
+            return [early, late]
+        # Earliest remains stuck after the first scoring pass.
+        return [early]
+
+    monkeypatch.setattr(sync_mod, "gap_fill_seeds_for_league", fake_gap)
+
+    def fake_score(_db, _league, seeds):
+        calls.append([m.id for m in seeds])
+        return {
+            "scored": len(seeds),
+            "cascaded": len(seeds),
+            "skipped_missing_snapshot": 0,
+        }
+
+    monkeypatch.setattr(sync_mod, "score_changed_matches", fake_score)
+
+    summary = score_league_after_sync(MagicMock(), league, [])
+    assert calls == [[10], [20]]
+    assert summary["scored"] == 2
+    assert summary["gap_fill_seeds"] == 2
+    assert summary["seed_count"] == 2
+
+
+def test_zero_point_result_yields_no_fantasy_events():
+    """Empty score_match_events is the stuck-seed condition; sync writes a marker."""
+    ranked = {
+        10: RankedTeam(team_id=10, rank=1, played=10),
+        20: RankedTeam(team_id=20, rank=2, played=10),
+    }
+    zero = ResultPoints(win=Decimal(0), draw=Decimal(0), loss=Decimal(0))
+    rules = UpsetRules(
+        enabled=False,
+        rank_source="league_table_at_kickoff",
+        min_played=0,
+        thresholds=(),
+    )
+    match = MatchInput(
+        match_id=1,
+        pool_id=1,
+        home_team_id=10,
+        away_team_id=20,
+        kickoff_at=datetime(2026, 8, 29, 12, tzinfo=UTC),
+        home_goals=1,
+        away_goals=0,
+        status="FINISHED",
+        duration="REGULAR",
+    )
+    assert score_match_events(match, ranked, result_points=zero, upset_rules=rules) == ()
+
+
+def test_rescore_writes_processed_marker_for_zero_point_results():
+    from app.services.sync import _rescore_plan_matches
+
+    league = SimpleNamespace(id=1, public_id=uuid4())
+    pool = SimpleNamespace(
+        id=7,
+        competition_code="PL",
+        season_year=2026,
+        provider="football-data.org",
+    )
+    match = _finished_match(match_id=42, kickoff_hour=15)
+    db = MagicMock()
+    db.scalars.return_value.all.return_value = []
+    added: list[object] = []
+    db.add.side_effect = lambda obj: added.append(obj)
+
+    scored, skipped, _ids = _rescore_plan_matches(
+        db,
+        league=league,
+        pool=pool,
+        plan_match_ids=[42],
+        by_id={42: match},
+        result_points=ResultPoints(win=Decimal(0), draw=Decimal(0), loss=Decimal(0)),
+        upset_rules=UpsetRules(enabled=False, min_played=0, thresholds=()),
+        fixed_ranks={
+            10: RankedTeam(team_id=10, rank=1, played=8),
+            20: RankedTeam(team_id=20, rank=2, played=8),
+        },
+    )
+    assert scored == 1
+    assert skipped == 0
+    assert len(added) == 1
+    assert added[0].event_type == "processed"
+    assert added[0].points == Decimal(0)
 
 
 def test_sync_league_fixtures_scores_sibling_leagues(monkeypatch):
