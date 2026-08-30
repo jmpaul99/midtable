@@ -367,3 +367,74 @@ def test_list_matches_skips_detail_for_future_timed_row():
     assert client.get.call_count == 1
     assert matches[0].status == "TIMED"
     assert matches[0].home_goals is None
+
+
+def test_list_matches_summary_log_fires_when_all_counters_zero(caplog):
+    """All-zero counters must still emit list_matches summary (no silent pass)."""
+    import logging
+
+    client = MagicMock()
+    client.get.return_value = _response({"matches": []})
+    provider = FootballDataProvider("token", client=client)
+    with caplog.at_level(logging.INFO, logger="app.providers.football_data"):
+        matches, _rate = provider.list_matches("PL", 2026)
+    assert matches == []
+    summary = [
+        r
+        for r in caplog.records
+        if "list_matches summary" in r.getMessage()
+    ]
+    assert len(summary) == 1
+    msg = summary[0].getMessage()
+    assert "kept=0" in msg
+    assert "overdue_fetch_attempted=0" in msg
+    assert "detail_enriched=0" in msg
+    assert "skipped_parse=0" in msg
+    assert "finished_missing_goals=0" in msg
+
+
+def test_list_matches_logs_each_detail_get(caplog):
+    import logging
+    from datetime import UTC, datetime, timedelta
+
+    client = MagicMock()
+    kickoff = (datetime.now(UTC) - timedelta(hours=5)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    def _get(path, params=None):
+        if "/competitions/" in path:
+            return _response(
+                {
+                    "matches": [
+                        {
+                            "id": 901,
+                            "utcDate": kickoff,
+                            "status": "TIMED",
+                            "homeTeam": {"id": 1},
+                            "awayTeam": {"id": 2},
+                            "score": {"fullTime": {"home": None, "away": None}},
+                        }
+                    ]
+                }
+            )
+        return _response(
+            {
+                "id": 901,
+                "status": "FINISHED",
+                "score": {"fullTime": {"home": 1, "away": 0}},
+            }
+        )
+
+    client.get.side_effect = _get
+    provider = FootballDataProvider("token", client=client)
+    with caplog.at_level(logging.INFO, logger="app.providers.football_data"):
+        matches, _rate = provider.list_matches("PL", 2026)
+    assert matches[0].status == "FINISHED"
+    detail_logs = [
+        r.getMessage()
+        for r in caplog.records
+        if "detail GET" in r.getMessage() and "external_id=901" in r.getMessage()
+    ]
+    assert len(detail_logs) == 1
+    assert "list_status=TIMED" in detail_logs[0]
+    assert "detail_status=FINISHED" in detail_logs[0]
+    assert "applied=True" in detail_logs[0]

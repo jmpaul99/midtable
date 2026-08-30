@@ -16,6 +16,11 @@ from sqlalchemy.orm import Session
 from app.logging_config import log_id
 from app.models import League, Match, ScoringEvent, SyncStatus, Team, TeamPool
 from app.providers.base import FootballProvider, RateLimitInfo
+from app.providers.football_data import (
+    FootballDataError,
+    FootballDataProvider,
+    respect_rate_limit,
+)
 from app.services.league_jobs import record_cron_league_result
 from app.services.match_adapters import match_to_input
 from app.services.match_queries import (
@@ -27,6 +32,10 @@ from app.services.match_queries import (
     pool_lookup_for_league,
     scoring_pools_for_league,
 )
+
+# Cap detail GETs for DB-only overdue rows so commissioner sync cannot hang.
+OVERDUE_DB_DETAIL_FETCH_CAP = 8
+OVERDUE_DB_AFTER = timedelta(hours=2)
 from app.services.ranking_catalog import (
     ensure_fixed_ranking_for_league,
     ranks_for_league,
@@ -296,6 +305,180 @@ def _lock_stale(status: SyncStatus) -> bool:
     return age > timedelta(minutes=STALE_LOCK_MINUTES)
 
 
+def _overdue_nonterminal_db_matches(
+    db: Session,
+    *,
+    provider_key: str,
+    competition_code: str,
+    season_year: int,
+    now: datetime,
+    limit: int = OVERDUE_DB_DETAIL_FETCH_CAP,
+) -> list[Match]:
+    """DB Match rows still non-terminal whose kickoff is overdue by >= 2h.
+
+    Covers fixtures the competition list omitted (or left TIMED) so they are
+    never stuck forever after list upsert alone.
+    """
+    cutoff = now - OVERDUE_DB_AFTER
+    rows = list(
+        db.scalars(
+            select(Match)
+            .where(
+                Match.provider == provider_key,
+                Match.competition_code == competition_code,
+                Match.season_year == season_year,
+                Match.kickoff_at <= cutoff,
+                Match.status.notin_(tuple(FINISHED_STATUSES)),
+            )
+            .order_by(Match.kickoff_at.desc())
+            .limit(limit)
+        ).all()
+    )
+    return rows
+
+
+def _apply_detail_finish_to_match(
+    row: Match,
+    detail: dict[str, Any],
+) -> bool:
+    """Apply GET /matches/{id} status+goals only when detail is terminal.
+
+    Returns True when the row changed. Never invents FINISHED from null goals
+    alone — detail status must be FINISHED/AWARDED.
+    """
+    detail_status = str(detail.get("status") or "")
+    if detail_status.upper() not in FINISHED_STATUSES:
+        return False
+    detail_home, detail_away = FootballDataProvider.goals_from_match_payload(
+        detail, status=detail_status
+    )
+    before = (row.status, row.home_goals, row.away_goals, row.duration)
+    row.status = detail_status.upper()
+    if detail_home is not None and detail_away is not None:
+        row.home_goals = detail_home
+        row.away_goals = detail_away
+    detail_score = detail.get("score") or {}
+    if isinstance(detail_score, dict) and detail_score.get("duration"):
+        row.duration = str(detail_score.get("duration") or row.duration or "REGULAR")
+    row.last_synced_at = datetime.now(UTC)
+    after = (row.status, row.home_goals, row.away_goals, row.duration)
+    return before != after
+
+
+def enrich_overdue_db_matches_from_detail(
+    db: Session,
+    provider: FootballProvider,
+    *,
+    provider_key: str,
+    competition_code: str,
+    season_year: int,
+    rate: RateLimitInfo | None,
+    now: datetime | None = None,
+    cap: int = OVERDUE_DB_DETAIL_FETCH_CAP,
+) -> tuple[list[Match], RateLimitInfo | None, int]:
+    """GET match detail for overdue non-terminal DB rows the list may have missed.
+
+    Cap keeps commissioner sync bounded. Uses respect_rate_limit between calls;
+    stops early on rate-limit errors so the request path cannot hang retrying.
+    """
+    get_match = getattr(provider, "get_match", None)
+    if not callable(get_match):
+        return [], rate, 0
+
+    clock = now or datetime.now(UTC)
+    candidates = _overdue_nonterminal_db_matches(
+        db,
+        provider_key=provider_key,
+        competition_code=competition_code,
+        season_year=season_year,
+        now=clock,
+        limit=cap,
+    )
+    changed: list[Match] = []
+    attempted = 0
+    current_rate = rate
+    for row in candidates:
+        attempted += 1
+        list_status = row.status
+        applied = False
+        detail_status = list_status
+        try:
+            if current_rate is not None:
+                respect_rate_limit(current_rate)
+            detail, current_rate = get_match(row.external_id)
+            if not isinstance(detail, dict):
+                logger.warning(
+                    "overdue DB detail non-object competition=%s/%s external_id=%s",
+                    competition_code,
+                    season_year,
+                    row.external_id,
+                )
+            else:
+                detail_status = str(detail.get("status") or list_status)
+                if _apply_detail_finish_to_match(row, detail):
+                    applied = True
+                    changed.append(row)
+        except FootballDataError as exc:
+            if exc.rate_limit.requests_available_minute is not None or (
+                exc.rate_limit.retry_after_seconds is not None
+            ):
+                current_rate = exc.rate_limit
+            logger.warning(
+                "overdue DB detail fetch failed competition=%s/%s external_id=%s "
+                "error=%s",
+                competition_code,
+                season_year,
+                row.external_id,
+                exc,
+            )
+            logger.info(
+                "football-data.org detail GET competition=%s season=%s "
+                "external_id=%s list_status=%s detail_status=%s applied=%s "
+                "source=db_overdue",
+                competition_code,
+                season_year,
+                row.external_id,
+                list_status,
+                detail_status,
+                False,
+            )
+            if getattr(exc, "rate_limited", False):
+                # Do not keep sleeping/retrying in the request path.
+                break
+            continue
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "overdue DB detail fetch failed competition=%s/%s external_id=%s "
+                "error=%s",
+                competition_code,
+                season_year,
+                row.external_id,
+                exc,
+            )
+            continue
+        logger.info(
+            "football-data.org detail GET competition=%s season=%s "
+            "external_id=%s list_status=%s detail_status=%s applied=%s "
+            "source=db_overdue",
+            competition_code,
+            season_year,
+            row.external_id,
+            list_status,
+            detail_status,
+            applied,
+        )
+    logger.info(
+        "sync_competition overdue DB detail pass competition=%s/%s "
+        "candidates=%s attempted=%s applied=%s",
+        competition_code,
+        season_year,
+        len(candidates),
+        attempted,
+        len(changed),
+    )
+    return changed, current_rate, attempted
+
+
 def sync_competition_fixtures(
     db: Session,
     provider: FootballProvider,
@@ -472,6 +655,34 @@ def sync_competition_fixtures(
                 if before != after:
                     updated += 1
                     changed_matches.append(existing)
+
+        # List upsert alone never revisits DB TIMED rows the competition list
+        # omitted. Detail-fetch overdue non-terminal rows (cap) so Saturday
+        # fixtures cannot stay TIMED forever when absent from the list payload.
+        db.flush()
+        overdue_changed, rate, overdue_attempted = enrich_overdue_db_matches_from_detail(
+            db,
+            provider,
+            provider_key=provider_key,
+            competition_code=competition_code,
+            season_year=season_year,
+            rate=rate,
+        )
+        for row in overdue_changed:
+            updated += 1
+            if row.id is None or all(
+                (m.id is None or m.id != row.id) for m in changed_matches
+            ):
+                changed_matches.append(row)
+        if overdue_attempted:
+            logger.info(
+                "sync_competition overdue DB enrich competition=%s/%s "
+                "attempted=%s finished=%s",
+                competition_code,
+                season_year,
+                overdue_attempted,
+                len(overdue_changed),
+            )
 
         db.flush()
         status.last_sync_at = datetime.now(UTC)

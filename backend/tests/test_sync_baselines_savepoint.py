@@ -101,7 +101,9 @@ def test_sync_competition_uses_savepoint_around_baselines(monkeypatch):
     db.begin_nested.side_effect = lambda: fake_nested()
 
     provider = MagicMock()
+    del provider.get_match
     provider.list_matches.return_value = ([], None)
+    db.scalars.return_value.all.return_value = []
 
     def boom_baselines(*_a, **_k):
         raise IntegrityError("statement", {}, Exception("unique"))
