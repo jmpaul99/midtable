@@ -266,3 +266,104 @@ def test_list_matches_detail_can_fill_from_goals_events_alone():
     matches, _rate = provider.list_matches("PL", 2026)
     assert matches[0].home_goals == 1
     assert matches[0].away_goals == 4
+
+
+def test_should_fetch_match_detail_overdue_non_terminal():
+    from datetime import UTC, datetime, timedelta
+
+    now = datetime(2026, 8, 30, 17, tzinfo=UTC)
+    kickoff = now - timedelta(hours=5)
+    assert FootballDataProvider.should_fetch_match_detail(
+        status="TIMED",
+        home_goals=None,
+        away_goals=None,
+        kickoff_at=kickoff,
+        now=now,
+    )
+    # Still within 2h window — do not detail-fetch yet.
+    assert not FootballDataProvider.should_fetch_match_detail(
+        status="TIMED",
+        home_goals=None,
+        away_goals=None,
+        kickoff_at=now - timedelta(hours=1),
+        now=now,
+    )
+    # Future kickoff — never.
+    assert not FootballDataProvider.should_fetch_match_detail(
+        status="TIMED",
+        home_goals=None,
+        away_goals=None,
+        kickoff_at=now + timedelta(hours=3),
+        now=now,
+    )
+
+
+def test_list_matches_fetches_detail_for_overdue_timed_row():
+    """Stuck TIMED list row after kickoff → GET detail; apply FINISHED + goals."""
+    client = MagicMock()
+
+    def _get(path, params=None):
+        if "/competitions/" in path:
+            return _response(
+                {
+                    "matches": [
+                        {
+                            "id": 901,
+                            "utcDate": "2026-08-29T14:00:00Z",
+                            "status": "TIMED",
+                            "matchday": 3,
+                            "homeTeam": {"id": 1044},
+                            "awayTeam": {"id": 62},
+                            "score": {
+                                "fullTime": {"home": None, "away": None},
+                            },
+                        }
+                    ]
+                }
+            )
+        assert path == "/matches/901"
+        return _response(
+            {
+                "id": 901,
+                "utcDate": "2026-08-29T14:00:00Z",
+                "status": "FINISHED",
+                "homeTeam": {"id": 1044},
+                "awayTeam": {"id": 62},
+                "score": {"fullTime": {"home": 1, "away": 1}},
+                "goals": [
+                    {"minute": 33, "score": {"home": 1, "away": 0}},
+                    {"minute": 71, "score": {"home": 1, "away": 1}},
+                ],
+            }
+        )
+
+    client.get.side_effect = _get
+    provider = FootballDataProvider("token", client=client)
+    matches, _rate = provider.list_matches("PL", 2026)
+    assert client.get.call_count == 2
+    assert matches[0].status == "FINISHED"
+    assert matches[0].home_goals == 1
+    assert matches[0].away_goals == 1
+
+
+def test_list_matches_skips_detail_for_future_timed_row():
+    client = MagicMock()
+    client.get.return_value = _response(
+        {
+            "matches": [
+                {
+                    "id": 902,
+                    "utcDate": "2099-08-29T14:00:00Z",
+                    "status": "TIMED",
+                    "homeTeam": {"id": 1},
+                    "awayTeam": {"id": 2},
+                    "score": {"fullTime": {"home": None, "away": None}},
+                }
+            ]
+        }
+    )
+    provider = FootballDataProvider("token", client=client)
+    matches, _rate = provider.list_matches("PL", 2026)
+    assert client.get.call_count == 1
+    assert matches[0].status == "TIMED"
+    assert matches[0].home_goals is None
