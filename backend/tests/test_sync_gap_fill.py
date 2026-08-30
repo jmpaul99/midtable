@@ -280,7 +280,10 @@ def test_sync_competition_keeps_finished_goals_when_list_payload_null(monkeypatc
     )
     db = MagicMock()
     db.scalars.return_value.first.return_value = existing
+    db.scalars.return_value.all.return_value = []
     provider = MagicMock()
+    # Avoid MagicMock auto-get_match on the overdue DB pass.
+    del provider.get_match
     provider.list_matches.return_value = (
         [
             ProviderMatch(
@@ -359,7 +362,9 @@ def test_sync_competition_does_not_downgrade_finished_to_timed_thin_list(monkeyp
     )
     db = MagicMock()
     db.scalars.return_value.first.return_value = existing
+    db.scalars.return_value.all.return_value = []
     provider = MagicMock()
+    del provider.get_match
     provider.list_matches.return_value = (
         [
             ProviderMatch(
@@ -465,3 +470,159 @@ def test_sync_league_fixtures_scores_sibling_leagues(monkeypatch):
     assert result["sibling_leagues_scored"] == 1
     assert result["scored"] == 1
     assert result["changed"] == 1
+
+
+def test_sync_competition_db_overdue_pass_finishes_list_omitted_timed(monkeypatch):
+    """List omits an overdue TIMED DB row — DB detail pass still finishes it."""
+    from datetime import UTC, datetime, timedelta
+
+    from app.providers.base import RateLimitInfo
+    from app.services import sync as sync_mod
+
+    status = SimpleNamespace(
+        in_progress=False,
+        in_progress_since=None,
+        last_error=None,
+        last_sync_at=None,
+        last_summary=None,
+        requests_available_minute=None,
+    )
+    now = datetime(2026, 8, 30, 17, 47, tzinfo=UTC)
+    omitted = SimpleNamespace(
+        id=19,
+        provider="football-data.org",
+        competition_code="PL",
+        season_year=2026,
+        external_id="sat-1",
+        home_team_id=1,
+        away_team_id=2,
+        kickoff_at=now - timedelta(hours=26),
+        status="TIMED",
+        home_goals=None,
+        away_goals=None,
+        duration="REGULAR",
+        scheduled_matchweek=3,
+        stage="REGULAR_SEASON",
+        last_synced_at=None,
+    )
+
+    db = MagicMock()
+    db.scalars.return_value.first.return_value = None
+    db.scalars.return_value.all.return_value = [omitted]
+
+    provider = MagicMock()
+    provider.list_matches.return_value = (
+        [],  # competition list omits Saturday
+        RateLimitInfo(requests_available_minute=10),
+    )
+    provider.get_match.return_value = (
+        {
+            "id": "sat-1",
+            "status": "FINISHED",
+            "score": {"duration": "REGULAR", "fullTime": {"home": 2, "away": 1}},
+            "goals": [],
+        },
+        RateLimitInfo(requests_available_minute=9),
+    )
+
+    monkeypatch.setattr(sync_mod, "_ensure_sync_status", lambda *_a, **_k: status)
+    monkeypatch.setattr(
+        sync_mod,
+        "_overdue_nonterminal_db_matches",
+        lambda *_a, **_k: [omitted],
+    )
+    import app.services.standings as standings_mod
+
+    monkeypatch.setattr(
+        standings_mod,
+        "ensure_competition_season_table_baselines",
+        lambda *_a, **_k: None,
+    )
+
+    result = sync_mod.sync_competition_fixtures(
+        db,
+        provider,
+        provider_key="football-data.org",
+        competition_code="PL",
+        season_year=2026,
+    )
+    assert result["ok"] is True
+    assert omitted.status == "FINISHED"
+    assert omitted.home_goals == 2
+    assert omitted.away_goals == 1
+    assert result["updated"] == 1
+    assert result["changed"] == 1
+    provider.get_match.assert_called_once_with("sat-1")
+
+
+def test_sync_competition_db_overdue_does_not_apply_timed_detail(monkeypatch):
+    """Detail still TIMED must not be re-inferred as FINISHED."""
+    from datetime import UTC, datetime
+
+    from app.providers.base import RateLimitInfo
+    from app.services import sync as sync_mod
+
+    status = SimpleNamespace(
+        in_progress=False,
+        in_progress_since=None,
+        last_error=None,
+        last_sync_at=None,
+        last_summary=None,
+        requests_available_minute=None,
+    )
+    omitted = SimpleNamespace(
+        id=19,
+        provider="football-data.org",
+        competition_code="PL",
+        season_year=2026,
+        external_id="sat-1",
+        home_team_id=1,
+        away_team_id=2,
+        kickoff_at=datetime(2026, 8, 29, 14, tzinfo=UTC),
+        status="TIMED",
+        home_goals=None,
+        away_goals=None,
+        duration="REGULAR",
+        scheduled_matchweek=3,
+        stage="REGULAR_SEASON",
+        last_synced_at=None,
+    )
+    db = MagicMock()
+    db.scalars.return_value.first.return_value = None
+    db.scalars.return_value.all.return_value = [omitted]
+    provider = MagicMock()
+    provider.list_matches.return_value = ([], RateLimitInfo(requests_available_minute=10))
+    provider.get_match.return_value = (
+        {
+            "id": "sat-1",
+            "status": "TIMED",
+            "score": {"fullTime": {"home": None, "away": None}},
+        },
+        RateLimitInfo(requests_available_minute=9),
+    )
+    monkeypatch.setattr(sync_mod, "_ensure_sync_status", lambda *_a, **_k: status)
+    monkeypatch.setattr(
+        sync_mod,
+        "_overdue_nonterminal_db_matches",
+        lambda *_a, **_k: [omitted],
+    )
+    import app.services.standings as standings_mod
+
+    monkeypatch.setattr(
+        standings_mod,
+        "ensure_competition_season_table_baselines",
+        lambda *_a, **_k: None,
+    )
+
+    result = sync_mod.sync_competition_fixtures(
+        db,
+        provider,
+        provider_key="football-data.org",
+        competition_code="PL",
+        season_year=2026,
+    )
+    assert result["ok"] is True
+    assert omitted.status == "TIMED"
+    assert omitted.home_goals is None
+    assert result["updated"] == 0
+    assert result["changed"] == 0

@@ -352,6 +352,7 @@ class FootballDataProvider:
         skipped_parse = 0
         finished_missing_goals = 0
         detail_enriched = 0
+        overdue_fetch_attempted = 0
         now = datetime.now(UTC)
         for item in payload.get("matches", []):
             if not isinstance(item, dict):
@@ -372,6 +373,7 @@ class FootballDataProvider:
                 skipped_parse += 1
                 continue
             status = str(item.get("status") or "SCHEDULED")
+            list_status = status
             home_goals, away_goals = self.goals_from_match_payload(item, status=status)
             # Competition /matches list is thinner than GET /matches/{id}. Enrich
             # when finished rows lack goals, or overdue rows are still non-terminal
@@ -383,9 +385,13 @@ class FootballDataProvider:
                 kickoff_at=kickoff,
                 now=now,
             ):
+                overdue_fetch_attempted += 1
+                external_id = str(item["id"])
+                applied = False
+                detail_status = list_status
                 try:
                     respect_rate_limit(rate)
-                    detail, rate = self.get_match(str(item["id"]))
+                    detail, rate = self.get_match(external_id)
                     detail_status = str(detail.get("status") or status)
                     detail_home, detail_away = self.goals_from_match_payload(
                         detail, status=detail_status
@@ -397,6 +403,7 @@ class FootballDataProvider:
                         if detail_home is not None and detail_away is not None:
                             home_goals, away_goals = detail_home, detail_away
                         detail_enriched += 1
+                        applied = True
                         detail_score = detail.get("score") or {}
                         if isinstance(detail_score, dict) and detail_score.get(
                             "duration"
@@ -409,6 +416,7 @@ class FootballDataProvider:
                     ):
                         home_goals, away_goals = detail_home, detail_away
                         detail_enriched += 1
+                        applied = True
                 except FootballDataError as exc:
                     if exc.rate_limit.requests_available_minute is not None or (
                         exc.rate_limit.retry_after_seconds is not None
@@ -422,6 +430,16 @@ class FootballDataProvider:
                         item.get("id"),
                         exc,
                     )
+                logger.info(
+                    "football-data.org detail GET competition=%s season=%s "
+                    "external_id=%s list_status=%s detail_status=%s applied=%s",
+                    competition_code,
+                    season_year,
+                    external_id,
+                    list_status,
+                    detail_status,
+                    applied,
+                )
             if (
                 status.upper() in {"FINISHED", "AWARDED"}
                 and (home_goals is None or away_goals is None)
@@ -455,7 +473,21 @@ class FootballDataProvider:
                     duration=duration,
                 )
             )
-        if skipped_parse or finished_missing_goals or detail_enriched:
+        # Always log — all-zero counters used to be silent, so Cloud Run could not
+        # distinguish "no overdue GETs" from "GET ran but detail stayed TIMED".
+        logger.info(
+            "football-data.org list_matches summary competition=%s season=%s "
+            "kept=%s overdue_fetch_attempted=%s detail_enriched=%s skipped_parse=%s "
+            "finished_missing_goals=%s",
+            competition_code,
+            season_year,
+            len(matches),
+            overdue_fetch_attempted,
+            detail_enriched,
+            skipped_parse,
+            finished_missing_goals,
+        )
+        if skipped_parse or finished_missing_goals:
             logger.warning(
                 "football-data.org parse skips competition=%s season=%s skipped=%s "
                 "finished_missing_goals=%s detail_enriched=%s kept=%s",
