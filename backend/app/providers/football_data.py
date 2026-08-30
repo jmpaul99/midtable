@@ -216,6 +216,53 @@ class FootballDataProvider:
         ]
         return teams, rate
 
+    @staticmethod
+    def goals_from_score_block(block: Any) -> tuple[int | None, int | None]:
+        """Read home/away goals from a score segment.
+
+        football-data.org v4 normally uses ``home`` / ``away``. Older docs and
+        some payloads still use ``homeTeam`` / ``awayTeam``. Missing both sides
+        returns ``(None, None)``.
+        """
+        if not isinstance(block, dict):
+            return None, None
+
+        def _one(value: Any) -> int | None:
+            if value is None:
+                return None
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                return None
+
+        home = block.get("home")
+        if home is None:
+            home = block.get("homeTeam")
+        away = block.get("away")
+        if away is None:
+            away = block.get("awayTeam")
+        return _one(home), _one(away)
+
+    @classmethod
+    def goals_from_match_score(
+        cls, score: Any, *, status: str
+    ) -> tuple[int | None, int | None]:
+        """Prefer fullTime goals; for finished matches fall back to regularTime."""
+        if not isinstance(score, dict):
+            return None, None
+        home_goals, away_goals = cls.goals_from_score_block(score.get("fullTime") or {})
+        if home_goals is not None and away_goals is not None:
+            return home_goals, away_goals
+        # Finished rows with only legacy/regularTime segments must still score.
+        if str(status).upper() in {"FINISHED", "AWARDED"}:
+            alt_home, alt_away = cls.goals_from_score_block(score.get("regularTime") or {})
+            if alt_home is not None and alt_away is not None:
+                return alt_home, alt_away
+            # One-sided legacy key fills (e.g. only homeTeam present on fullTime).
+            if home_goals is not None or away_goals is not None:
+                return home_goals, away_goals
+        return home_goals, away_goals
+
     def list_matches(
         self, competition_code: str, season_year: int
     ) -> tuple[list[ProviderMatch], RateLimitInfo]:
@@ -224,9 +271,9 @@ class FootballDataProvider:
         )
         matches: list[ProviderMatch] = []
         skipped_parse = 0
+        finished_missing_goals = 0
         for item in payload.get("matches", []):
             score = item.get("score") or {}
-            full = score.get("fullTime") or {}
             duration = str(score.get("duration") or "REGULAR")
             utc_date = item.get("utcDate")
             if not utc_date:
@@ -238,26 +285,45 @@ class FootballDataProvider:
             if not home.get("id") or not away.get("id"):
                 skipped_parse += 1
                 continue
+            status = str(item.get("status") or "SCHEDULED")
+            home_goals, away_goals = self.goals_from_match_score(score, status=status)
+            if (
+                status.upper() in {"FINISHED", "AWARDED"}
+                and (home_goals is None or away_goals is None)
+            ):
+                finished_missing_goals += 1
+                logger.warning(
+                    "football-data.org finished match missing goals competition=%s "
+                    "season=%s external_id=%s status=%s score_keys=%s fullTime=%s",
+                    competition_code,
+                    season_year,
+                    item.get("id"),
+                    status,
+                    sorted(score.keys()) if isinstance(score, dict) else None,
+                    score.get("fullTime") if isinstance(score, dict) else None,
+                )
             matches.append(
                 ProviderMatch(
                     external_id=str(item["id"]),
                     home_external_id=str(home["id"]),
                     away_external_id=str(away["id"]),
                     kickoff_at=kickoff,
-                    status=str(item.get("status") or "SCHEDULED"),
-                    home_goals=full.get("home"),
-                    away_goals=full.get("away"),
+                    status=status,
+                    home_goals=home_goals,
+                    away_goals=away_goals,
                     matchday=item.get("matchday"),
                     stage=item.get("stage"),
                     duration=duration,
                 )
             )
-        if skipped_parse:
+        if skipped_parse or finished_missing_goals:
             logger.warning(
-                "football-data.org parse skips competition=%s season=%s skipped=%s kept=%s",
+                "football-data.org parse skips competition=%s season=%s skipped=%s "
+                "finished_missing_goals=%s kept=%s",
                 competition_code,
                 season_year,
                 skipped_parse,
+                finished_missing_goals,
                 len(matches),
             )
         return matches, rate

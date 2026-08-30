@@ -33,6 +33,7 @@ from app.services.ranking_catalog import (
 from app.services.scoring import (
     RankedTeam,
     ResultPoints,
+    ScoringEventDraft,
     UpsetRules,
     is_finished,
     plan_recompute_cascade,
@@ -110,22 +111,38 @@ def unscored_finished_matches(db: Session, league: League) -> list[Match]:
     return [m for m in finished if m.id not in scored_ids]
 
 
-def gap_fill_seeds_for_league(db: Session, league: League) -> list[Match]:
-    """Earliest unscored finished match per scoring pool (efficient cascade seeds)."""
+def gap_fill_seeds_for_league(
+    db: Session,
+    league: League,
+    *,
+    all_unscored: bool = False,
+) -> list[Match]:
+    """Gap-fill seeds for finished matches still missing ScoringEvents.
+
+    Default: earliest unscored finished match per scoring pool (cascade covers
+    later kickoffs). When ``all_unscored`` is true, return every unscored
+    finished match — used after an earliest seed fails to write events so later
+    fixtures are not blocked on subsequent attempts in the same cron.
+    """
     gaps = unscored_finished_matches(db, league)
     if not gaps:
         return []
     pool_lookup = pool_lookup_for_league(db, league)
     pool_by_match_id: dict[int, int] = {}
     scoring_pool_ids: set[int] = set()
+    eligible: list[Match] = []
     for match in gaps:
         pool = pool_for_match(db, league, match, lookup=pool_lookup)
         if pool is None:
             continue
         pool_by_match_id[match.id] = pool.id
         scoring_pool_ids.add(pool.id)
+        eligible.append(match)
+    if all_unscored:
+        eligible.sort(key=lambda m: (m.kickoff_at, m.id or 0))
+        return eligible
     _, seeds = earliest_finished_seeds_per_pool(
-        gaps,
+        eligible,
         pool_by_match_id=pool_by_match_id,
         scoring_pool_ids=scoring_pool_ids,
     )
@@ -141,10 +158,44 @@ def score_league_after_sync(
     gap_seeds = gap_fill_seeds_for_league(db, league)
     seeds = merge_scoring_seeds(changed, gap_seeds)
     summary = score_changed_matches(db, league, seeds)
+    # If an earliest gap-fill seed stays unscoreable (missing ranks / zero-point
+    # with no event row), cascade alone may not have run for later fixtures on
+    # a prior cron that only had that stuck seed. Re-seed every remaining gap.
+    tried_ids = {m.id for m in seeds if m.id is not None}
+    still_stuck = [
+        m
+        for m in gap_fill_seeds_for_league(db, league)
+        if m.id in tried_ids
+    ]
+    extra_seeds: list[Match] = []
+    if still_stuck:
+        remaining = [
+            m
+            for m in gap_fill_seeds_for_league(db, league, all_unscored=True)
+            if m.id not in tried_ids
+        ]
+        if remaining:
+            extra_seeds = remaining
+            extra = score_changed_matches(db, league, extra_seeds)
+            summary = {
+                "scored": int(summary.get("scored") or 0) + int(extra.get("scored") or 0),
+                "cascaded": int(summary.get("cascaded") or 0)
+                + int(extra.get("cascaded") or 0),
+                "skipped_missing_snapshot": int(summary.get("skipped_missing_snapshot") or 0)
+                + int(extra.get("skipped_missing_snapshot") or 0),
+            }
+            logger.warning(
+                "gap_fill unblocked later matches league_id=%s stuck_seeds=%s "
+                "extra_seeds=%s extra_scored=%s",
+                log_id(league),
+                [m.id for m in still_stuck],
+                len(extra_seeds),
+                extra.get("scored"),
+            )
     return {
         **summary,
-        "gap_fill_seeds": len(gap_seeds),
-        "seed_count": len(seeds),
+        "gap_fill_seeds": len(gap_seeds) + len(extra_seeds),
+        "seed_count": len(seeds) + len(extra_seeds),
     }
 
 
@@ -828,13 +879,28 @@ def score_changed_matches(
         mi = match_to_input(match, pool_id=pool.id)
         finished = is_finished(mi)
         if not finished:
-            for event in db.scalars(
-                select(ScoringEvent).where(
-                    ScoringEvent.match_id == match.id,
-                    ScoringEvent.league_id == league.id,
+            finished_missing_goals = match.status in FINISHED_STATUSES
+            if finished_missing_goals:
+                # Incomplete provider row (FINISHED/AWARDED but null goals). Do not
+                # wipe existing events — a bad parse used to clear scores forever.
+                logger.warning(
+                    "score seed league_id=%s match_id=%s pool_id=%s "
+                    "path=finished_missing_goals status=%s home_goals=%s away_goals=%s",
+                    log_id(league),
+                    match.id,
+                    pool.id,
+                    match.status,
+                    match.home_goals,
+                    match.away_goals,
                 )
-            ).all():
-                db.delete(event)
+            else:
+                for event in db.scalars(
+                    select(ScoringEvent).where(
+                        ScoringEvent.match_id == match.id,
+                        ScoringEvent.league_id == league.id,
+                    )
+                ).all():
+                    db.delete(event)
             plan = plan_recompute_cascade(mi, all_inputs)
             mark_snapshots_stale_after(
                 db,
@@ -845,11 +911,14 @@ def score_changed_matches(
             )
             cascaded += len(plan.affected_match_ids)
             logger.info(
-                "score seed league_id=%s match_id=%s pool_id=%s path=unfinished_wipe "
+                "score seed league_id=%s match_id=%s pool_id=%s path=%s "
                 "cascade_affected=%s starts_at=%s",
                 log_id(league),
                 match.id,
                 pool.id,
+                "finished_missing_goals_cascade"
+                if finished_missing_goals
+                else "unfinished_wipe",
                 len(plan.affected_match_ids),
                 plan.starts_at.isoformat(),
             )
@@ -991,14 +1060,16 @@ def _rescore_plan_matches(
                 continue
             minput = match_to_input(m, pool_id=pool.id)
             if not is_finished(minput):
-                for event in db.scalars(
-                    select(ScoringEvent).where(
-                        ScoringEvent.match_id == m.id,
-                        ScoringEvent.league_id == league.id,
-                    )
-                ).all():
-                    db.delete(event)
-                    events_deleted += 1
+                # Keep events when status says finished but goals are missing.
+                if m.status not in FINISHED_STATUSES:
+                    for event in db.scalars(
+                        select(ScoringEvent).where(
+                            ScoringEvent.match_id == m.id,
+                            ScoringEvent.league_id == league.id,
+                        )
+                    ).all():
+                        db.delete(event)
+                        events_deleted += 1
                 continue
             if m.home_team_id not in ranked or m.away_team_id not in ranked:
                 skipped += 1
@@ -1024,6 +1095,22 @@ def _rescore_plan_matches(
             desired = score_match_events(
                 minput, ranked, result_points=result_points, upset_rules=upset_rules
             )
+            # Zero-point outcomes (e.g. both sides 0 under custom result_points)
+            # intentionally write no fantasy events. Record a 0-pt marker so
+            # gap-fill does not treat the match as forever unscored and block
+            # later fixtures on subsequent crons that only re-seed the earliest gap.
+            if not desired:
+                desired = (
+                    ScoringEventDraft(
+                        match_id=m.id,
+                        team_id=m.home_team_id,
+                        event_type="processed",
+                        points=Decimal(0),
+                        scheduled_matchweek=minput.scheduled_matchweek,
+                        stage=minput.stage,
+                        metadata={"reason": "zero_point_result"},
+                    ),
+                )
             desired_keys = {(e.team_id, e.event_type) for e in desired}
             for key, event in list(existing_events.items()):
                 if key not in desired_keys:
