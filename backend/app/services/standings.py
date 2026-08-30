@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models import (
@@ -109,16 +110,35 @@ def build_snapshot_for_kickoff(
         snapshot.stale = not mark_fresh
         snapshot.computed_at = datetime.now(UTC)
     else:
-        snapshot = StandingsSnapshot(
-            provider=provider,
-            competition_code=competition_code,
-            season_year=season_year,
-            kickoff_at=kickoff_at,
-            stale=not mark_fresh,
-            computed_at=datetime.now(UTC),
-        )
-        db.add(snapshot)
-        db.flush()
+        snapshot = None
+        try:
+            with db.begin_nested():
+                snapshot = StandingsSnapshot(
+                    provider=provider,
+                    competition_code=competition_code,
+                    season_year=season_year,
+                    kickoff_at=kickoff_at,
+                    stale=not mark_fresh,
+                    computed_at=datetime.now(UTC),
+                )
+                db.add(snapshot)
+                db.flush()
+        except IntegrityError:
+            snapshot = db.scalars(
+                select(StandingsSnapshot).where(
+                    StandingsSnapshot.provider == provider,
+                    StandingsSnapshot.competition_code == competition_code,
+                    StandingsSnapshot.season_year == season_year,
+                    StandingsSnapshot.kickoff_at == kickoff_at,
+                )
+            ).first()
+            if snapshot is None:
+                raise
+            reused = True
+            for row in list(snapshot.rows):
+                db.delete(row)
+            snapshot.stale = not mark_fresh
+            snapshot.computed_at = datetime.now(UTC)
 
     for row in ranked:
         db.add(
@@ -345,16 +365,32 @@ def _upsert_snapshot_with_rows(
         kickoff_at=kickoff_at,
     )
     if existing is None:
-        existing = StandingsSnapshot(
-            provider=provider,
-            competition_code=competition_code,
-            season_year=season_year,
-            kickoff_at=kickoff_at,
-            stale=False,
-            computed_at=datetime.now(UTC),
-        )
-        db.add(existing)
-        db.flush()
+        # Savepoint so a concurrent unique violation cannot abort the caller's txn
+        # (e.g. fixture sync committing after baselines).
+        try:
+            with db.begin_nested():
+                existing = StandingsSnapshot(
+                    provider=provider,
+                    competition_code=competition_code,
+                    season_year=season_year,
+                    kickoff_at=kickoff_at,
+                    stale=False,
+                    computed_at=datetime.now(UTC),
+                )
+                db.add(existing)
+                db.flush()
+        except IntegrityError:
+            existing = _snapshot_at(
+                db,
+                provider=provider,
+                competition_code=competition_code,
+                season_year=season_year,
+                kickoff_at=kickoff_at,
+            )
+            if existing is None:
+                raise
+            existing.stale = False
+            existing.computed_at = datetime.now(UTC)
     else:
         existing.stale = False
         existing.computed_at = datetime.now(UTC)
