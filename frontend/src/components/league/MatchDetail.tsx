@@ -1,13 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
-import {
-  formatDate,
-  formatMatchScoreDisplay,
-  formatNumber,
-  formatPeriodShort,
-  scoringCompetitionType,
-} from "@/lib/format";
+import { formatDate, formatNumber, formatScoreline, formatPeriodShort, scoringCompetitionType } from "@/lib/format";
 import { scoringEventLabel } from "@/lib/scoringLabels";
 import { matchDurationLabel, matchStageLabel } from "@/lib/matchStages";
 import type { Json, MatchEventsResponse, MatchOwnerInfo, UUID } from "@/lib/types";
@@ -106,13 +100,7 @@ export function MatchDetail({
   if (error) return <ErrorState error={error} />;
   if (loading || !data) return <Loading label="Loading match" />;
 
-  // Status FINISHED with null goals must not look unplayed ("vs").
-  const scoreline = formatMatchScoreDisplay(
-    data.home_goals,
-    data.away_goals,
-    data.status,
-    { unfinishedLabel: "vs" },
-  );
+  const scoreline = formatScoreline(data.home_goals, data.away_goals);
   const hasPoints = data.home_points != null || data.away_points != null;
   const homeOwner = matchOwnerLabel(data.home_owner);
   const awayOwner = matchOwnerLabel(data.away_owner);
@@ -155,7 +143,7 @@ export function MatchDetail({
             </div>
             <div className="shrink-0 text-center">
               <div className="font-display text-2xl font-extrabold tabular-nums sm:text-3xl">
-                {scoreline}
+                {scoreline ?? "vs"}
               </div>
               {hasPoints && (
                 <Muted className="mt-1 text-xs tabular-nums">

@@ -461,8 +461,6 @@ export interface MatchEventsResponse {
   match_id: UUID;
   kickoff_at: string;
   status: string;
-  /** Status in FINISHED/AWARDED only — not dependent on goals. */
-  finished?: boolean;
   scheduled_matchweek: number | null;
   duration?: string | null;
   stage?: string | null;
@@ -485,8 +483,6 @@ export interface MatchLogRow {
   id: UUID;
   kickoff_at: string;
   status: string;
-  /** Status in FINISHED/AWARDED only — not dependent on goals. */
-  finished?: boolean;
   scheduled_matchweek: number | null;
   home_team_id: UUID;
   away_team_id: UUID;

@@ -215,7 +215,6 @@ def match_events(
         "match_id": str(match.public_id),
         "kickoff_at": match.kickoff_at.isoformat(),
         "status": match.status,
-        "finished": finished,
         "scheduled_matchweek": match.scheduled_matchweek,
         "duration": match.duration,
         "stage": match.stage,

@@ -27,18 +27,6 @@ export function formatCountdownDuration(ms: number): string {
   return `${mins}:${ss}`;
 }
 
-/**
- * Provider statuses that mean the fixture is complete for list bucketing / FT UI.
- * Matches backend FINISHED_STATUSES. This is status-only — not scoring
- * ``is_finished()``, which also requires non-null goals.
- */
-export const FINISHED_MATCH_STATUSES = new Set(["FINISHED", "AWARDED"]);
-
-/** True when status alone means the match is finished (Recent tab / FT chrome). */
-export function isFinishedMatchStatus(status: string | null | undefined): boolean {
-  return FINISHED_MATCH_STATUSES.has(String(status || "").toUpperCase());
-}
-
 /** True when both sides have a recorded goal count. */
 export function hasScoreline(
   homeGoals: number | null | undefined,
@@ -56,38 +44,15 @@ export function formatScoreline(
   return `${homeGoals}–${awayGoals}`;
 }
 
-/**
- * Center/list score display: numeric FT, en-dash when finished but goals not
- * yet on the row, or unfinishedLabel for not-finished fixtures.
- *
- * FINISHED+null-goals used to render like unplayed ("vs" / no score), which is
- * what made Saturday rows look unfinished even when status was FINISHED.
- */
-export function formatMatchScoreDisplay(
-  homeGoals: number | null | undefined,
-  awayGoals: number | null | undefined,
-  status: string | null | undefined,
-  options?: { unfinishedLabel?: string | null },
-): string | null {
-  const score = formatScoreline(homeGoals, awayGoals);
-  if (score) return score;
-  if (isFinishedMatchStatus(status)) return "–";
-  return options?.unfinishedLabel ?? null;
-}
-
 /** Team-oriented scoreline (own goals first when away). Null when unplayed. */
 export function formatTeamOrientedScoreline(m: {
   is_home: boolean;
   home_goals: number | null | undefined;
   away_goals: number | null | undefined;
-  status?: string | null;
 }): string | null {
-  const homeFirst = m.is_home
+  return m.is_home
     ? formatScoreline(m.home_goals, m.away_goals)
     : formatScoreline(m.away_goals, m.home_goals);
-  if (homeFirst) return homeFirst;
-  if (isFinishedMatchStatus(m.status)) return "–";
-  return null;
 }
 
 export type PeriodKind = "matchweek" | "round";
