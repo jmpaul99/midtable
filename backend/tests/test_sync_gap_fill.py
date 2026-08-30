@@ -247,6 +247,165 @@ def test_rescore_writes_processed_marker_for_zero_point_results():
     assert added[0].points == Decimal(0)
 
 
+def test_sync_competition_keeps_finished_goals_when_list_payload_null(monkeypatch):
+    """Thin list re-sync must not wipe known FINISHED scores back to null."""
+    from datetime import UTC, datetime
+    from app.providers.base import ProviderMatch
+    from app.services import sync as sync_mod
+
+    status = SimpleNamespace(
+        in_progress=False,
+        in_progress_since=None,
+        last_error=None,
+        last_sync_at=None,
+        last_summary=None,
+        requests_available_minute=None,
+    )
+    existing = SimpleNamespace(
+        id=9,
+        provider="football-data.org",
+        competition_code="PL",
+        season_year=2026,
+        external_id="501",
+        home_team_id=1,
+        away_team_id=2,
+        kickoff_at=datetime(2026, 8, 29, 14, tzinfo=UTC),
+        status="FINISHED",
+        home_goals=1,
+        away_goals=1,
+        duration="REGULAR",
+        scheduled_matchweek=3,
+        stage="REGULAR_SEASON",
+        last_synced_at=None,
+    )
+    db = MagicMock()
+    db.scalars.return_value.first.return_value = existing
+    provider = MagicMock()
+    provider.list_matches.return_value = (
+        [
+            ProviderMatch(
+                external_id="501",
+                home_external_id="10",
+                away_external_id="20",
+                kickoff_at=datetime(2026, 8, 29, 14, tzinfo=UTC),
+                status="FINISHED",
+                home_goals=None,
+                away_goals=None,
+                matchday=3,
+                stage="REGULAR_SEASON",
+                duration="REGULAR",
+            )
+        ],
+        None,
+    )
+    monkeypatch.setattr(sync_mod, "_ensure_sync_status", lambda *_a, **_k: status)
+    monkeypatch.setattr(
+        sync_mod,
+        "_team_by_external",
+        lambda *_a, **_k: SimpleNamespace(id=1),
+    )
+    import app.services.standings as standings_mod
+
+    monkeypatch.setattr(
+        standings_mod,
+        "ensure_competition_season_table_baselines",
+        lambda *_a, **_k: None,
+    )
+
+    result = sync_mod.sync_competition_fixtures(
+        db,
+        provider,
+        provider_key="football-data.org",
+        competition_code="PL",
+        season_year=2026,
+    )
+    assert result["ok"] is True
+    assert existing.home_goals == 1
+    assert existing.away_goals == 1
+    assert result["changed"] == 0
+    assert result["updated"] == 0
+
+
+def test_sync_competition_does_not_downgrade_finished_to_timed_thin_list(monkeypatch):
+    """FINISHED row must stay FINISHED when thin list re-reports TIMED + null goals."""
+    from datetime import UTC, datetime
+    from app.providers.base import ProviderMatch
+    from app.services import sync as sync_mod
+
+    status = SimpleNamespace(
+        in_progress=False,
+        in_progress_since=None,
+        last_error=None,
+        last_sync_at=None,
+        last_summary=None,
+        requests_available_minute=None,
+    )
+    existing = SimpleNamespace(
+        id=9,
+        provider="football-data.org",
+        competition_code="PL",
+        season_year=2026,
+        external_id="501",
+        home_team_id=1,
+        away_team_id=2,
+        kickoff_at=datetime(2026, 8, 29, 14, tzinfo=UTC),
+        status="FINISHED",
+        home_goals=1,
+        away_goals=1,
+        duration="REGULAR",
+        scheduled_matchweek=3,
+        stage="REGULAR_SEASON",
+        last_synced_at=None,
+    )
+    db = MagicMock()
+    db.scalars.return_value.first.return_value = existing
+    provider = MagicMock()
+    provider.list_matches.return_value = (
+        [
+            ProviderMatch(
+                external_id="501",
+                home_external_id="10",
+                away_external_id="20",
+                kickoff_at=datetime(2026, 8, 29, 14, tzinfo=UTC),
+                status="TIMED",
+                home_goals=None,
+                away_goals=None,
+                matchday=3,
+                stage="REGULAR_SEASON",
+                duration="REGULAR",
+            )
+        ],
+        None,
+    )
+    monkeypatch.setattr(sync_mod, "_ensure_sync_status", lambda *_a, **_k: status)
+    monkeypatch.setattr(
+        sync_mod,
+        "_team_by_external",
+        lambda *_a, **_k: SimpleNamespace(id=1),
+    )
+    import app.services.standings as standings_mod
+
+    monkeypatch.setattr(
+        standings_mod,
+        "ensure_competition_season_table_baselines",
+        lambda *_a, **_k: None,
+    )
+
+    result = sync_mod.sync_competition_fixtures(
+        db,
+        provider,
+        provider_key="football-data.org",
+        competition_code="PL",
+        season_year=2026,
+    )
+    assert result["ok"] is True
+    assert existing.status == "FINISHED"
+    assert existing.home_goals == 1
+    assert existing.away_goals == 1
+    assert result["changed"] == 0
+    assert result["updated"] == 0
+
+
 def test_sync_league_fixtures_scores_sibling_leagues(monkeypatch):
     from app.services import sync as sync_mod
 

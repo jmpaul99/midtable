@@ -437,9 +437,27 @@ def sync_competition_fixtures(
                 if existing.scheduled_matchweek is None and pm.matchday is not None:
                     existing.scheduled_matchweek = pm.matchday
                 existing.kickoff_at = pm.kickoff_at
-                existing.status = pm.status
-                existing.home_goals = pm.home_goals
-                existing.away_goals = pm.away_goals
+                # Thin competition-list rows can report TIMED/SCHEDULED with
+                # null goals after the match is already FINISHED in DB (or after
+                # a prior detail enrich). Never downgrade terminal status or wipe
+                # known scores with that thin payload.
+                existing_finished = existing.status in FINISHED_STATUSES
+                provider_finished = pm.status in FINISHED_STATUSES
+                thin_null_goals = pm.home_goals is None and pm.away_goals is None
+                downgrade_via_thin_list = (
+                    existing_finished and not provider_finished and thin_null_goals
+                )
+                if not downgrade_via_thin_list:
+                    existing.status = pm.status
+                wiping_finished_goals = (
+                    provider_finished
+                    and thin_null_goals
+                    and existing.home_goals is not None
+                    and existing.away_goals is not None
+                )
+                if not wiping_finished_goals and not downgrade_via_thin_list:
+                    existing.home_goals = pm.home_goals
+                    existing.away_goals = pm.away_goals
                 existing.duration = pm.duration or "REGULAR"
                 if pm.stage:
                     existing.stage = pm.stage

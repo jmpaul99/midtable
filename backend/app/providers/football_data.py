@@ -247,21 +247,100 @@ class FootballDataProvider:
     def goals_from_match_score(
         cls, score: Any, *, status: str
     ) -> tuple[int | None, int | None]:
-        """Prefer fullTime goals; for finished matches fall back to regularTime."""
+        """Prefer fullTime; for finished matches fall back to regularTime/extraTime."""
         if not isinstance(score, dict):
             return None, None
         home_goals, away_goals = cls.goals_from_score_block(score.get("fullTime") or {})
         if home_goals is not None and away_goals is not None:
             return home_goals, away_goals
-        # Finished rows with only legacy/regularTime segments must still score.
+        # Finished rows with only legacy/regularTime/extraTime segments must still score.
         if str(status).upper() in {"FINISHED", "AWARDED"}:
-            alt_home, alt_away = cls.goals_from_score_block(score.get("regularTime") or {})
-            if alt_home is not None and alt_away is not None:
-                return alt_home, alt_away
+            for key in ("regularTime", "extraTime"):
+                alt_home, alt_away = cls.goals_from_score_block(score.get(key) or {})
+                if alt_home is not None and alt_away is not None:
+                    return alt_home, alt_away
             # One-sided legacy key fills (e.g. only homeTeam present on fullTime).
             if home_goals is not None or away_goals is not None:
                 return home_goals, away_goals
         return home_goals, away_goals
+
+    @classmethod
+    def goals_from_goals_events(cls, goals: Any) -> tuple[int | None, int | None]:
+        """Final score from the last goals[] event's running ``score`` block.
+
+        The Match resource documents a ``goals`` array where each entry carries
+        ``score: {home, away}`` (or legacy homeTeam/awayTeam). Competition list
+        payloads sometimes leave ``score.fullTime`` null while still including
+        this array — or omit both until ``GET /matches/{id}``.
+        """
+        if not isinstance(goals, list) or not goals:
+            return None, None
+        last = goals[-1]
+        if not isinstance(last, dict):
+            return None, None
+        return cls.goals_from_score_block(last.get("score") or {})
+
+    @classmethod
+    def goals_from_match_payload(
+        cls, item: dict[str, Any], *, status: str | None = None
+    ) -> tuple[int | None, int | None]:
+        """Resolve goals from score segments, then goals[] running score."""
+        resolved_status = status if status is not None else str(item.get("status") or "")
+        score = item.get("score") or {}
+        home_goals, away_goals = cls.goals_from_match_score(
+            score, status=resolved_status
+        )
+        if home_goals is not None and away_goals is not None:
+            return home_goals, away_goals
+        if str(resolved_status).upper() not in {"FINISHED", "AWARDED"}:
+            return home_goals, away_goals
+        event_home, event_away = cls.goals_from_goals_events(item.get("goals"))
+        if event_home is not None and event_away is not None:
+            return event_home, event_away
+        return home_goals, away_goals
+
+    def get_match(self, external_id: str) -> tuple[dict[str, Any], RateLimitInfo]:
+        """Fetch a single Match resource (richer than competition list rows)."""
+        payload, rate = self._get(f"/matches/{external_id}")
+        if not isinstance(payload, dict):
+            raise FootballDataError(
+                f"football-data.org match {external_id} returned non-object payload",
+                rate,
+            )
+        return payload, rate
+
+    @staticmethod
+    def _is_terminal_status(status: str) -> bool:
+        return str(status).upper() in {"FINISHED", "AWARDED"}
+
+    @classmethod
+    def should_fetch_match_detail(
+        cls,
+        *,
+        status: str,
+        home_goals: int | None,
+        away_goals: int | None,
+        kickoff_at: datetime,
+        now: datetime | None = None,
+        overdue_after: timedelta = timedelta(hours=2),
+    ) -> bool:
+        """Whether competition-list data is too thin and needs GET /matches/{id}.
+
+        - FINISHED/AWARDED list rows still missing goals (thin score payload)
+        - Overdue non-terminal list rows (e.g. stuck TIMED) whose kickoff was
+          at least ``overdue_after`` ago — detail often has the real FT status
+        """
+        goals_missing = home_goals is None or away_goals is None
+        if cls._is_terminal_status(status) and goals_missing:
+            return True
+        if cls._is_terminal_status(status):
+            return False
+        clock = now or datetime.now(UTC)
+        kickoff = kickoff_at if kickoff_at.tzinfo else kickoff_at.replace(tzinfo=UTC)
+        overdue = clock - kickoff >= overdue_after
+        # Non-terminal + overdue: always enrich (status not terminal ⇒ second
+        # clause of "goals missing OR status not terminal" is true).
+        return overdue and (goals_missing or not cls._is_terminal_status(status))
 
     def list_matches(
         self, competition_code: str, season_year: int
@@ -272,9 +351,16 @@ class FootballDataProvider:
         matches: list[ProviderMatch] = []
         skipped_parse = 0
         finished_missing_goals = 0
+        detail_enriched = 0
+        now = datetime.now(UTC)
         for item in payload.get("matches", []):
+            if not isinstance(item, dict):
+                skipped_parse += 1
+                continue
             score = item.get("score") or {}
-            duration = str(score.get("duration") or "REGULAR")
+            duration = str(
+                (score.get("duration") if isinstance(score, dict) else None) or "REGULAR"
+            )
             utc_date = item.get("utcDate")
             if not utc_date:
                 skipped_parse += 1
@@ -286,7 +372,56 @@ class FootballDataProvider:
                 skipped_parse += 1
                 continue
             status = str(item.get("status") or "SCHEDULED")
-            home_goals, away_goals = self.goals_from_match_score(score, status=status)
+            home_goals, away_goals = self.goals_from_match_payload(item, status=status)
+            # Competition /matches list is thinner than GET /matches/{id}. Enrich
+            # when finished rows lack goals, or overdue rows are still non-terminal
+            # (TIMED/SCHEDULED/IN_PLAY) so Saturday fixtures can become FINISHED.
+            if item.get("id") is not None and self.should_fetch_match_detail(
+                status=status,
+                home_goals=home_goals,
+                away_goals=away_goals,
+                kickoff_at=kickoff,
+                now=now,
+            ):
+                try:
+                    respect_rate_limit(rate)
+                    detail, rate = self.get_match(str(item["id"]))
+                    detail_status = str(detail.get("status") or status)
+                    detail_home, detail_away = self.goals_from_match_payload(
+                        detail, status=detail_status
+                    )
+                    # Only apply detail when it actually finishes the match (or
+                    # fills goals on an already-terminal list row).
+                    if self._is_terminal_status(detail_status):
+                        status = detail_status
+                        if detail_home is not None and detail_away is not None:
+                            home_goals, away_goals = detail_home, detail_away
+                        detail_enriched += 1
+                        detail_score = detail.get("score") or {}
+                        if isinstance(detail_score, dict) and detail_score.get(
+                            "duration"
+                        ):
+                            duration = str(detail_score.get("duration") or duration)
+                    elif (
+                        self._is_terminal_status(status)
+                        and detail_home is not None
+                        and detail_away is not None
+                    ):
+                        home_goals, away_goals = detail_home, detail_away
+                        detail_enriched += 1
+                except FootballDataError as exc:
+                    if exc.rate_limit.requests_available_minute is not None or (
+                        exc.rate_limit.retry_after_seconds is not None
+                    ):
+                        rate = exc.rate_limit
+                    logger.warning(
+                        "football-data.org detail goals fetch failed competition=%s "
+                        "season=%s external_id=%s error=%s",
+                        competition_code,
+                        season_year,
+                        item.get("id"),
+                        exc,
+                    )
             if (
                 status.upper() in {"FINISHED", "AWARDED"}
                 and (home_goals is None or away_goals is None)
@@ -294,13 +429,17 @@ class FootballDataProvider:
                 finished_missing_goals += 1
                 logger.warning(
                     "football-data.org finished match missing goals competition=%s "
-                    "season=%s external_id=%s status=%s score_keys=%s fullTime=%s",
+                    "season=%s external_id=%s status=%s score_keys=%s fullTime=%s "
+                    "goals_events=%s",
                     competition_code,
                     season_year,
                     item.get("id"),
                     status,
                     sorted(score.keys()) if isinstance(score, dict) else None,
                     score.get("fullTime") if isinstance(score, dict) else None,
+                    len(item.get("goals") or [])
+                    if isinstance(item.get("goals"), list)
+                    else 0,
                 )
             matches.append(
                 ProviderMatch(
@@ -316,14 +455,15 @@ class FootballDataProvider:
                     duration=duration,
                 )
             )
-        if skipped_parse or finished_missing_goals:
+        if skipped_parse or finished_missing_goals or detail_enriched:
             logger.warning(
                 "football-data.org parse skips competition=%s season=%s skipped=%s "
-                "finished_missing_goals=%s kept=%s",
+                "finished_missing_goals=%s detail_enriched=%s kept=%s",
                 competition_code,
                 season_year,
                 skipped_parse,
                 finished_missing_goals,
+                detail_enriched,
                 len(matches),
             )
         return matches, rate
