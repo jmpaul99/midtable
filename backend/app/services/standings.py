@@ -104,8 +104,6 @@ def build_snapshot_for_kickoff(
     ).first()
     reused = existing is not None
     if existing:
-        for row in list(existing.rows):
-            db.delete(row)
         snapshot = existing
         snapshot.stale = not mark_fresh
         snapshot.computed_at = datetime.now(UTC)
@@ -135,25 +133,28 @@ def build_snapshot_for_kickoff(
             if snapshot is None:
                 raise
             reused = True
-            for row in list(snapshot.rows):
-                db.delete(row)
             snapshot.stale = not mark_fresh
             snapshot.computed_at = datetime.now(UTC)
 
-    for row in ranked:
-        db.add(
-            StandingsSnapshotRow(
-                snapshot_id=snapshot.id,
-                team_id=row.team_id,
-                rank=row.rank,
-                played=row.played,
-                points=row.points,
-                goals_for=row.goals_for,
-                goals_against=row.goals_against,
-                goal_difference=row.goal_difference,
+    # Flush deletes before inserts so (snapshot_id, team_id) unique does not
+    # collide when refreshing an existing snapshot (Actions #349/#350 → 502
+    # PendingRollbackError wrapping UniqueViolation on standings_snapshot_rows).
+    _replace_snapshot_rows(
+        db,
+        snapshot,
+        [
+            (
+                row.team_id,
+                row.rank,
+                row.played,
+                int(row.points),
+                row.goals_for,
+                row.goals_against,
+                row.goal_difference,
             )
-        )
-    db.flush()
+            for row in ranked
+        ],
+    )
     logger.debug(
         "build_snapshot_for_kickoff competition=%s/%s/%s kickoff=%s rows=%s reused=%s",
         provider,
