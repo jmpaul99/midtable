@@ -6,7 +6,7 @@ import logging
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -329,14 +329,27 @@ def _replace_snapshot_rows(
     snapshot: StandingsSnapshot,
     rows: list[tuple[int, int, int, int, int, int, int]],
 ) -> None:
-    """rows: (team_id, rank, played, points, gf, ga, gd)."""
-    for row in list(snapshot.rows):
-        db.delete(row)
-    db.flush()
+    """Replace all rows for a snapshot.
+
+    ``rows``: (team_id, rank, played, points, gf, ga, gd).
+
+    Must not rely on iterating ``snapshot.rows`` for deletes: after a prior
+    replace in the same Session, delete-orphan leaves deleted "zombie" instances
+    in the identity-map collection while newly inserted rows (added via FK only)
+    are not attached. A second ORM delete then targets stale PKs (no-op on
+    Postgres, which does not reuse identities) and the following insert hits
+    ``standings_snapshot_rows_snapshot_team_key`` — Sync #380 after #27.
+    """
+    db.execute(
+        delete(StandingsSnapshotRow).where(
+            StandingsSnapshotRow.snapshot_id == snapshot.id
+        )
+    )
+    # Drop zombies / empty stale collection so append loads a clean set.
+    db.expire(snapshot, ["rows"])
     for team_id, rank, played, points, gf, ga, gd in rows:
-        db.add(
+        snapshot.rows.append(
             StandingsSnapshotRow(
-                snapshot_id=snapshot.id,
                 team_id=team_id,
                 rank=rank,
                 played=played,
