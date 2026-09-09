@@ -247,6 +247,97 @@ def test_rescore_writes_processed_marker_for_zero_point_results():
     assert added[0].points == Decimal(0)
 
 
+def test_score_changed_matches_scores_finished_seed_when_league_snapshot_stale(
+    monkeypatch,
+):
+    """Changed seed is FINISHED+goals; matches_for_league still returns TIMED.
+
+    Reproduces cron/manual first-pass fingerprint: seed_count>0, cascaded:0,
+    scored:0 until a second sync rebuilt the planning snapshot.
+    """
+    from app.services import sync as sync_mod
+
+    league = SimpleNamespace(
+        id=1,
+        public_id=uuid4(),
+        result_points={},
+        upset_rules={"ranking_list_key": None},
+    )
+    pool = SimpleNamespace(
+        id=7,
+        competition_code="PL",
+        season_year=2026,
+        provider="football-data.org",
+    )
+    kickoff = datetime(2026, 8, 29, 15, tzinfo=UTC)
+    # League query still sees the pre-finish row (stale / divergent identity).
+    stale = SimpleNamespace(
+        id=42,
+        kickoff_at=kickoff,
+        status="TIMED",
+        home_goals=None,
+        away_goals=None,
+        home_team_id=10,
+        away_team_id=20,
+        duration="REGULAR",
+        scheduled_matchweek=3,
+        stage=None,
+        provider="football-data.org",
+        competition_code="PL",
+        season_year=2026,
+    )
+    # Sync changed-seed carries the post-finish state.
+    finished = SimpleNamespace(
+        id=42,
+        kickoff_at=kickoff,
+        status="FINISHED",
+        home_goals=2,
+        away_goals=1,
+        home_team_id=10,
+        away_team_id=20,
+        duration="REGULAR",
+        scheduled_matchweek=3,
+        stage=None,
+        provider="football-data.org",
+        competition_code="PL",
+        season_year=2026,
+    )
+
+    db = MagicMock()
+    db.scalars.return_value.all.return_value = []
+    added: list[object] = []
+    db.add.side_effect = lambda obj: added.append(obj)
+
+    monkeypatch.setattr(sync_mod, "ensure_fixed_ranking_for_league", lambda *_a, **_k: None)
+    monkeypatch.setattr(sync_mod, "matches_for_league", lambda *_a, **_k: [stale])
+    monkeypatch.setattr(sync_mod, "pool_lookup_for_league", lambda *_a, **_k: {})
+    monkeypatch.setattr(sync_mod, "pool_for_match", lambda *_a, **_k: pool)
+    monkeypatch.setattr(
+        sync_mod,
+        "ranks_for_league",
+        lambda *_a, **_k: {
+            10: RankedTeam(team_id=10, rank=1, played=8),
+            20: RankedTeam(team_id=20, rank=5, played=8),
+        },
+    )
+    monkeypatch.setattr(sync_mod, "mark_snapshots_stale_after", lambda *_a, **_k: None)
+    monkeypatch.setattr(sync_mod, "lock_ranking_lists_after_scoring", lambda *_a, **_k: 0)
+
+    summary = sync_mod.score_changed_matches(db, league, [finished])
+    assert summary["cascaded"] >= 1
+    assert summary["scored"] == 1
+    assert summary["skipped_missing_snapshot"] == 0
+    assert added, "expected ScoringEvent rows on the first scoring pass"
+    assert {getattr(e, "event_type", None) for e in added} <= {
+        "win",
+        "loss",
+        "draw",
+        "minor_upset",
+        "major_upset",
+        "processed",
+    }
+
+
 def test_sync_competition_keeps_finished_goals_when_list_payload_null(monkeypatch):
     """Thin list re-sync must not wipe known FINISHED scores back to null."""
     from datetime import UTC, datetime

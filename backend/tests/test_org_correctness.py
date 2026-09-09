@@ -67,3 +67,27 @@ def test_match_to_input_adapter():
     mi = match_to_input(match, pool_id=2)
     assert mi.match_id == 1
     assert mi.home_goals == 1
+
+
+def test_match_to_input_uppercases_status_for_is_finished():
+    """Mixed-case provider status must still gate as finished for scoring/gap-fill."""
+    from datetime import UTC, datetime
+
+    from app.services.match_adapters import match_to_input
+    from app.services.scoring import is_finished
+
+    match = SimpleNamespace(
+        id=1,
+        home_team_id=3,
+        away_team_id=4,
+        kickoff_at=datetime(2026, 8, 1, tzinfo=UTC),
+        home_goals=2,
+        away_goals=1,
+        status="Finished",
+        duration="REGULAR",
+        scheduled_matchweek=1,
+        stage=None,
+    )
+    mi = match_to_input(match, pool_id=2)
+    assert mi.status == "FINISHED"
+    assert is_finished(mi) is True

@@ -372,7 +372,7 @@ class FootballDataProvider:
             if not home.get("id") or not away.get("id"):
                 skipped_parse += 1
                 continue
-            status = str(item.get("status") or "SCHEDULED")
+            status = str(item.get("status") or "SCHEDULED").upper()
             list_status = status
             home_goals, away_goals = self.goals_from_match_payload(item, status=status)
             # Competition /matches list is thinner than GET /matches/{id}. Enrich
@@ -392,7 +392,7 @@ class FootballDataProvider:
                 try:
                     respect_rate_limit(rate)
                     detail, rate = self.get_match(external_id)
-                    detail_status = str(detail.get("status") or status)
+                    detail_status = str(detail.get("status") or status).upper()
                     detail_home, detail_away = self.goals_from_match_payload(
                         detail, status=detail_status
                     )

@@ -448,6 +448,35 @@ def test_recompute_cascade_from_changed_kickoff_forward() -> None:
     assert 5 not in plan.affected_match_ids
 
 
+def test_recompute_cascade_prefers_live_finished_seed_over_stale_snapshot() -> None:
+    """First-pass sync: seed is FINISHED+goals but frozen all_inputs still TIMED.
+
+    Before the fix, affected_match_ids was empty → scored:0 cascaded:0 until a
+    later sync rebuilt the snapshot (two-pass scoring).
+    """
+    live = _match(10, 1, 2, NOW, 2, 1, status="FINISHED")
+    stale = MatchInput(
+        match_id=10,
+        pool_id=1,
+        home_team_id=1,
+        away_team_id=2,
+        kickoff_at=NOW,
+        home_goals=None,
+        away_goals=None,
+        status="TIMED",
+    )
+    later = _match(11, 3, 4, NOW + timedelta(hours=2), 1, 0)
+    plan = plan_recompute_cascade(live, [stale, later])
+    assert plan.affected_match_ids == (10, 11)
+    assert plan.changed_match_id == 10
+
+
+def test_recompute_cascade_includes_finished_seed_missing_from_snapshot() -> None:
+    live = _match(10, 1, 2, NOW, 2, 1)
+    plan = plan_recompute_cascade(live, [])
+    assert plan.affected_match_ids == (10,)
+
+
 def test_phase_matchweek_range_filter_mw1_19() -> None:
     filt = {"type": "matchweek_range", "from": 1, "to": 19}
     assert match_passes_phase_filter(scheduled_matchweek=1, stage=None, match_filter=filt)
