@@ -659,9 +659,25 @@ def plan_recompute_cascade(
     changed_match: MatchInput,
     all_matches: Iterable[MatchInput],
 ) -> RecomputePlan:
-    """Mark snapshots with kickoff_at > changed kickoff stale; re-score from that kickoff."""
+    """Mark snapshots with kickoff_at > changed kickoff stale; re-score from that kickoff.
+
+    The live ``changed_match`` always wins over any same-id entry in
+    ``all_matches``. Scoring builds a frozen MatchInput snapshot before the
+    seed loop; if that snapshot is still TIMED/null-goals (or missing the
+    seed) while the seed itself is finished, an empty affected set would
+    skip ScoringEvent writes until a later sync rebuilt the snapshot —
+    the first-pass fixture update / second-pass score bug.
+    """
+    by_id: dict[int, MatchInput] = {}
+    for match in all_matches:
+        by_id[match.match_id] = match
+    # Live seed is authoritative for its own row (finished or not).
+    by_id[changed_match.match_id] = changed_match
+
     same_pool = [
-        m for m in all_matches if m.pool_id == changed_match.pool_id and is_finished(m)
+        m
+        for m in by_id.values()
+        if m.pool_id == changed_match.pool_id and is_finished(m)
     ]
     # Preserve kickoff order for affected ids
     ordered = sorted(

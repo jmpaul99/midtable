@@ -41,6 +41,7 @@ from app.services.ranking_catalog import (
     ranks_for_league,
 )
 from app.services.scoring import (
+    MatchInput,
     RankedTeam,
     ResultPoints,
     ScoringEventDraft,
@@ -597,7 +598,7 @@ def sync_competition_fixtures(
                     home_team_id=home.id,
                     away_team_id=away.id,
                     kickoff_at=pm.kickoff_at,
-                    status=pm.status,
+                    status=str(pm.status or "SCHEDULED").upper(),
                     home_goals=pm.home_goals,
                     away_goals=pm.away_goals,
                     duration=pm.duration or "REGULAR",
@@ -607,7 +608,7 @@ def sync_competition_fixtures(
                 )
                 db.add(row)
                 created += 1
-                if pm.status in FINISHED_STATUSES:
+                if row.status in FINISHED_STATUSES:
                     changed_matches.append(row)
             else:
                 before = (
@@ -624,14 +625,17 @@ def sync_competition_fixtures(
                 # null goals after the match is already FINISHED in DB (or after
                 # a prior detail enrich). Never downgrade terminal status or wipe
                 # known scores with that thin payload.
-                existing_finished = existing.status in FINISHED_STATUSES
-                provider_finished = pm.status in FINISHED_STATUSES
+                provider_status = str(pm.status or "SCHEDULED").upper()
+                existing_finished = (
+                    str(existing.status or "").upper() in FINISHED_STATUSES
+                )
+                provider_finished = provider_status in FINISHED_STATUSES
                 thin_null_goals = pm.home_goals is None and pm.away_goals is None
                 downgrade_via_thin_list = (
                     existing_finished and not provider_finished and thin_null_goals
                 )
                 if not downgrade_via_thin_list:
-                    existing.status = pm.status
+                    existing.status = provider_status
                 wiping_finished_goals = (
                     provider_finished
                     and thin_null_goals
@@ -1203,16 +1207,36 @@ def score_changed_matches(
     cascaded = 0
     skipped_missing_snapshot = 0
     skipped_match_ids: list[int] = []
+    # Planning inputs keyed by match id so each finished seed can overlay the
+    # frozen snapshot (and so later seeds see earlier finishes in-cascade).
+    planning_by_id: dict[int, MatchInput] = {inp.match_id: inp for inp in all_inputs}
     for match in changed:
         pool = pool_by_match.get(match.id) or pool_for_match(
             db, league, match, lookup=pool_lookup
         )
         if pool is None:
+            logger.warning(
+                "score seed skipped no pool league_id=%s match_id=%s "
+                "provider=%s competition=%s season=%s",
+                log_id(league),
+                match.id,
+                getattr(match, "provider", None),
+                getattr(match, "competition_code", None),
+                getattr(match, "season_year", None),
+            )
             continue
+        # Prefer the live seed ORM for rescoring even if matches_for_league
+        # omitted it (should not happen) or held a stale identity.
+        if match.id is not None:
+            by_id[match.id] = match
+            pool_by_match[match.id] = pool
         mi = match_to_input(match, pool_id=pool.id)
+        planning_by_id[mi.match_id] = mi
+        planning_inputs = list(planning_by_id.values())
         finished = is_finished(mi)
+        status_upper = str(getattr(match, "status", "") or "").upper()
         if not finished:
-            finished_missing_goals = match.status in FINISHED_STATUSES
+            finished_missing_goals = status_upper in FINISHED_STATUSES
             if finished_missing_goals:
                 # Incomplete provider row (FINISHED/AWARDED but null goals). Do not
                 # wipe existing events — a bad parse used to clear scores forever.
@@ -1234,7 +1258,7 @@ def score_changed_matches(
                     )
                 ).all():
                     db.delete(event)
-            plan = plan_recompute_cascade(mi, all_inputs)
+            plan = plan_recompute_cascade(mi, planning_inputs)
             mark_snapshots_stale_after(
                 db,
                 provider=match.provider,
@@ -1270,7 +1294,7 @@ def score_changed_matches(
             skipped_match_ids.extend(skip_ids)
             continue
 
-        plan = plan_recompute_cascade(mi, all_inputs)
+        plan = plan_recompute_cascade(mi, planning_inputs)
         mark_snapshots_stale_after(
             db,
             provider=match.provider,
@@ -1394,7 +1418,7 @@ def _rescore_plan_matches(
             minput = match_to_input(m, pool_id=pool.id)
             if not is_finished(minput):
                 # Keep events when status says finished but goals are missing.
-                if m.status not in FINISHED_STATUSES:
+                if str(m.status or "").upper() not in FINISHED_STATUSES:
                     for event in db.scalars(
                         select(ScoringEvent).where(
                             ScoringEvent.match_id == m.id,
